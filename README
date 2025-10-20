@@ -1,1 +1,13 @@
 Generates minute-by-minute weekly schedules for NPCs. Configure sleep, work, meals, and activities—get back a valid 24-hour timeline with no gaps or overlaps.
+
+## Usage
+
+```bash
+python calendar_gen.py path/to/config.json output.json
+```
+
+The generator outputs a JSON file containing the full week of events and prints
+summary totals (sleep, work, meals, activities, and free time) to the console.
+
+Configuration files follow the example described in `calendar_gen.py` and the
+project specification.
