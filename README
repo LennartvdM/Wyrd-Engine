@@ -18,6 +18,13 @@ finds, and reports the weekly activity budget it actually achieved. Choose from 
 the random seed to explore different weeks.
 
 ### Configuration-driven CLI
+Generates minute-by-minute weekly schedules for NPC-style characters based on a simple JSON
+configuration. Every generated day totals 1,440 minutes with no gaps or overlaps so the routines
+feel consistent and believable.
+
+## Quick start
+
+### Command-line tool
 
 ```bash
 python calendar_gen.py path/to/config.json output.json
@@ -26,6 +33,8 @@ python calendar_gen.py path/to/config.json output.json
 The original deterministic MVP remains available when you need to supply an explicit schedule
 configuration. It validates the input against strict 24-hour days and is useful for regression
 checks.
+The CLI reads a character configuration, writes a full week of events to the output file, and prints
+summary totals for sleep, work, meals, activities, and free time to the console.
 
 ### Browser UI
 
