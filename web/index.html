@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Synthetic Calendar Generator</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <h1>Synthetic Calendar Generator</h1>
+      <p>
+        Quickly experiment with the MVP scheduler by pasting a character configuration
+        and reviewing the generated week. All processing happens locally in your
+        browser, so you can deploy this page to Netlify as a static site.
+      </p>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>Configuration</h2>
+        <form id="config-form">
+          <div class="form-row">
+            <label for="start-date">Week starting (optional)</label>
+            <input id="start-date" name="start-date" type="date" />
+            <p class="help-text">
+              Leave blank to start on the current week&#8217;s Monday.
+            </p>
+          </div>
+          <div class="form-row">
+            <label for="config-input">Configuration JSON</label>
+            <textarea
+              id="config-input"
+              name="config-input"
+              spellcheck="false"
+              rows="20"
+            ></textarea>
+            <p class="help-text">
+              Provide the same JSON structure used by <code>calendar_gen.py</code>.
+            </p>
+          </div>
+          <div class="form-actions">
+            <button type="submit">Generate schedule</button>
+            <button type="button" id="download-json" disabled>Download JSON</button>
+          </div>
+          <p class="form-error" id="form-error" role="alert"></p>
+        </form>
+      </section>
+
+      <section class="card hidden" id="results">
+        <h2>Generated schedule</h2>
+        <div class="totals" id="totals"></div>
+        <div class="timeline" id="timeline"></div>
+
+        <details open>
+          <summary>Event list</summary>
+          <div class="event-table" id="event-table"></div>
+        </details>
+
+        <details>
+          <summary>Raw JSON output</summary>
+          <pre id="json-output"></pre>
+        </details>
+      </section>
+    </main>
+
+    <footer class="page-footer">
+      <p>
+        Built for the Synthetic Calendar Generator MVP. View the
+        <a href="../calendar_gen.py">Python implementation</a> for CLI usage.
+      </p>
+    </footer>
+
+    <template id="day-template">
+      <section class="day">
+        <h3 class="day-heading"></h3>
+        <div class="day-timeline"></div>
+      </section>
+    </template>
+
+    <template id="event-row-template">
+      <div class="event-row">
+        <div class="event-time"></div>
+        <div class="event-activity"></div>
+        <div class="event-duration"></div>
+      </div>
+    </template>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
