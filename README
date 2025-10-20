@@ -1,1 +1,30 @@
 Generates minute-by-minute weekly schedules for NPCs. Configure sleep, work, meals, and activities—get back a valid 24-hour timeline with no gaps or overlaps.
+
+## Usage
+
+```bash
+python calendar_gen.py path/to/config.json output.json
+```
+
+The generator outputs a JSON file containing the full week of events and prints
+summary totals (sleep, work, meals, activities, and free time) to the console.
+
+Configuration files follow the example described in `calendar_gen.py` and the
+project specification.
+
+## Web interface
+
+A zero-dependency web UI that mirrors the Python logic lives in `web/`. You can
+open `web/index.html` directly in a browser or deploy the folder to Netlify (or
+any static host). The page accepts the same configuration JSON, renders a
+colour-coded weekly timeline, lists all generated events, and lets you download
+the output as a JSON file.
+
+To preview locally without Netlify:
+
+```bash
+cd web
+python -m http.server 8000
+```
+
+Then browse to <http://localhost:8000/>.
