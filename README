@@ -1,1 +1,36 @@
-Generates minute-by-minute weekly schedules for NPCs. Configure sleep, work, meals, and activities—get back a valid 24-hour timeline with no gaps or overlaps.
+# Synthetic Calendar Generator
+
+Generate believable, minute-by-minute weekly schedules for fictional characters. The project now
+ships with a stochastic "workforce" engine for archetype-driven experiments alongside the original
+configuration-based MVP and a browser playground.
+
+## Quick start
+
+### Workforce simulation CLI
+
+```bash
+python calendar_gen_v2.py --archetype office --output schedule.json --seed 7
+```
+
+The workforce generator never fails outright: it always produces a schedule, logs any issues it
+finds, and reports the weekly activity budget it actually achieved. Choose from the built-in
+`office`, `parent`, or `freelancer` archetypes (or extend `archetypes.py` with your own) and tweak
+the random seed to explore different weeks.
+
+### Configuration-driven CLI
+
+```bash
+python calendar_gen.py path/to/config.json output.json
+```
+
+The original deterministic MVP remains available when you need to supply an explicit schedule
+configuration. It validates the input against strict 24-hour days and is useful for regression
+checks.
+
+### Browser UI
+
+Open `web/index.html` in any modern browser (or deploy the `web/` directory to a static host such as
+Netlify) to experiment with schedules visually. The interface mirrors the Python logic, renders
+colour-coded timelines, and lets you download the resulting JSON.
+
+For additional setup tips and deployment notes, see [`docs/usage.md`](docs/usage.md).
