@@ -1,0 +1,30 @@
+{
+  "person_id": "alice",
+  "year": 2025,
+  "vacation_days": 20,
+  "unique_days": [
+    {
+      "date": "2025-08-04",
+      "day_type": "vacation",
+      "rules": {
+        "activity": "beach",
+        "activity_duration": 240
+      }
+    },
+    {
+      "date": "2025-03-15",
+      "day_type": "sick",
+      "rules": {
+        "severity": "moderate"
+      }
+    },
+    {
+      "date": "2025-06-20",
+      "day_type": "birthday",
+      "rules": {
+        "party": true,
+        "guests": 15
+      }
+    }
+  ]
+}
