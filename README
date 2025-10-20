@@ -1,0 +1,24 @@
+# Synthetic Calendar Generator
+
+Generates minute-by-minute weekly schedules for NPC-style characters based on a simple JSON
+configuration. Every generated day totals 1,440 minutes with no gaps or overlaps so the routines
+feel consistent and believable.
+
+## Quick start
+
+### Command-line tool
+
+```bash
+python calendar_gen.py path/to/config.json output.json
+```
+
+The CLI reads a character configuration, writes a full week of events to the output file, and prints
+summary totals for sleep, work, meals, activities, and free time to the console.
+
+### Browser UI
+
+Open `web/index.html` in any modern browser (or deploy the `web/` directory to a static host such as
+Netlify) to experiment with schedules visually. The interface mirrors the Python logic, renders
+colour-coded timelines, and lets you download the resulting JSON.
+
+For additional setup tips and deployment notes, see [`docs/usage.md`](docs/usage.md).
