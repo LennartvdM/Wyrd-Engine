@@ -52,6 +52,7 @@ class PersonProfile:
     budget: WeeklyBudget
     base_waste_factor: float = 1.25
     friction_variance: float = 0.15
+    country: str = "NL"
 
 
 @dataclass

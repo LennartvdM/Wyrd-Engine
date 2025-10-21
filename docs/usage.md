@@ -5,14 +5,18 @@ This repository now contains two complementary Python entry points plus a static
 ## Workforce simulation CLI
 
 ```bash
-python calendar_gen_v2.py --archetype office --output schedule.json --seed 42
+pip install -r requirements.txt  # optional; a built-in NL holiday fallback is provided
+python calendar_gen_v2.py --archetype office --output schedule.json --seed 42 --start-date 2025-12-22 \
+  --yearly-budget examples/yearly_budget_alice.json
 ```
 
 Pick an archetype (office, parent, freelancer) to load one of the persona budgets defined in
-`archetypes.py`. The generator produces a JSON document that includes the full week of events,
-summary hour totals, and any warnings/errors discovered during validation. Adjust the `--seed`
-parameter to explore different stochastic variations and the `--start-date` flag to anchor the week
-on a specific Monday.
+`archetypes.py`. The generator now anchors the schedule to the real calendar, so `--start-date`
+accepts any ISO date (not just Mondays) and holiday/weekend logic adjusts behaviour automatically.
+Supplying `--yearly-budget` allows you to load ad‑hoc unique days (vacations, sick leave, birthdays,
+etc.) from JSON. The engine produces a JSON document that includes the full week of events, summary
+hour totals, calendar-aware day types, and any warnings/errors discovered during validation. Adjust
+the `--seed` parameter to explore different stochastic variations.
 
 ## Configuration-driven CLI
 

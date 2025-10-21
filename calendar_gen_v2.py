@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -17,8 +17,16 @@ from archetypes import (
     create_night_owl_freelancer,
     create_office_worker,
 )
+from calendar_layers import (
+    classify_day,
+    generate_holiday_schedule,
+    get_seasonal_modifiers,
+    get_special_period_effects,
+)
 from friction import generate_daily_friction
-from models import Activity, ActivityTemplate, Event, PersonProfile, ScheduleIssue, DAY_NAMES
+from models import Activity, ActivityTemplate, Event, PersonProfile, ScheduleIssue
+from unique_days import UniqueDay, generate_unique_day_schedule
+from yearly_budget import YearlyBudget
 from validation import validate_week
 
 
@@ -30,10 +38,130 @@ def _allocate_minutes(hours: float, days: int) -> int:
     return int(hours * 60 / days) if hours > 0 else 0
 
 
-def generate_week_activities(profile: PersonProfile) -> Dict[str, List[Activity]]:
-    """Generate unplaced activities for the entire week."""
+@dataclass
+class DayPlan:
+    """Holds generated activities and context for a single calendar day."""
 
-    week_schedule: Dict[str, List[Activity]] = {}
+    date: date
+    day_name: str
+    day_type: str
+    activities: List[Activity]
+
+
+OUTDOOR_ACTIVITIES = {"outdoor_run", "bike_ride", "park_visit", "hiking", "outdoor_walk"}
+
+
+def _generate_standard_day_schedule(
+    weekday_index: int,
+    day_type: str,
+    sleep_minutes: int,
+    work_minutes: int,
+    social_minutes: int,
+    chores_minutes: int,
+    gym_minutes: int,
+) -> List[Activity]:
+    activities: List[Activity] = []
+
+    def add_activity(
+        name: str,
+        base_minutes: int,
+        waste_multiplier: float,
+        optional: bool,
+        priority: int,
+    ) -> None:
+        if base_minutes <= 0:
+            return
+        activities.append(Activity(name, base_minutes, waste_multiplier, optional, priority))
+
+    add_activity("sleep", sleep_minutes, 1.0, optional=False, priority=1)
+    for meal_name in ("breakfast", "lunch", "dinner"):
+        add_activity(meal_name, 30, 1.2, optional=False, priority=2)
+
+    effective_work_minutes = work_minutes if weekday_index < 5 else 0
+    if day_type == "bridge_day":
+        effective_work_minutes = int(effective_work_minutes * 0.6)
+    if effective_work_minutes > 0 and weekday_index < 5:
+        add_activity("work", effective_work_minutes, 1.1, optional=False, priority=2)
+
+    if gym_minutes > 0 and weekday_index in (0, 2, 4) and random.random() < 0.85:
+        add_activity("gym", gym_minutes, 1.4, optional=True, priority=4)
+
+    if social_minutes > 0 and weekday_index >= 5 and random.random() < 0.7:
+        add_activity("social", social_minutes, 1.3, optional=True, priority=4)
+
+    if chores_minutes > 0 and weekday_index in (5, 6) and random.random() < 0.6:
+        add_activity("chores", chores_minutes, 1.2, optional=True, priority=3)
+
+    return activities
+
+
+def apply_seasonal_modifiers(activities: List[Activity], seasonal: Dict[str, object]) -> None:
+    if not seasonal:
+        return
+
+    multiplier = seasonal.get("outdoor_activity_multiplier")
+    if multiplier and isinstance(multiplier, (int, float)):
+        for activity in activities:
+            if activity.name in OUTDOOR_ACTIVITIES:
+                activity.base_duration_minutes = int(activity.base_duration_minutes * multiplier)
+                activity.actual_duration = int(activity.base_duration_minutes * activity.waste_multiplier)
+
+    energy_level = seasonal.get("energy_level")
+    if isinstance(energy_level, (int, float)):
+        if energy_level < 1.0:
+            for activity in activities:
+                if activity.name == "gym":
+                    activity.base_duration_minutes = int(activity.base_duration_minutes * energy_level)
+                    activity.actual_duration = int(activity.base_duration_minutes * activity.waste_multiplier)
+        elif energy_level > 1.05:
+            for activity in activities:
+                if activity.name == "social":
+                    activity.base_duration_minutes = int(activity.base_duration_minutes * min(1.5, energy_level))
+                    activity.actual_duration = int(activity.base_duration_minutes * activity.waste_multiplier)
+
+
+def apply_special_period_effects(
+    activities: List[Activity],
+    special: Optional[Dict[str, object]],
+) -> List[Activity]:
+    if not special:
+        return activities
+
+    updated: List[Activity] = list(activities)
+
+    if special.get("work_minimal"):
+        updated = [activity for activity in updated if activity.name != "work"]
+    elif special.get("work_reduced"):
+        for activity in updated:
+            if activity.name == "work":
+                activity.base_duration_minutes = int(activity.base_duration_minutes * 0.6)
+                activity.actual_duration = int(activity.base_duration_minutes * activity.waste_multiplier)
+
+    if special.get("shops_closed"):
+        updated = [activity for activity in updated if activity.name != "chores"]
+
+    if special.get("social_family_focused"):
+        updated.append(Activity("family_time", 180, 1.2, optional=False, priority=2))
+
+    if special.get("energy_low"):
+        for activity in updated:
+            if activity.name in {"gym", "social"}:
+                activity.base_duration_minutes = int(activity.base_duration_minutes * 0.75)
+                activity.actual_duration = int(activity.base_duration_minutes * activity.waste_multiplier)
+
+    if special.get("study_hours_increased"):
+        extra_minutes = int(special.get("extra_study_minutes", 240))
+        updated.append(Activity("exam_study", extra_minutes, 1.2, optional=False, priority=2))
+
+    return updated
+
+
+def generate_week_activities(
+    profile: PersonProfile,
+    start_date: date,
+    yearly_budget: Optional[YearlyBudget] = None,
+) -> List[DayPlan]:
+    """Generate unplaced activities for each calendar day of the week."""
 
     sleep_minutes = _allocate_minutes(profile.budget.sleep_hours, 7)
     work_minutes = _allocate_minutes(profile.budget.work_hours, 5)
@@ -41,40 +169,64 @@ def generate_week_activities(profile: PersonProfile) -> Dict[str, List[Activity]
     chores_minutes = _allocate_minutes(profile.budget.chores_hours, 2)
     gym_minutes = _allocate_minutes(profile.budget.gym_hours, 3)
 
-    for day_index, day_name in enumerate(DAY_NAMES):
-        daily_friction = generate_daily_friction(day_index, profile.base_waste_factor, profile.friction_variance)
-        activities: List[Activity] = []
+    week_schedule: List[DayPlan] = []
 
-        def add_activity(
-            name: str,
-            base_minutes: int,
-            waste_multiplier: float,
-            optional: bool,
-            priority: int,
-        ) -> None:
-            if base_minutes <= 0:
-                return
-            activity = Activity(name, base_minutes, waste_multiplier, optional, priority)
+    for day_offset in range(7):
+        current_date = start_date + timedelta(days=day_offset)
+        day_name = current_date.strftime("%A").lower()
+        weekday_index = current_date.weekday()
+        daily_friction = generate_daily_friction(
+            weekday_index, profile.base_waste_factor, profile.friction_variance
+        )
+
+        unique_day: Optional[UniqueDay] = None
+        if yearly_budget:
+            unique_day = yearly_budget.get_day_type(current_date)
+
+        activities: List[Activity]
+        day_type: str
+
+        if unique_day:
+            unique_schedule = generate_unique_day_schedule(profile, current_date, unique_day)
+            if unique_schedule is not None:
+                activities = unique_schedule
+                day_type = unique_day.day_type
+            else:
+                day_type = classify_day(current_date, profile.country)
+                activities = _generate_standard_day_schedule(
+                    weekday_index,
+                    day_type,
+                    sleep_minutes,
+                    work_minutes,
+                    social_minutes,
+                    chores_minutes,
+                    gym_minutes,
+                )
+        else:
+            day_type = classify_day(current_date, profile.country)
+            if day_type == "public_holiday":
+                activities = generate_holiday_schedule(profile, current_date)
+            else:
+                activities = _generate_standard_day_schedule(
+                    weekday_index,
+                    day_type,
+                    sleep_minutes,
+                    work_minutes,
+                    social_minutes,
+                    chores_minutes,
+                    gym_minutes,
+                )
+
+        seasonal = get_seasonal_modifiers(current_date)
+        apply_seasonal_modifiers(activities, seasonal)
+
+        special = get_special_period_effects(current_date)
+        activities = apply_special_period_effects(activities, special)
+
+        for activity in activities:
             _apply_friction(activity, daily_friction)
-            activities.append(activity)
 
-        add_activity("sleep", sleep_minutes, 1.0, optional=False, priority=1)
-        for meal_name in ("breakfast", "lunch", "dinner"):
-            add_activity(meal_name, 30, 1.2, optional=False, priority=2)
-
-        if day_index < 5:
-            add_activity("work", work_minutes, 1.1, optional=False, priority=2)
-
-        if gym_minutes > 0 and day_index in (0, 2, 4) and random.random() < 0.85:
-            add_activity("gym", gym_minutes, 1.4, optional=True, priority=4)
-
-        if social_minutes > 0 and day_index >= 5 and random.random() < 0.7:
-            add_activity("social", social_minutes, 1.3, optional=True, priority=4)
-
-        if chores_minutes > 0 and day_index in (5, 6) and random.random() < 0.6:
-            add_activity("chores", chores_minutes, 1.2, optional=True, priority=3)
-
-        week_schedule[day_name] = activities
+        week_schedule.append(DayPlan(current_date, day_name, day_type, activities))
 
     return week_schedule
 
@@ -195,28 +347,28 @@ def generate_complete_week(
     start_date: date,
     week_seed: int,
     templates: Optional[Dict[str, ActivityTemplate]] = None,
+    yearly_budget: Optional[YearlyBudget] = None,
 ) -> Dict[str, object]:
     """Generate a complete timed schedule for a week."""
 
     random.seed(week_seed)
     templates = templates or DEFAULT_TEMPLATES
 
-    week_activities = generate_week_activities(profile)
-    issues = validate_week(week_activities)
+    week_plans = generate_week_activities(profile, start_date, yearly_budget)
+    issues = validate_week({f"{plan.day_name} ({plan.date.isoformat()})": plan.activities for plan in week_plans})
 
     compression_metadata: Dict[str, Dict[str, object]] = {}
-    for day_name, activities in week_activities.items():
-        compressed, metadata = compress_day_if_needed(activities)
-        week_activities[day_name] = compressed
-        compression_metadata[day_name] = metadata
+    for plan in week_plans:
+        compressed, metadata = compress_day_if_needed(plan.activities)
+        plan.activities = compressed
+        compression_metadata[plan.date.isoformat()] = metadata
 
     all_events: List[Event] = []
-    for day_index, day_name in enumerate(DAY_NAMES):
-        day_date = start_date + timedelta(days=day_index)
-        activities = week_activities[day_name]
-        events = place_activities_in_day(day_index, day_name, activities, templates)
+    for plan in week_plans:
+        events = place_activities_in_day(plan.date.weekday(), plan.day_name, plan.activities, templates)
         for event in events:
-            event.date = day_date
+            event.date = plan.date
+            event.day = plan.day_name
         events = fill_free_time(events)
         all_events.extend(events)
 
@@ -233,6 +385,7 @@ def generate_complete_week(
             "issue_count": len(issues),
             "summary_hours": summary_hours,
             "compression": compression_metadata,
+            "day_types": {plan.date.isoformat(): plan.day_type for plan in week_plans},
         },
     }
 
@@ -254,12 +407,37 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True, help="Where to write the generated JSON")
     parser.add_argument("--seed", type=int, default=42, help="Random seed controlling stochastic variation")
     parser.add_argument("--start-date", type=str, default=None, help="ISO start date for the schedule")
+    parser.add_argument(
+        "--yearly-budget",
+        type=Path,
+        default=None,
+        help="Optional path to a yearly budget JSON file",
+    )
     args = parser.parse_args()
 
     start = date.fromisoformat(args.start_date) if args.start_date else date.today()
     profile, templates = _select_profile(args.archetype)
 
-    result = generate_complete_week(profile, start, args.seed, templates)
+    yearly_budget = None
+    if args.yearly_budget:
+        budget_data = json.loads(args.yearly_budget.read_text())
+        yearly_budget = YearlyBudget(
+            person_id=budget_data["person_id"],
+            year=int(budget_data["year"]),
+            vacation_days=int(budget_data.get("vacation_days", 20)),
+            sick_days_taken=int(budget_data.get("sick_days_taken", 0)),
+        )
+        for entry in budget_data.get("unique_days", []):
+            yearly_budget.add_unique_day(
+                UniqueDay(
+                    date=date.fromisoformat(entry["date"]),
+                    day_type=entry["day_type"],
+                    rules=entry.get("rules", {}),
+                    priority=int(entry.get("priority", 5)),
+                )
+            )
+
+    result = generate_complete_week(profile, start, args.seed, templates, yearly_budget)
     args.output.write_text(json.dumps(result, indent=2))
 
     print(f"Generated week for {profile.name}")
