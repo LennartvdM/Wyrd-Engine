@@ -147,7 +147,78 @@ button:not(:disabled):hover {
 .results-body {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.2rem;
+  min-height: 420px;
+}
+
+.timeline .vis-timeline {
+  border: none;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(226, 232, 240, 0.95), rgba(237, 233, 254, 0.85));
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.25), 0 18px 40px -28px rgba(15, 23, 42, 0.55);
+  padding: 0.25rem 0.5rem 0.5rem;
+}
+
+.timeline .vis-itemset {
+  border: none;
+}
+
+.timeline .vis-labelset .vis-label .vis-inner {
+  font-weight: 700;
+  color: #1e293b;
+  font-size: 0.92rem;
+}
+
+.timeline .vis-time-axis {
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.timeline .vis-time-axis .vis-text {
+  color: rgba(71, 85, 105, 0.85);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.timeline .vis-item {
+  border: none;
+  border-radius: 12px;
+  padding: 0;
+  box-shadow: 0 12px 28px -24px rgba(15, 23, 42, 0.6);
+}
+
+.timeline .vis-item .timeline-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.6rem 0.75rem;
+}
+
+.timeline .timeline-item-title {
+  font-weight: 700;
+  font-size: 0.85rem;
+  line-height: 1.1;
+}
+
+.timeline .timeline-item-time {
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", monospace;
+  opacity: 0.9;
+}
+
+.timeline .vis-item[data-group="saturday"],
+.timeline .vis-item[data-group="sunday"] {
+  filter: saturate(0.9);
+}
+
+.timeline-empty {
+  margin: 0;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  border-radius: 18px;
+  background: rgba(226, 232, 240, 0.45);
+  color: rgba(71, 85, 105, 0.8);
+  font-weight: 600;
 }
 
 @media (min-width: 1100px) {

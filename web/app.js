@@ -64,8 +64,11 @@ const downloadButton = document.querySelector("#download-json");
 const calendarContainer = document.querySelector("#calendar");
 const calendarWarning = document.querySelector("#calendar-warning");
 
-let calendar;
-let currentState;
+let currentState = undefined;
+let currentDisplayMode = "minute";
+let visTimelineInstance;
+let visTimelineItems;
+let visTimelineGroups;
 
 if (configInput) {
   configInput.value = JSON.stringify(DEFAULT_CONFIG, null, 2);
@@ -117,8 +120,34 @@ function initCalendar() {
   if (!calendarContainer) {
     return;
   }
-  if (!window.FullCalendar || typeof window.FullCalendar.Calendar !== "function") {
-    calendarWarning?.classList.remove("hidden");
+
+  const blob = new Blob([downloadButton.dataset.payload], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = downloadButton.dataset.filename || "schedule.json";
+  link.click();
+  URL.revokeObjectURL(url);
+});
+
+function enableDownload(events, name) {
+  const payload = JSON.stringify(events, null, 2);
+  downloadButton.dataset.payload = payload;
+  downloadButton.dataset.filename = slugify(name || "schedule") + "-schedule.json";
+  downloadButton.disabled = false;
+}
+
+function renderAllViews() {
+  if (!currentState) {
+    destroyVisTimeline();
+    timelineContainer.innerHTML = "";
+    eventTable.innerHTML = "";
+    dayViewContainer.innerHTML = "";
+    weekViewContainer.innerHTML = "";
+    monthViewContainer.innerHTML = "";
+    yearViewContainer.innerHTML = "";
     return;
   }
   const { Calendar } = window.FullCalendar;
@@ -184,9 +213,274 @@ function renderTotals(totals) {
   });
 }
 
-function renderCalendar(events, meta) {
-  if (!calendar) {
-    initCalendar();
+function renderTimeline(events) {
+  if (isVisTimelineAvailable()) {
+    renderVisTimeline(events, currentState?.meta);
+  } else {
+    destroyVisTimeline();
+    renderStaticTimeline(events);
+  }
+}
+
+function isVisTimelineAvailable() {
+  return Boolean(window.vis && typeof window.vis.Timeline === "function" && typeof window.vis.DataSet === "function");
+}
+
+function renderVisTimeline(events, meta) {
+  if (!timelineContainer) {
+    return;
+  }
+
+  const { items, groups, range } = buildVisTimelineData(events, meta);
+
+  if (!items.length) {
+    destroyVisTimeline();
+    timelineContainer.innerHTML = "";
+    const empty = document.createElement("p");
+    empty.className = "timeline-empty";
+    empty.textContent = "No timeline data available.";
+    timelineContainer.append(empty);
+    return;
+  }
+
+  if (!visTimelineItems) {
+    visTimelineItems = new vis.DataSet(items);
+  } else {
+    visTimelineItems.clear();
+    visTimelineItems.add(items);
+  }
+
+  if (!visTimelineGroups) {
+    visTimelineGroups = new vis.DataSet(groups);
+  } else {
+    visTimelineGroups.clear();
+    visTimelineGroups.add(groups);
+  }
+
+  const options = buildVisTimelineOptions(range);
+
+  if (!visTimelineInstance) {
+    timelineContainer.innerHTML = "";
+    visTimelineInstance = new vis.Timeline(timelineContainer, visTimelineItems, visTimelineGroups, options);
+  } else {
+    visTimelineInstance.setOptions(options);
+    visTimelineInstance.setGroups(visTimelineGroups);
+    visTimelineInstance.setItems(visTimelineItems);
+  }
+}
+
+function destroyVisTimeline() {
+  if (visTimelineInstance) {
+    visTimelineInstance.destroy();
+    visTimelineInstance = undefined;
+  }
+  visTimelineItems = undefined;
+  visTimelineGroups = undefined;
+}
+
+function buildVisTimelineData(events, meta) {
+  const grouped = groupEventsByDay(events);
+  const items = [];
+  const groups = [];
+  let minDate = null;
+  let maxDate = null;
+
+  DAY_NAMES.forEach((dayName, dayPosition) => {
+    const entry = grouped.get(dayName);
+    if (!entry || !entry.events.length) {
+      return;
+    }
+
+    const dayIndex = Number.isInteger(dayPosition) ? dayPosition : DAY_NAMES.indexOf(dayName);
+    const fallbackDate =
+      entry.date ||
+      (meta?.weekStart && dayIndex >= 0
+        ? toIsoDate(addDays(parseIsoDate(meta.weekStart), dayIndex))
+        : undefined);
+    const order = groups.length;
+    groups.push({ id: dayName, content: formatDayHeading(fallbackDate, dayName), order });
+
+    entry.events.forEach((event, index) => {
+      const dateIso = event.date || fallbackDate;
+      const startDate = createTimelineDate(dateIso, event.startMinutes);
+      const endDate = createTimelineDate(dateIso, event.endMinutes);
+      if (!startDate || !endDate) {
+        return;
+      }
+
+      if (!minDate || startDate < minDate) {
+        minDate = startDate;
+      }
+      if (!maxDate || endDate > maxDate) {
+        maxDate = endDate;
+      }
+
+      const color = getActivityColor(event.activity);
+      const textColor = event.activity.toLowerCase() === "free time" ? "#0f172a" : "#ffffff";
+
+      items.push({
+        id: `${dayName}-${index}-${event.startMinutes}`,
+        start: startDate,
+        end: endDate,
+        group: dayName,
+        content: capitalize(event.activity),
+        activityLabel: capitalize(event.activity),
+        timeRange: `${event.start} – ${event.end}`,
+        style: `background-color: ${color}; border-color: ${color}; color: ${textColor};`,
+        title: `${capitalize(event.activity)} · ${event.start} – ${event.end}`,
+      });
+    });
+  });
+
+  const range = {};
+  if (meta?.weekStart) {
+    range.min = createTimelineDate(meta.weekStart, 0);
+  }
+  if (meta?.weekEnd) {
+    range.max = createTimelineDate(meta.weekEnd, 1440);
+  }
+  range.visibleStart = minDate || range.min;
+  range.visibleEnd = maxDate || range.max;
+
+  if (range.visibleStart && range.visibleEnd && range.visibleEnd.getTime() === range.visibleStart.getTime()) {
+    range.visibleEnd = new Date(range.visibleEnd.getTime() + 60 * 60 * 1000);
+  }
+
+  return { items, groups, range };
+}
+
+function buildVisTimelineOptions(range) {
+  const options = {
+    stack: true,
+    orientation: { axis: "top" },
+    groupOrder: (a, b) => (a.order || 0) - (b.order || 0),
+    margin: { item: { horizontal: 18, vertical: 12 }, axis: 18 },
+    horizontalScroll: true,
+    zoomKey: "ctrlKey",
+    zoomMin: 60 * 1000,
+    zoomMax: 14 * 24 * 60 * 60 * 1000,
+    selectable: false,
+    tooltip: { followMouse: true },
+    template: (item) => {
+      const title = item.activityLabel || item.content || "";
+      const time = item.timeRange || "";
+      return `<div class="timeline-item"><span class="timeline-item-title">${title}</span><span class="timeline-item-time">${time}</span></div>`;
+    },
+  };
+
+  if (range?.min instanceof Date) {
+    options.min = range.min;
+  }
+  if (range?.max instanceof Date) {
+    options.max = range.max;
+  }
+  if (range?.visibleStart instanceof Date && range?.visibleEnd instanceof Date) {
+    options.start = range.visibleStart;
+    options.end = range.visibleEnd;
+  }
+
+  return options;
+}
+
+function createTimelineDate(dateIso, minutes = 0) {
+  if (!dateIso || !Number.isFinite(minutes)) {
+    return undefined;
+  }
+  const parts = dateIso.split("-").map(Number);
+  if (parts.length !== 3 || parts.some((value) => Number.isNaN(value))) {
+    return undefined;
+  }
+  const [year, month, day] = parts;
+  const base = new Date(Date.UTC(year, month - 1, day));
+  return new Date(base.getTime() + minutes * 60 * 1000);
+}
+
+function renderStaticTimeline(events) {
+  timelineContainer.innerHTML = "";
+  const grouped = groupEventsByDay(events);
+  for (const dayName of DAY_NAMES) {
+    const dayEntry = grouped.get(dayName);
+    const wrapper = document.createElement("div");
+    wrapper.className = "timeline-day";
+    const heading = document.createElement("h4");
+    heading.textContent = formatDayHeading(dayEntry?.date, dayName);
+    wrapper.append(heading);
+    const rail = createTimelineRail(dayEntry?.events || [], { hourStep: 240, className: "timeline-rail" });
+    wrapper.append(rail);
+    timelineContainer.append(wrapper);
+  }
+}
+
+function renderEventTable(events) {
+  eventTable.innerHTML = "";
+  const grouped = groupEventsByDay(events);
+  const rowTemplate = document.querySelector("#event-row-template");
+
+  for (const dayName of DAY_NAMES) {
+    const dayEntry = grouped.get(dayName);
+    if (!dayEntry || !dayEntry.events.length) {
+      continue;
+    }
+
+    const group = document.createElement("section");
+    group.className = "event-group";
+    const heading = document.createElement("h3");
+    heading.textContent = formatDayHeading(dayEntry.date, dayName);
+    group.append(heading);
+
+    const body = document.createElement("div");
+    body.className = "event-group-body";
+
+    dayEntry.events
+      .filter((event) => event.activity !== "free time")
+      .forEach((event) => {
+        const fragment = rowTemplate.content.cloneNode(true);
+        fragment.querySelector(".event-time").textContent = `${event.start} – ${event.end}`;
+        fragment.querySelector(".event-activity").textContent = event.activity;
+        fragment.querySelector(".event-duration").textContent = `${event.duration_minutes} min`;
+        body.append(fragment);
+      });
+
+    if (!body.children.length) {
+      const empty = document.createElement("div");
+      empty.className = "event-row";
+      empty.textContent = "No scheduled activities.";
+      body.append(empty);
+    }
+
+    group.append(body);
+    eventTable.append(group);
+  }
+}
+
+function renderJson(events) {
+  jsonOutput.textContent = JSON.stringify(events, null, 2);
+}
+
+function renderDayView(events, meta) {
+  const grouped = groupEventsByDay(events);
+  daySelector.innerHTML = "";
+  dayViewContainer.innerHTML = "";
+  const available = DAY_NAMES.filter((name) => grouped.get(name)?.events?.some((event) => event.activity !== "free time"));
+
+  if (!available.length) {
+    const message = document.createElement("p");
+    message.textContent = "No scheduled activities for this week.";
+    dayViewContainer.append(message);
+    return;
+  }
+
+  const defaultDayFromMeta = meta?.weekStart ? dayNameFromIso(meta.weekStart) : undefined;
+  const defaultDay = available.includes(defaultDayFromMeta) ? defaultDayFromMeta : available[0];
+
+  function selectDay(dayName) {
+    daySelector.querySelectorAll("button").forEach((button) => {
+      button.classList.toggle("active", button.dataset.day === dayName);
+    });
+    const entry = grouped.get(dayName);
+    dayViewContainer.innerHTML = "";
+    const column = buildDayColumn(dayName, entry, "day-view-column");
+    dayViewContainer.append(column);
   }
   if (!calendar) {
     return;

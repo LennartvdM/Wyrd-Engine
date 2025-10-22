@@ -6,7 +6,7 @@
     <title>Synthetic Calendar Generator</title>
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.css"
+      href="https://unpkg.com/vis-timeline@9.5.1/styles/vis-timeline-graph2d.min.css"
     />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -81,7 +81,14 @@
       </p>
     </footer>
 
-    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+    <template id="event-row-template">
+      <div class="event-row">
+        <div class="event-time"></div>
+        <div class="event-activity"></div>
+        <div class="event-duration"></div>
+      </div>
+    </template>
+    <script src="https://unpkg.com/vis-timeline@9.5.1/standalone/umd/vis-timeline-graph2d.min.js"></script>
     <script src="app.js" type="module"></script>
   </body>
 </html>
