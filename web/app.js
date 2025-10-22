@@ -616,11 +616,24 @@ function createTimelineRail(events, { hourStep = 180, className = "vertical-time
     block.style.bottom = `${Math.max(0, 100 - endPercent)}%`;
     block.style.background = getActivityColor(event.activity);
     block.title = `${event.activity}: ${event.start} – ${event.end}`;
-    const label = document.createElement("strong");
-    label.textContent = event.activity;
-    const time = document.createElement("span");
-    time.textContent = `${event.start} – ${event.end}`;
-    block.append(label, time);
+    const timeRow = document.createElement("div");
+    timeRow.className = "timeline-block-time";
+    const start = document.createElement("span");
+    start.className = "timeline-block-time-start";
+    start.textContent = event.start;
+    const separator = document.createElement("span");
+    separator.className = "timeline-block-time-separator";
+    separator.textContent = "–";
+    const end = document.createElement("span");
+    end.className = "timeline-block-time-end";
+    end.textContent = event.end;
+    timeRow.append(start, separator, end);
+
+    const title = document.createElement("div");
+    title.className = "timeline-block-title";
+    title.textContent = event.activity;
+
+    block.append(timeRow, title);
     container.append(block);
   });
 

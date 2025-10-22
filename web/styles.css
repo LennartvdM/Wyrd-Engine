@@ -325,16 +325,38 @@ button:not([disabled]):hover {
   font-weight: 600;
   font-size: 0.88rem;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
   text-shadow: 0 1px 4px rgba(15, 23, 42, 0.3);
   box-shadow: 0 12px 30px -20px rgba(15, 23, 42, 0.6);
 }
 
-.timeline-block span {
-  font-size: 0.78rem;
+.timeline-block-title {
+  font-weight: 700;
+  font-size: 0.85rem;
+  line-height: 1.1;
+}
+
+.timeline-block-time {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  font-size: 0.75rem;
   font-weight: 500;
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", monospace;
+  opacity: 0.9;
+}
+
+.timeline-block-time-separator {
+  flex: 0 0 auto;
+  opacity: 0.8;
+}
+
+.timeline-block-time-start,
+.timeline-block-time-end {
+  flex: 1 1 0;
 }
 
 .timeline-block[data-activity="free time"] {
@@ -489,12 +511,11 @@ button:not([disabled]):hover {
 .vertical-timeline .timeline-block {
   left: 4.5rem;
   width: calc(100% - 5.5rem);
-  display: grid;
-  grid-template-columns: 1fr auto;
+  align-items: flex-start;
 }
 
-.vertical-timeline .timeline-block span {
-  justify-self: end;
+.vertical-timeline .timeline-block-time {
+  width: 100%;
 }
 
 .month-view {
