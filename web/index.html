@@ -10,14 +10,14 @@
     <header class="page-header">
       <h1>Synthetic Calendar Generator</h1>
       <p>
-        Quickly experiment with the MVP scheduler by pasting a character configuration
-        and reviewing the generated week. All processing happens locally in your
-        browser, so you can deploy this page to Netlify as a static site.
+        Experiment with character configurations and explore their synthetic schedules
+        with rich visualisations. All processing happens locally in your browser, so
+        you can deploy this page to Netlify as a static site.
       </p>
     </header>
 
-    <main>
-      <section class="card">
+    <main class="page-layout">
+      <section class="card form-card">
         <h2>Configuration</h2>
         <form id="config-form">
           <div class="form-row">
@@ -47,20 +47,59 @@
         </form>
       </section>
 
-      <section class="card hidden" id="results">
-        <h2>Generated schedule</h2>
-        <div class="totals" id="totals"></div>
-        <div class="timeline" id="timeline"></div>
+      <section class="card hidden results-card" id="results">
+        <div class="results-header">
+          <h2>Generated schedule</h2>
+          <div class="view-switcher" role="tablist">
+            <button type="button" class="view-tab active" data-view="overview" role="tab">
+              Overview
+            </button>
+            <button type="button" class="view-tab" data-view="day" role="tab">Day</button>
+            <button type="button" class="view-tab" data-view="week" role="tab">Week</button>
+            <button type="button" class="view-tab" data-view="month" role="tab">Month</button>
+            <button type="button" class="view-tab" data-view="year" role="tab">Year</button>
+          </div>
+        </div>
 
-        <details open>
-          <summary>Event list</summary>
-          <div class="event-table" id="event-table"></div>
-        </details>
+        <div class="view-panels">
+          <section class="view-panel active" data-view="overview" role="tabpanel">
+            <div class="totals" id="totals"></div>
+            <div class="overview-grid">
+              <div>
+                <h3>Weekly timeline</h3>
+                <div class="timeline" id="timeline"></div>
+              </div>
+              <div>
+                <h3>Event list</h3>
+                <div class="event-table" id="event-table"></div>
+              </div>
+            </div>
+            <details>
+              <summary>Raw JSON output</summary>
+              <pre id="json-output"></pre>
+            </details>
+          </section>
 
-        <details>
-          <summary>Raw JSON output</summary>
-          <pre id="json-output"></pre>
-        </details>
+          <section class="view-panel" data-view="day" role="tabpanel" aria-label="Day view">
+            <div class="day-view-header">
+              <label for="day-selector">Focus day</label>
+              <div class="day-selector" id="day-selector"></div>
+            </div>
+            <div class="day-view" id="day-view"></div>
+          </section>
+
+          <section class="view-panel" data-view="week" role="tabpanel" aria-label="Week view">
+            <div class="week-view" id="week-view"></div>
+          </section>
+
+          <section class="view-panel" data-view="month" role="tabpanel" aria-label="Month view">
+            <div class="month-view" id="month-view"></div>
+          </section>
+
+          <section class="view-panel" data-view="year" role="tabpanel" aria-label="Year view">
+            <div class="year-view" id="year-view"></div>
+          </section>
+        </div>
       </section>
     </main>
 
@@ -70,13 +109,6 @@
         <a href="../calendar_gen.py">Python implementation</a> for CLI usage.
       </p>
     </footer>
-
-    <template id="day-template">
-      <section class="day">
-        <h3 class="day-heading"></h3>
-        <div class="day-timeline"></div>
-      </section>
-    </template>
 
     <template id="event-row-template">
       <div class="event-row">
