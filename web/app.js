@@ -1,33 +1,11 @@
-const DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
-
-const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
-const MONTH_COLORS = [
-  "#0ea5e9",
-  "#2563eb",
-  "#7c3aed",
-  "#ec4899",
-  "#f97316",
-  "#facc15",
-  "#10b981",
-  "#22d3ee",
-  "#6366f1",
-  "#a855f7",
-  "#ef4444",
-  "#f59e0b",
+const DAY_NAMES = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
 ];
 
 const DEFAULT_CONFIG = {
@@ -76,46 +54,33 @@ const LOCKED_ACTIVITIES = new Set(["sleep", "work", "commute_in", "commute_out"]
 const configInput = document.querySelector("#config-input");
 const form = document.querySelector("#config-form");
 const formError = document.querySelector("#form-error");
-const formCard = document.querySelector(".form-card");
+const startDateInput = document.querySelector("#start-date");
 const resultsSection = document.querySelector("#results");
+const resultsTitle = document.querySelector("#results-title");
+const resultsSubtitle = document.querySelector("#results-subtitle");
 const totalsContainer = document.querySelector("#totals");
-const timelineContainer = document.querySelector("#timeline");
-const eventTable = document.querySelector("#event-table");
 const jsonOutput = document.querySelector("#json-output");
 const downloadButton = document.querySelector("#download-json");
-const toggleConfigButton = document.querySelector("#toggle-config");
-const startDateInput = document.querySelector("#start-date");
-const viewTabs = Array.from(document.querySelectorAll(".view-tab"));
-const viewPanels = Array.from(document.querySelectorAll(".view-panel"));
-const daySelector = document.querySelector("#day-selector");
-const dayViewContainer = document.querySelector("#day-view");
-const weekViewContainer = document.querySelector("#week-view");
-const monthViewContainer = document.querySelector("#month-view");
-const yearViewContainer = document.querySelector("#year-view");
-const displayModeButtons = Array.from(document.querySelectorAll(".display-mode-button"));
+const calendarContainer = document.querySelector("#calendar");
+const calendarWarning = document.querySelector("#calendar-warning");
 
-let currentState = undefined;
-let currentDisplayMode = "minute";
+let calendar;
+let currentState;
 
-configInput.value = JSON.stringify(DEFAULT_CONFIG, null, 2);
+if (configInput) {
+  configInput.value = JSON.stringify(DEFAULT_CONFIG, null, 2);
+}
 
-toggleConfigButton?.addEventListener("click", () => {
-  const shouldShow = document.body.classList.contains("config-hidden");
-  setConfigVisibility(shouldShow);
-  if (shouldShow) {
-    formCard?.scrollIntoView({ behavior: "smooth", block: "start" });
-    if (configInput) {
-      requestAnimationFrame(() => configInput.focus());
-    }
-  }
-});
+initCalendar();
 
-form.addEventListener("submit", (event) => {
+form?.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (!configInput) {
+    return;
+  }
+
   formError.textContent = "";
-  downloadButton.disabled = true;
-  delete downloadButton.dataset.payload;
-  delete downloadButton.dataset.filename;
+  disableDownload();
 
   let config;
   try {
@@ -125,65 +90,150 @@ form.addEventListener("submit", (event) => {
     return;
   }
 
+  let startDate;
   try {
-    const startDate = parseDateInput(startDateInput.value);
+    startDate = parseDateInput(startDateInput?.value);
+  } catch (error) {
+    formError.textContent = error.message || "Invalid start date.";
+    return;
+  }
+
+  try {
     const { events, totals, meta } = generateSchedule(config, startDate);
-    currentState = { events, totals, meta, displayCache: new Map() };
-    currentDisplayMode = "minute";
-    updateDisplayModeButtons();
-    const heading = resultsSection.querySelector(".results-header h2");
-    heading.textContent = meta.name ? `${meta.name}'s schedule` : "Generated schedule";
+    currentState = { events, totals, meta };
+    updateResultsHeader(meta);
     renderTotals(totals);
+    renderCalendar(events, meta);
     renderJson(events);
-    renderAllViews();
     enableDownload(events, config.name);
-    resultsSection.classList.remove("hidden");
-    activateView(document.querySelector(".view-tab.active")?.dataset.view || "overview");
-    if (toggleConfigButton) {
-      toggleConfigButton.hidden = false;
-      setConfigVisibility(false);
-    }
+    resultsSection?.classList.remove("hidden");
   } catch (error) {
     console.error(error);
     formError.textContent = error.message || "Failed to generate schedule.";
   }
 });
 
-viewTabs.forEach((tab) => {
-  tab.addEventListener("click", () => {
-    if (!currentState) {
-      return;
-    }
-    activateView(tab.dataset.view);
-  });
-});
-
-displayModeButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    const mode = button.dataset.displayMode;
-    if (!mode || mode === currentDisplayMode) {
-      return;
-    }
-    currentDisplayMode = mode;
-    if (currentState && currentState.displayCache) {
-      // Clear cached output for this mode to ensure it recomputes fresh.
-      currentState.displayCache.delete(mode);
-    }
-    updateDisplayModeButtons();
-    if (currentState) {
-      renderAllViews();
-    }
-  });
-});
-
-downloadButton.addEventListener("click", () => {
-  if (downloadButton.disabled || !downloadButton.dataset.payload) {
+function initCalendar() {
+  if (!calendarContainer) {
     return;
   }
-
-  const blob = new Blob([downloadButton.dataset.payload], {
-    type: "application/json",
+  if (!window.FullCalendar || typeof window.FullCalendar.Calendar !== "function") {
+    calendarWarning?.classList.remove("hidden");
+    return;
+  }
+  const { Calendar } = window.FullCalendar;
+  calendar = new Calendar(calendarContainer, {
+    initialView: "timeGridWeek",
+    allDaySlot: false,
+    firstDay: 1,
+    slotMinTime: "00:00:00",
+    slotMaxTime: "24:00:00",
+    slotDuration: "00:30:00",
+    expandRows: true,
+    height: "auto",
+    nowIndicator: true,
+    dayHeaderFormat: { weekday: "short", month: "short", day: "numeric" },
+    eventTimeFormat: { hour: "2-digit", minute: "2-digit", hour12: false },
+    eventDisplay: "block",
+    progressiveEventRendering: true,
+    editable: false,
+    selectable: false,
+    headerToolbar: false,
   });
+  calendar.render();
+  calendarWarning?.classList.add("hidden");
+}
+
+function updateResultsHeader(meta) {
+  if (resultsTitle) {
+    resultsTitle.textContent = meta?.name ? `${meta.name}'s schedule` : "Generated schedule";
+  }
+  if (!resultsSubtitle) {
+    return;
+  }
+  if (meta?.weekStart && meta?.weekEnd) {
+    resultsSubtitle.textContent = formatWeekRange(meta.weekStart, meta.weekEnd);
+  } else {
+    resultsSubtitle.textContent = "";
+  }
+}
+
+function renderTotals(totals) {
+  if (!totalsContainer) {
+    return;
+  }
+  totalsContainer.innerHTML = "";
+  const entries = Object.entries(totals)
+    .filter(([activity]) => activity !== "free time")
+    .sort((a, b) => b[1] - a[1]);
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No scheduled activities.";
+    totalsContainer.append(empty);
+    return;
+  }
+  entries.forEach(([activity, hours]) => {
+    const chip = document.createElement("div");
+    chip.className = "total-chip";
+    const label = document.createElement("span");
+    label.textContent = capitalize(activity);
+    const value = document.createElement("span");
+    value.textContent = `${hours.toFixed(1)} h`;
+    chip.append(label, value);
+    totalsContainer.append(chip);
+  });
+}
+
+function renderCalendar(events, meta) {
+  if (!calendar) {
+    initCalendar();
+  }
+  if (!calendar) {
+    return;
+  }
+  const visibleEvents = events.filter((event) => event.activity !== "free time");
+  const calendarEvents = visibleEvents.map((event) => {
+    const backgroundColor = getActivityColor(event.activity);
+    const textColor = event.activity.toLowerCase() === "free time" ? "#0f172a" : "#ffffff";
+    return {
+      title: capitalize(event.activity),
+      start: `${event.date}T${event.start}:00`,
+      end: `${event.date}T${event.end}:00`,
+      backgroundColor,
+      borderColor: backgroundColor,
+      textColor,
+    };
+  });
+  calendar.removeAllEvents();
+  calendar.addEventSource(calendarEvents);
+  const focusDate = meta?.weekStart || calendarEvents[0]?.start?.slice(0, 10);
+  if (focusDate) {
+    calendar.gotoDate(focusDate);
+  }
+}
+
+function renderJson(events) {
+  if (!jsonOutput) {
+    return;
+  }
+  jsonOutput.textContent = JSON.stringify(events, null, 2);
+}
+
+function enableDownload(events, name) {
+  if (!downloadButton) {
+    return;
+  }
+  const payload = JSON.stringify(events, null, 2);
+  downloadButton.dataset.payload = payload;
+  downloadButton.dataset.filename = `${slugify(name || "schedule")}-schedule.json`;
+  downloadButton.disabled = false;
+}
+
+downloadButton?.addEventListener("click", () => {
+  if (!downloadButton.dataset?.payload) {
+    return;
+  }
+  const blob = new Blob([downloadButton.dataset.payload], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -192,61 +242,13 @@ downloadButton.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
-function enableDownload(events, name) {
-  const payload = JSON.stringify(events, null, 2);
-  downloadButton.dataset.payload = payload;
-  downloadButton.dataset.filename = slugify(name || "schedule") + "-schedule.json";
-  downloadButton.disabled = false;
-}
-
-function renderAllViews() {
-  if (!currentState) {
-    timelineContainer.innerHTML = "";
-    eventTable.innerHTML = "";
-    dayViewContainer.innerHTML = "";
-    weekViewContainer.innerHTML = "";
-    monthViewContainer.innerHTML = "";
-    yearViewContainer.innerHTML = "";
+function disableDownload() {
+  if (!downloadButton) {
     return;
   }
-
-  const events = getDisplayEvents();
-  renderTimeline(events);
-  renderEventTable(events);
-  renderDayView(events, currentState.meta);
-  renderWeekView(events);
-  renderMonthView(events, currentState.meta);
-  renderYearView(events, currentState.meta);
-}
-
-function getDisplayEvents() {
-  if (!currentState) {
-    return [];
-  }
-
-  if (!currentState.displayCache) {
-    currentState.displayCache = new Map();
-  }
-
-  if (currentDisplayMode === "minute") {
-    return currentState.events;
-  }
-
-  if (currentState.displayCache.has(currentDisplayMode)) {
-    return currentState.displayCache.get(currentDisplayMode);
-  }
-
-  let transformed = currentState.events;
-  switch (currentDisplayMode) {
-    case "grid-15":
-      transformed = quantizeEventsForDisplay(currentState.events, 15);
-      break;
-    default:
-      transformed = currentState.events;
-  }
-
-  currentState.displayCache.set(currentDisplayMode, transformed);
-  return transformed;
+  downloadButton.disabled = true;
+  delete downloadButton.dataset.payload;
+  delete downloadButton.dataset.filename;
 }
 
 function slugify(value) {
@@ -258,493 +260,8 @@ function slugify(value) {
     .replace(/^-+|-+$/g, "");
 }
 
-function setConfigVisibility(visible) {
-  document.body.classList.toggle("config-hidden", !visible);
-  if (toggleConfigButton) {
-    toggleConfigButton.textContent = visible ? "Hide configuration" : "Show configuration";
-    toggleConfigButton.setAttribute("aria-expanded", String(visible));
-  }
-}
-
-function activateView(view) {
-  viewTabs.forEach((tab) => {
-    tab.classList.toggle("active", tab.dataset.view === view);
-  });
-  viewPanels.forEach((panel) => {
-    panel.classList.toggle("active", panel.dataset.view === view);
-  });
-}
-
-function updateDisplayModeButtons() {
-  displayModeButtons.forEach((button) => {
-    const mode = button.dataset.displayMode;
-    button.classList.toggle("active", Boolean(mode) && mode === currentDisplayMode);
-  });
-}
-
-function renderTotals(totals) {
-  totalsContainer.innerHTML = "";
-  const entries = Object.entries(totals).sort((a, b) => b[1] - a[1]);
-  if (!entries.length) {
-    const empty = document.createElement("p");
-    empty.textContent = "No totals calculated.";
-    totalsContainer.append(empty);
-    return;
-  }
-  entries.forEach(([activity, hours]) => {
-    const chip = document.createElement("span");
-    chip.className = "total-chip";
-    chip.textContent = `${capitalize(activity)} · ${hours.toFixed(1)} h`;
-    totalsContainer.append(chip);
-  });
-}
-
-function renderTimeline(events) {
-  timelineContainer.innerHTML = "";
-  const grouped = groupEventsByDay(events);
-  for (const dayName of DAY_NAMES) {
-    const dayEntry = grouped.get(dayName);
-    const wrapper = document.createElement("div");
-    wrapper.className = "timeline-day";
-    const heading = document.createElement("h4");
-    heading.textContent = formatDayHeading(dayEntry?.date, dayName);
-    wrapper.append(heading);
-    const rail = createTimelineRail(dayEntry?.events || [], { hourStep: 240, className: "timeline-rail" });
-    wrapper.append(rail);
-    timelineContainer.append(wrapper);
-  }
-}
-
-function renderEventTable(events) {
-  eventTable.innerHTML = "";
-  const grouped = groupEventsByDay(events);
-  const rowTemplate = document.querySelector("#event-row-template");
-
-  for (const dayName of DAY_NAMES) {
-    const dayEntry = grouped.get(dayName);
-    if (!dayEntry || !dayEntry.events.length) {
-      continue;
-    }
-
-    const group = document.createElement("section");
-    group.className = "event-group";
-    const heading = document.createElement("h3");
-    heading.textContent = formatDayHeading(dayEntry.date, dayName);
-    group.append(heading);
-
-    const body = document.createElement("div");
-    body.className = "event-group-body";
-
-    dayEntry.events
-      .filter((event) => event.activity !== "free time")
-      .forEach((event) => {
-        const fragment = rowTemplate.content.cloneNode(true);
-        fragment.querySelector(".event-time").textContent = `${event.start} – ${event.end}`;
-        fragment.querySelector(".event-activity").textContent = event.activity;
-        fragment.querySelector(".event-duration").textContent = `${event.duration_minutes} min`;
-        body.append(fragment);
-      });
-
-    if (!body.children.length) {
-      const empty = document.createElement("div");
-      empty.className = "event-row";
-      empty.textContent = "No scheduled activities.";
-      body.append(empty);
-    }
-
-    group.append(body);
-    eventTable.append(group);
-  }
-}
-
-function renderJson(events) {
-  jsonOutput.textContent = JSON.stringify(events, null, 2);
-}
-
-function renderDayView(events, meta) {
-  const grouped = groupEventsByDay(events);
-  daySelector.innerHTML = "";
-  dayViewContainer.innerHTML = "";
-  const available = DAY_NAMES.filter((name) => grouped.get(name)?.events?.some((event) => event.activity !== "free time"));
-
-  if (!available.length) {
-    const message = document.createElement("p");
-    message.textContent = "No scheduled activities for this week.";
-    dayViewContainer.append(message);
-    return;
-  }
-
-  const defaultDayFromMeta = meta?.weekStart ? dayNameFromIso(meta.weekStart) : undefined;
-  const defaultDay = available.includes(defaultDayFromMeta) ? defaultDayFromMeta : available[0];
-
-  function selectDay(dayName) {
-    daySelector.querySelectorAll("button").forEach((button) => {
-      button.classList.toggle("active", button.dataset.day === dayName);
-    });
-    const entry = grouped.get(dayName);
-    dayViewContainer.innerHTML = "";
-    const column = buildDayColumn(dayName, entry, "day-view-column");
-    dayViewContainer.append(column);
-  }
-
-  available.forEach((dayName) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.day = dayName;
-    button.textContent = formatDayHeading(grouped.get(dayName)?.date, dayName);
-    button.addEventListener("click", () => selectDay(dayName));
-    daySelector.append(button);
-  });
-
-  selectDay(defaultDay);
-}
-
-function renderWeekView(events) {
-  const grouped = groupEventsByDay(events);
-  weekViewContainer.innerHTML = "";
-  DAY_NAMES.forEach((dayName) => {
-    const entry = grouped.get(dayName);
-    const column = buildDayColumn(dayName, entry, "week-view-column");
-    weekViewContainer.append(column);
-  });
-}
-
-function renderMonthView(events, meta) {
-  monthViewContainer.innerHTML = "";
-  if (!events.length) {
-    const message = document.createElement("p");
-    message.textContent = "No data to display.";
-    monthViewContainer.append(message);
-    return;
-  }
-
-  const reference = parseIsoDate(meta.weekStart || events[0].date);
-  const year = reference.getUTCFullYear();
-  const monthIndex = reference.getUTCMonth();
-  const heading = document.createElement("h3");
-  heading.textContent = `${MONTH_NAMES[monthIndex]} ${year}`;
-  monthViewContainer.append(heading);
-
-  const labels = document.createElement("div");
-  labels.className = "month-grid-labels";
-  DAY_NAMES.forEach((day) => {
-    const span = document.createElement("span");
-    span.textContent = capitalize(day).slice(0, 3);
-    labels.append(span);
-  });
-  monthViewContainer.append(labels);
-
-  const grid = document.createElement("div");
-  grid.className = "month-grid";
-  const startOfMonth = new Date(Date.UTC(year, monthIndex, 1));
-  const startOffset = (startOfMonth.getUTCDay() + 6) % 7; // Monday as first column
-  const gridStart = addDays(startOfMonth, -startOffset);
-
-  const eventsByDate = new Map();
-  events.forEach((event) => {
-    if (!eventsByDate.has(event.date)) {
-      eventsByDate.set(event.date, []);
-    }
-    eventsByDate.get(event.date).push(event);
-  });
-
-  for (let index = 0; index < 42; index += 1) {
-    const cellDate = addDays(gridStart, index);
-    const iso = toIsoDate(cellDate);
-    const cell = document.createElement("div");
-    cell.className = "month-cell";
-    if (cellDate.getUTCMonth() !== monthIndex) {
-      cell.style.opacity = "0.55";
-    }
-    if (meta.weekStart && meta.weekEnd && iso >= meta.weekStart && iso <= meta.weekEnd) {
-      cell.classList.add("active-week");
-    }
-
-    const label = document.createElement("div");
-    label.className = "date-label";
-    label.textContent = cellDate.getUTCDate().toString();
-    const weekday = document.createElement("small");
-    weekday.textContent = cellDate.toLocaleDateString(undefined, { weekday: "short" });
-    label.append(weekday);
-    cell.append(label);
-
-    const dayEvents = eventsByDate.get(iso) || [];
-    dayEvents
-      .filter((event) => event.activity !== "free time")
-      .forEach((event) => {
-        const chip = document.createElement("span");
-        chip.className = "month-chip";
-        chip.style.background = getActivityColor(event.activity);
-        chip.textContent = `${event.activity} · ${formatDuration(event.duration_minutes)}`;
-        cell.append(chip);
-      });
-
-    grid.append(cell);
-  }
-
-  monthViewContainer.append(grid);
-
-  const legend = document.createElement("div");
-  legend.className = "month-legend";
-  const activityTotals = new Map();
-  events
-    .filter((event) => parseIsoDate(event.date).getUTCMonth() === monthIndex)
-    .filter((event) => event.activity !== "free time")
-    .forEach((event) => {
-      activityTotals.set(
-        event.activity,
-        (activityTotals.get(event.activity) || 0) + event.duration_minutes
-      );
-    });
-
-  const sortedLegend = Array.from(activityTotals.entries()).sort((a, b) => b[1] - a[1]);
-  sortedLegend.forEach(([activity, minutes]) => {
-    const item = document.createElement("span");
-    item.textContent = `${activity}: ${(minutes / 60).toFixed(1)} h`;
-    legend.append(item);
-  });
-
-  if (legend.children.length) {
-    monthViewContainer.append(legend);
-  }
-}
-
-function renderYearView(events, meta) {
-  yearViewContainer.innerHTML = "";
-  if (!events.length) {
-    const message = document.createElement("p");
-    message.textContent = "No data to display.";
-    yearViewContainer.append(message);
-    return;
-  }
-  const totals = new Array(12).fill(0);
-  events.forEach((event) => {
-    const date = parseIsoDate(event.date);
-    totals[date.getUTCMonth()] += event.duration_minutes;
-  });
-
-  const totalMinutes = totals.reduce((sum, value) => sum + value, 0);
-  const gradientStops = [];
-  let cursor = 0;
-  totals.forEach((value, index) => {
-    const share = totalMinutes ? value / totalMinutes : 1 / 12;
-    const startDeg = 270 + cursor * 360;
-    const endDeg = 270 + (cursor + share) * 360;
-    cursor += share;
-    gradientStops.push(`${MONTH_COLORS[index]} ${startDeg}deg ${endDeg}deg`);
-  });
-
-  const ring = document.createElement("div");
-  ring.className = "year-ring";
-  ring.style.background = `conic-gradient(${gradientStops.join(", ")})`;
-  const center = document.createElement("strong");
-  center.textContent = String(parseIsoDate(meta.weekStart || events[0]?.date).getUTCFullYear());
-  ring.append(center);
-  yearViewContainer.append(ring);
-
-  const legend = document.createElement("div");
-  legend.className = "year-legend";
-
-  const legendEntries = totals.map((value, index) => [index, value]);
-  const legendData = legendEntries.filter(([, value]) => value > 0);
-
-  (legendData.length ? legendData : legendEntries).forEach(([index, value]) => {
-    const item = document.createElement("div");
-    item.className = "legend-item";
-    const swatch = document.createElement("span");
-    swatch.className = "legend-swatch";
-    swatch.style.background = MONTH_COLORS[index];
-    const label = document.createElement("span");
-    const hours = value / 60;
-    label.textContent = `${MONTH_NAMES[index]} · ${hours.toFixed(1)} h`;
-    item.append(swatch, label);
-    legend.append(item);
-  });
-
-  yearViewContainer.append(legend);
-}
-
-function buildDayColumn(dayName, entry, className) {
-  const column = document.createElement("div");
-  column.className = className;
-  const header = document.createElement("div");
-  header.className = "column-header";
-  const title = document.createElement("h3");
-  title.textContent = formatDayHeading(entry?.date, dayName);
-  const total = document.createElement("span");
-  const totalMinutes = (entry?.events || [])
-    .filter((event) => event.activity !== "free time")
-    .reduce((sum, event) => sum + event.duration_minutes, 0);
-  total.textContent = totalMinutes ? `${(totalMinutes / 60).toFixed(1)} h scheduled` : "No scheduled items";
-  header.append(title, total);
-  column.append(header);
-  const timeline = createTimelineRail(entry?.events || [], { className: "vertical-timeline", hourStep: 120 });
-  column.append(timeline);
-  return column;
-}
-
-function dayNameFromIso(iso) {
-  const date = parseIsoDate(iso);
-  const index = (date.getUTCDay() + 6) % 7;
-  return DAY_NAMES[index];
-}
-
-function createTimelineRail(events, { hourStep = 180, className = "vertical-timeline" } = {}) {
-  const container = document.createElement("div");
-  container.className = className;
-  const step = Math.max(hourStep, 60);
-  for (let minutes = 0; minutes <= 1440; minutes += step) {
-    const marker = document.createElement("div");
-    marker.className = "timeline-hour";
-    marker.style.top = `${(minutes / 1440) * 100}%`;
-    marker.style.transform = "translateY(-50%)";
-    marker.textContent = minutes === 1440 ? "24:00" : minutesToTime(minutes);
-    container.append(marker);
-  }
-
-  events.forEach((event) => {
-    const block = document.createElement("div");
-    block.className = "timeline-block";
-    block.dataset.activity = event.activity;
-    const startMinutes = typeof event.startMinutes === "number" ? event.startMinutes : 0;
-    const durationMinutes = typeof event.duration_minutes === "number" ? event.duration_minutes : 0;
-    const endMinutes =
-      typeof event.endMinutes === "number" ? event.endMinutes : startMinutes + durationMinutes;
-    const startPercent = (startMinutes / 1440) * 100;
-    const endPercent = (endMinutes / 1440) * 100;
-    block.style.top = `${startPercent}%`;
-    block.style.bottom = `${Math.max(0, 100 - endPercent)}%`;
-    block.style.background = getActivityColor(event.activity);
-    block.title = `${event.activity}: ${event.start} – ${event.end}`;
-    const timeRow = document.createElement("div");
-    timeRow.className = "timeline-block-time";
-    const start = document.createElement("span");
-    start.className = "timeline-block-time-start";
-    start.textContent = event.start;
-    const separator = document.createElement("span");
-    separator.className = "timeline-block-time-separator";
-    separator.textContent = "–";
-    const end = document.createElement("span");
-    end.className = "timeline-block-time-end";
-    end.textContent = event.end;
-    timeRow.append(start, separator, end);
-
-    const title = document.createElement("div");
-    title.className = "timeline-block-title";
-    title.textContent = event.activity;
-
-    block.append(timeRow, title);
-    container.append(block);
-  });
-
-  return container;
-}
-
-function groupEventsByDay(events) {
-  const grouped = new Map();
-  events.forEach((event) => {
-    if (!grouped.has(event.day)) {
-      grouped.set(event.day, { date: event.date, events: [] });
-    }
-    const entry = grouped.get(event.day);
-    if (!entry.date && event.date) {
-      entry.date = event.date;
-    }
-    entry.events.push(event);
-  });
-  grouped.forEach((entry) => {
-    entry.events.sort((a, b) => a.startMinutes - b.startMinutes);
-  });
-  return grouped;
-}
-
-function quantizeEventsForDisplay(events, gridMinutes = 15) {
-  if (!Array.isArray(events) || !events.length) {
-    return [];
-  }
-
-  const step = Math.max(1, Math.floor(gridMinutes));
-  const grouped = groupEventsByDay(events);
-  const quantized = [];
-
-  for (const dayName of DAY_NAMES) {
-    const entry = grouped.get(dayName);
-    if (!entry || !entry.events.length) {
-      continue;
-    }
-
-    const dayEvents = entry.events.slice().sort((a, b) => a.startMinutes - b.startMinutes);
-    const dateIso = entry.date || dayEvents[0]?.date || null;
-    let pointer = 0;
-    let segment = null;
-
-    for (let start = 0; start < 1440; start += step) {
-      const slotEnd = Math.min(start + step, 1440);
-      while (pointer < dayEvents.length && start >= dayEvents[pointer].endMinutes) {
-        pointer += 1;
-      }
-
-      const index = Math.min(pointer, dayEvents.length - 1);
-      const activeEvent = dayEvents[index];
-      const activity = activeEvent?.activity || "free time";
-
-      if (segment && segment.activity === activity) {
-        segment.endMinutes = slotEnd;
-        segment.end = minutesToTime(slotEnd);
-        segment.duration_minutes += slotEnd - start;
-      } else {
-        if (segment) {
-          quantized.push(segment);
-        }
-        segment = {
-          date: dateIso,
-          day: dayName,
-          startMinutes: start,
-          endMinutes: slotEnd,
-          start: minutesToTime(start),
-          end: minutesToTime(slotEnd),
-          activity,
-          duration_minutes: slotEnd - start,
-        };
-      }
-    }
-
-    if (segment) {
-      quantized.push(segment);
-    }
-  }
-
-  return quantized;
-}
-
-function formatDuration(minutes) {
-  if (minutes % 60 === 0) {
-    return `${minutes / 60}h`;
-  }
-  if (minutes < 60) {
-    return `${minutes}m`;
-  }
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return `${hours}h ${mins}m`;
-}
-
-function formatDayHeading(dateIso, dayName) {
-  if (!dateIso) {
-    return capitalize(dayName);
-  }
-  const [year, month, day] = dateIso.split("-").map(Number);
-  const formatted = new Date(Date.UTC(year, month - 1, day))
-    .toLocaleDateString(undefined, {
-      weekday: "long",
-      month: "short",
-      day: "numeric",
-    });
-  return formatted;
-}
-
 function capitalize(value) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
 }
 
 function getActivityColor(activity) {
@@ -753,11 +270,22 @@ function getActivityColor(activity) {
     return COLOR_MAP[key];
   }
   let hash = 0;
-  for (let i = 0; i < key.length; i += 1) {
-    hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
   }
   const hue = hash % 360;
   return `hsl(${hue}deg, 70%, 45%)`;
+}
+
+function formatWeekRange(startIso, endIso) {
+  const start = parseIsoDate(startIso);
+  const end = parseIsoDate(endIso);
+  const formatter = new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  return `${formatter.format(start)} – ${formatter.format(end)}`;
 }
 
 function parseDateInput(value) {
@@ -919,8 +447,8 @@ class DaySchedule {
         return [start, start + duration];
       }
     }
-    for (let i = segments.length - 1; i >= 0; i -= 1) {
-      const [start, end] = segments[i];
+    for (let index = segments.length - 1; index >= 0; index -= 1) {
+      const [start, end] = segments[index];
       if (end <= desiredStart && end - start >= duration) {
         return [end - duration, end];
       }
