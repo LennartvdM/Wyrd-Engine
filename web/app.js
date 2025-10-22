@@ -88,8 +88,10 @@ const dayViewContainer = document.querySelector("#day-view");
 const weekViewContainer = document.querySelector("#week-view");
 const monthViewContainer = document.querySelector("#month-view");
 const yearViewContainer = document.querySelector("#year-view");
+const displayModeButtons = Array.from(document.querySelectorAll(".display-mode-button"));
 
 let currentState = undefined;
+let currentDisplayMode = "minute";
 
 configInput.value = JSON.stringify(DEFAULT_CONFIG, null, 2);
 
@@ -111,17 +113,14 @@ form.addEventListener("submit", (event) => {
   try {
     const startDate = parseDateInput(startDateInput.value);
     const { events, totals, meta } = generateSchedule(config, startDate);
-    currentState = { events, totals, meta };
+    currentState = { events, totals, meta, displayCache: new Map() };
+    currentDisplayMode = "minute";
+    updateDisplayModeButtons();
     const heading = resultsSection.querySelector(".results-header h2");
     heading.textContent = meta.name ? `${meta.name}'s schedule` : "Generated schedule";
     renderTotals(totals);
-    renderTimeline(events);
-    renderEventTable(events);
     renderJson(events);
-    renderDayView(events, meta);
-    renderWeekView(events);
-    renderMonthView(events, meta);
-    renderYearView(events, meta);
+    renderAllViews();
     enableDownload(events, config.name);
     resultsSection.classList.remove("hidden");
     activateView(document.querySelector(".view-tab.active")?.dataset.view || "overview");
@@ -137,6 +136,24 @@ viewTabs.forEach((tab) => {
       return;
     }
     activateView(tab.dataset.view);
+  });
+});
+
+displayModeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const mode = button.dataset.displayMode;
+    if (!mode || mode === currentDisplayMode) {
+      return;
+    }
+    currentDisplayMode = mode;
+    if (currentState && currentState.displayCache) {
+      // Clear cached output for this mode to ensure it recomputes fresh.
+      currentState.displayCache.delete(mode);
+    }
+    updateDisplayModeButtons();
+    if (currentState) {
+      renderAllViews();
+    }
   });
 });
 
@@ -163,6 +180,56 @@ function enableDownload(events, name) {
   downloadButton.disabled = false;
 }
 
+function renderAllViews() {
+  if (!currentState) {
+    timelineContainer.innerHTML = "";
+    eventTable.innerHTML = "";
+    dayViewContainer.innerHTML = "";
+    weekViewContainer.innerHTML = "";
+    monthViewContainer.innerHTML = "";
+    yearViewContainer.innerHTML = "";
+    return;
+  }
+
+  const events = getDisplayEvents();
+  renderTimeline(events);
+  renderEventTable(events);
+  renderDayView(events, currentState.meta);
+  renderWeekView(events);
+  renderMonthView(events, currentState.meta);
+  renderYearView(events, currentState.meta);
+}
+
+function getDisplayEvents() {
+  if (!currentState) {
+    return [];
+  }
+
+  if (!currentState.displayCache) {
+    currentState.displayCache = new Map();
+  }
+
+  if (currentDisplayMode === "minute") {
+    return currentState.events;
+  }
+
+  if (currentState.displayCache.has(currentDisplayMode)) {
+    return currentState.displayCache.get(currentDisplayMode);
+  }
+
+  let transformed = currentState.events;
+  switch (currentDisplayMode) {
+    case "grid-15":
+      transformed = quantizeEventsForDisplay(currentState.events, 15);
+      break;
+    default:
+      transformed = currentState.events;
+  }
+
+  currentState.displayCache.set(currentDisplayMode, transformed);
+  return transformed;
+}
+
 function slugify(value) {
   return value
     .toString()
@@ -178,6 +245,13 @@ function activateView(view) {
   });
   viewPanels.forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.view === view);
+  });
+}
+
+function updateDisplayModeButtons() {
+  displayModeButtons.forEach((button) => {
+    const mode = button.dataset.displayMode;
+    button.classList.toggle("active", Boolean(mode) && mode === currentDisplayMode);
   });
 }
 
@@ -536,6 +610,65 @@ function groupEventsByDay(events) {
     entry.events.sort((a, b) => a.startMinutes - b.startMinutes);
   });
   return grouped;
+}
+
+function quantizeEventsForDisplay(events, gridMinutes = 15) {
+  if (!Array.isArray(events) || !events.length) {
+    return [];
+  }
+
+  const step = Math.max(1, Math.floor(gridMinutes));
+  const grouped = groupEventsByDay(events);
+  const quantized = [];
+
+  for (const dayName of DAY_NAMES) {
+    const entry = grouped.get(dayName);
+    if (!entry || !entry.events.length) {
+      continue;
+    }
+
+    const dayEvents = entry.events.slice().sort((a, b) => a.startMinutes - b.startMinutes);
+    const dateIso = entry.date || dayEvents[0]?.date || null;
+    let pointer = 0;
+    let segment = null;
+
+    for (let start = 0; start < 1440; start += step) {
+      const slotEnd = Math.min(start + step, 1440);
+      while (pointer < dayEvents.length && start >= dayEvents[pointer].endMinutes) {
+        pointer += 1;
+      }
+
+      const index = Math.min(pointer, dayEvents.length - 1);
+      const activeEvent = dayEvents[index];
+      const activity = activeEvent?.activity || "free time";
+
+      if (segment && segment.activity === activity) {
+        segment.endMinutes = slotEnd;
+        segment.end = minutesToTime(slotEnd);
+        segment.duration_minutes += slotEnd - start;
+      } else {
+        if (segment) {
+          quantized.push(segment);
+        }
+        segment = {
+          date: dateIso,
+          day: dayName,
+          startMinutes: start,
+          endMinutes: slotEnd,
+          start: minutesToTime(start),
+          end: minutesToTime(slotEnd),
+          activity,
+          duration_minutes: slotEnd - start,
+        };
+      }
+    }
+
+    if (segment) {
+      quantized.push(segment);
+    }
+  }
+
+  return quantized;
 }
 
 function formatDuration(minutes) {
