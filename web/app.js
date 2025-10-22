@@ -606,8 +606,14 @@ function createTimelineRail(events, { hourStep = 180, className = "vertical-time
     const block = document.createElement("div");
     block.className = "timeline-block";
     block.dataset.activity = event.activity;
-    block.style.top = `${(event.startMinutes / 1440) * 100}%`;
-    block.style.height = `${(event.duration_minutes / 1440) * 100}%`;
+    const startMinutes = typeof event.startMinutes === "number" ? event.startMinutes : 0;
+    const durationMinutes = typeof event.duration_minutes === "number" ? event.duration_minutes : 0;
+    const endMinutes =
+      typeof event.endMinutes === "number" ? event.endMinutes : startMinutes + durationMinutes;
+    const startPercent = (startMinutes / 1440) * 100;
+    const endPercent = (endMinutes / 1440) * 100;
+    block.style.top = `${startPercent}%`;
+    block.style.bottom = `${Math.max(0, 100 - endPercent)}%`;
     block.style.background = getActivityColor(event.activity);
     block.title = `${event.activity}: ${event.start} – ${event.end}`;
     const label = document.createElement("strong");
