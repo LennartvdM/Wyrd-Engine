@@ -51,16 +51,6 @@
         <div class="results-header">
           <h2>Generated schedule</h2>
           <div class="results-controls">
-            <button
-              type="button"
-              id="toggle-config"
-              class="ghost-button"
-              hidden
-              aria-controls="config-form"
-              aria-expanded="false"
-            >
-              Hide configuration
-            </button>
             <div class="view-switcher" role="tablist">
               <button type="button" class="view-tab active" data-view="overview" role="tab">
                 Overview
@@ -69,6 +59,27 @@
               <button type="button" class="view-tab" data-view="week" role="tab">Week</button>
               <button type="button" class="view-tab" data-view="month" role="tab">Month</button>
               <button type="button" class="view-tab" data-view="year" role="tab">Year</button>
+            </div>
+            <div
+              class="display-mode-switcher"
+              id="display-mode-switcher"
+              role="group"
+              aria-label="Display granularity"
+            >
+              <button
+                type="button"
+                class="display-mode-button active"
+                data-display-mode="minute"
+              >
+                Minute view
+              </button>
+              <button
+                type="button"
+                class="display-mode-button"
+                data-display-mode="grid-15"
+              >
+                15 min grid
+              </button>
             </div>
           </div>
         </div>
