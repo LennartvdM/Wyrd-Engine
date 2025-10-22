@@ -164,6 +164,23 @@ button:not([disabled]):hover {
   align-items: center;
 }
 
+.toggle-config-button {
+  background: rgba(226, 232, 240, 0.5);
+  color: #1e293b;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  box-shadow: none;
+  padding: 0.5rem 1.2rem;
+}
+
+.toggle-config-button:hover {
+  box-shadow: 0 12px 22px -20px rgba(148, 163, 184, 0.9);
+}
+
+.toggle-config-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.35);
+}
+
 .view-switcher {
   display: flex;
   gap: 0.75rem;

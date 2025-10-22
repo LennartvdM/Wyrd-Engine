@@ -81,6 +81,7 @@ const timelineContainer = document.querySelector("#timeline");
 const eventTable = document.querySelector("#event-table");
 const jsonOutput = document.querySelector("#json-output");
 const downloadButton = document.querySelector("#download-json");
+const toggleConfigButton = document.querySelector("#toggle-config");
 const startDateInput = document.querySelector("#start-date");
 const viewTabs = Array.from(document.querySelectorAll(".view-tab"));
 const viewPanels = Array.from(document.querySelectorAll(".view-panel"));
