@@ -408,12 +408,24 @@ button:not([disabled]):hover {
   gap: 1.4rem;
 }
 
+.week-view {
+  grid-template-columns: repeat(7, minmax(180px, 1fr));
+  gap: 1.2rem;
+  overflow-x: auto;
+  padding: 0 0.25rem 0.75rem;
+  scrollbar-gutter: stable both-edges;
+}
+
 .day-view-column,
 .week-view-column {
   background: rgba(248, 250, 252, 0.85);
   border-radius: 16px;
   padding: 1.2rem;
   box-shadow: inset 0 0 0 1px rgba(203, 213, 225, 0.4);
+}
+
+.week-view-column {
+  min-width: 180px;
 }
 
 .column-header {
@@ -622,6 +634,14 @@ pre {
   color: #64748b;
 }
 
+.config-hidden .page-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.config-hidden .form-card {
+  display: none;
+}
+
 @media (max-width: 1080px) {
   .page-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -649,5 +669,9 @@ pre {
 
   .vertical-timeline {
     height: 360px;
+  }
+
+  .week-view {
+    grid-template-columns: repeat(7, minmax(220px, 1fr));
   }
 }

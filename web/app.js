@@ -74,6 +74,7 @@ const COLOR_MAP = {
 const configInput = document.querySelector("#config-input");
 const form = document.querySelector("#config-form");
 const formError = document.querySelector("#form-error");
+const formCard = document.querySelector(".form-card");
 const resultsSection = document.querySelector("#results");
 const totalsContainer = document.querySelector("#totals");
 const timelineContainer = document.querySelector("#timeline");
@@ -94,6 +95,17 @@ let currentState = undefined;
 let currentDisplayMode = "minute";
 
 configInput.value = JSON.stringify(DEFAULT_CONFIG, null, 2);
+
+toggleConfigButton?.addEventListener("click", () => {
+  const shouldShow = document.body.classList.contains("config-hidden");
+  setConfigVisibility(shouldShow);
+  if (shouldShow) {
+    formCard?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (configInput) {
+      requestAnimationFrame(() => configInput.focus());
+    }
+  }
+});
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -124,6 +136,10 @@ form.addEventListener("submit", (event) => {
     enableDownload(events, config.name);
     resultsSection.classList.remove("hidden");
     activateView(document.querySelector(".view-tab.active")?.dataset.view || "overview");
+    if (toggleConfigButton) {
+      toggleConfigButton.hidden = false;
+      setConfigVisibility(false);
+    }
   } catch (error) {
     console.error(error);
     formError.textContent = error.message || "Failed to generate schedule.";
@@ -237,6 +253,14 @@ function slugify(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+function setConfigVisibility(visible) {
+  document.body.classList.toggle("config-hidden", !visible);
+  if (toggleConfigButton) {
+    toggleConfigButton.textContent = visible ? "Hide configuration" : "Show configuration";
+    toggleConfigButton.setAttribute("aria-expanded", String(visible));
+  }
 }
 
 function activateView(view) {
