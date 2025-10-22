@@ -8,7 +8,7 @@ import random
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from archetypes import (
     DEFAULT_TEMPLATES,
@@ -333,6 +333,45 @@ def fill_free_time(events: List[Event]) -> List[Event]:
     return filled
 
 
+def apply_micro_jitter(
+    events: List[Event],
+    max_shift: int = 5,
+    locked_activities: Optional[Set[str]] = None,
+) -> List[Event]:
+    """Adjust adjacent event boundaries to introduce minute-level variation."""
+
+    if max_shift <= 0 or len(events) < 2:
+        return events
+
+    locked = set(locked_activities or {"sleep", "work", "commute_in", "commute_out"})
+    sorted_events = sorted(events, key=lambda evt: evt.start_minutes)
+
+    for index in range(len(sorted_events) - 1):
+        current = sorted_events[index]
+        following = sorted_events[index + 1]
+
+        if current.activity.name in locked or following.activity.name in locked:
+            continue
+
+        min_boundary = current.start_minutes + 1
+        max_boundary = following.end_minutes - 1
+        if max_boundary <= min_boundary:
+            continue
+
+        shift = int(round(random.gauss(0.0, max_shift / 2)))
+        shift = max(-max_shift, min(max_shift, shift))
+        new_boundary = current.end_minutes + shift
+        new_boundary = max(min_boundary, min(max_boundary, new_boundary))
+
+        if new_boundary == current.end_minutes:
+            continue
+
+        current.end_minutes = new_boundary
+        following.start_minutes = new_boundary
+
+    return events
+
+
 def generate_summary(event_dicts: Iterable[Dict[str, object]]) -> Dict[str, float]:
     totals: Dict[str, int] = {}
     for event in event_dicts:
@@ -370,6 +409,7 @@ def generate_complete_week(
             event.date = plan.date
             event.day = plan.day_name
         events = fill_free_time(events)
+        events = apply_micro_jitter(events)
         all_events.extend(events)
 
     events_payload = [event.to_dict() for event in all_events]

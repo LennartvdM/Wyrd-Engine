@@ -17,6 +17,8 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+import random
+
 
 DAY_NAMES = [
     "monday",
@@ -180,6 +182,40 @@ class DaySchedule:
         self.day_name = DAY_NAMES[day_index]
         self.date = day_date
         self._events: List[Tuple[int, int, str]] = []
+
+    def apply_micro_jitter(
+        self,
+        max_shift: int = 5,
+        locked_activities: Optional[Sequence[str]] = None,
+    ) -> None:
+        """Shift internal boundaries slightly to avoid rigid 15-minute grids."""
+
+        if max_shift <= 0 or len(self._events) < 2:
+            return
+
+        locked = set(locked_activities or {"sleep", "work", "commute_in", "commute_out"})
+        for index in range(len(self._events) - 1):
+            start_a, end_a, activity_a = self._events[index]
+            start_b, end_b, activity_b = self._events[index + 1]
+
+            if activity_a in locked or activity_b in locked:
+                continue
+
+            min_boundary = start_a + 1
+            max_boundary = end_b - 1
+            if max_boundary <= min_boundary:
+                continue
+
+            shift = int(round(random.gauss(0.0, max_shift / 2)))
+            shift = max(-max_shift, min(max_shift, shift))
+            new_boundary = end_a + shift
+            new_boundary = max(min_boundary, min(max_boundary, new_boundary))
+
+            if new_boundary == end_a:
+                continue
+
+            self._events[index] = (start_a, new_boundary, activity_a)
+            self._events[index + 1] = (new_boundary, end_b, activity_b)
 
     def add_event(self, start: int, end: int, activity: str) -> bool:
         """Attempt to add an event; return False if it would overlap."""
@@ -356,6 +392,7 @@ def add_activities(schedule: List[DaySchedule], activities: Sequence[ActivityCon
 def finalise_schedule(schedule: List[DaySchedule]) -> None:
     for day in schedule:
         day.fill_free_time()
+        day.apply_micro_jitter()
         day.validate()
 
 

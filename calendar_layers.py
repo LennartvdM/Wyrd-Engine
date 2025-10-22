@@ -75,7 +75,11 @@ def _holiday_cache(country: str, year: int) -> Dict[date, str]:
     years = sorted({year - 1, year, year + 1})
     if _country_holidays is None:
         return _fallback_holidays(country, year)
-    return dict(_country_holidays(country, years=years))
+    data = dict(_country_holidays(country, years=years))
+    fallback = _fallback_holidays(country, year)
+    for day, name in fallback.items():
+        data.setdefault(day, name)
+    return data
 
 
 def classify_day(day: date, country: str = "NL") -> str:
