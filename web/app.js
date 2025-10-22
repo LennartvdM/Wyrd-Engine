@@ -71,6 +71,8 @@ const COLOR_MAP = {
   "free time": "#e2e8f0",
 };
 
+const LOCKED_ACTIVITIES = new Set(["sleep", "work", "commute_in", "commute_out"]);
+
 const configInput = document.querySelector("#config-input");
 const form = document.querySelector("#config-form");
 const formError = document.querySelector("#form-error");
@@ -847,6 +849,24 @@ function minutesToTime(value) {
   return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function sampleNormal(mean = 0, std = 1) {
+  let u = 0;
+  let v = 0;
+  while (u === 0) {
+    u = Math.random();
+  }
+  while (v === 0) {
+    v = Math.random();
+  }
+  const magnitude = Math.sqrt(-2.0 * Math.log(u));
+  const z = magnitude * Math.cos(2.0 * Math.PI * v);
+  return mean + z * std;
+}
+
 class DaySchedule {
   constructor(dayIndex, date) {
     this.dayIndex = dayIndex;
@@ -918,6 +938,37 @@ class DaySchedule {
     }
     this.events.push(...additions);
     this.events.sort((a, b) => a.start - b.start);
+  }
+
+  applyMicroJitter(maxShift = 5, locked = LOCKED_ACTIVITIES) {
+    if (!Number.isFinite(maxShift) || maxShift <= 0 || this.events.length < 2) {
+      return;
+    }
+
+    const lockedSet = new Set(locked);
+    for (let index = 0; index < this.events.length - 1; index += 1) {
+      const current = this.events[index];
+      const next = this.events[index + 1];
+
+      if (lockedSet.has(current.activity) || lockedSet.has(next.activity)) {
+        continue;
+      }
+
+      const minBoundary = current.start + 1;
+      const maxBoundary = next.end - 1;
+      if (maxBoundary <= minBoundary) {
+        continue;
+      }
+
+      const shift = Math.round(clamp(sampleNormal(0, maxShift / 2), -maxShift, maxShift));
+      const newBoundary = clamp(current.end + shift, minBoundary, maxBoundary);
+      if (newBoundary === current.end) {
+        continue;
+      }
+
+      current.end = newBoundary;
+      next.start = newBoundary;
+    }
   }
 
   validate() {
@@ -1047,6 +1098,7 @@ function addActivities(schedule, activities) {
 function finaliseSchedule(schedule) {
   for (const day of schedule) {
     day.fillFreeTime();
+    day.applyMicroJitter();
     day.validate();
   }
 }
