@@ -14,22 +14,19 @@
     <header class="page-header">
       <h1>Synthetic Calendar Generator</h1>
       <p>
-        Experiment with character configurations and explore their synthetic schedules
-        with rich visualisations. All processing happens locally in your browser, so
-        you can deploy this page to Netlify as a static site.
+        Generate weekly schedules from configuration JSON and explore the results in
+        a familiar calendar interface powered by FullCalendar.
       </p>
     </header>
 
     <main class="page-layout">
       <section class="card form-card">
         <h2>Configuration</h2>
-        <form id="config-form">
+        <form id="config-form" novalidate>
           <div class="form-row">
             <label for="start-date">Week starting (optional)</label>
             <input id="start-date" name="start-date" type="date" />
-            <p class="help-text">
-              Leave blank to start on the current week&#8217;s Monday.
-            </p>
+            <p class="help-text">Leave blank to start on the current week&#8217;s Monday.</p>
           </div>
           <div class="form-row">
             <label for="config-input">Configuration JSON</label>
@@ -45,7 +42,6 @@
           </div>
           <div class="form-actions">
             <button type="submit">Generate schedule</button>
-            <button type="button" id="download-json" disabled>Download JSON</button>
           </div>
           <p class="form-error" id="form-error" role="alert"></p>
         </form>
@@ -53,89 +49,28 @@
 
       <section class="card hidden results-card" id="results">
         <div class="results-header">
-          <h2>Generated schedule</h2>
-          <div class="results-controls">
-            <button
-              type="button"
-              id="toggle-config"
-              class="toggle-config-button"
-              hidden
-              aria-expanded="false"
-            >
-              Show configuration
-            </button>
-            <div class="view-switcher" role="tablist">
-              <button type="button" class="view-tab active" data-view="overview" role="tab">
-                Overview
-              </button>
-              <button type="button" class="view-tab" data-view="day" role="tab">Day</button>
-              <button type="button" class="view-tab" data-view="week" role="tab">Week</button>
-              <button type="button" class="view-tab" data-view="month" role="tab">Month</button>
-              <button type="button" class="view-tab" data-view="year" role="tab">Year</button>
+          <div>
+            <h2 id="results-title">Generated schedule</h2>
+            <p id="results-subtitle"></p>
+          </div>
+          <button type="button" id="download-json" disabled>Download JSON</button>
+        </div>
+        <div class="results-body">
+          <aside class="summary">
+            <h3>Weekly totals</h3>
+            <div class="totals" id="totals"></div>
+          </aside>
+          <div class="calendar-wrapper">
+            <div class="calendar-warning hidden" id="calendar-warning">
+              FullCalendar failed to load. Check your network connection and reload the page.
             </div>
-            <div
-              class="display-mode-switcher"
-              id="display-mode-switcher"
-              role="group"
-              aria-label="Display granularity"
-            >
-              <button
-                type="button"
-                class="display-mode-button active"
-                data-display-mode="minute"
-              >
-                Minute view
-              </button>
-              <button
-                type="button"
-                class="display-mode-button"
-                data-display-mode="grid-15"
-              >
-                15 min grid
-              </button>
-            </div>
+            <div id="calendar"></div>
           </div>
         </div>
-
-        <div class="view-panels">
-          <section class="view-panel active" data-view="overview" role="tabpanel">
-            <div class="totals" id="totals"></div>
-            <div class="overview-grid">
-              <div>
-                <h3>Weekly timeline</h3>
-                <div class="timeline" id="timeline"></div>
-              </div>
-              <div>
-                <h3>Event list</h3>
-                <div class="event-table" id="event-table"></div>
-              </div>
-            </div>
-            <details>
-              <summary>Raw JSON output</summary>
-              <pre id="json-output"></pre>
-            </details>
-          </section>
-
-          <section class="view-panel" data-view="day" role="tabpanel" aria-label="Day view">
-            <div class="day-view-header">
-              <label for="day-selector">Focus day</label>
-              <div class="day-selector" id="day-selector"></div>
-            </div>
-            <div class="day-view" id="day-view"></div>
-          </section>
-
-          <section class="view-panel" data-view="week" role="tabpanel" aria-label="Week view">
-            <div class="week-view" id="week-view"></div>
-          </section>
-
-          <section class="view-panel" data-view="month" role="tabpanel" aria-label="Month view">
-            <div class="month-view" id="month-view"></div>
-          </section>
-
-          <section class="view-panel" data-view="year" role="tabpanel" aria-label="Year view">
-            <div class="year-view" id="year-view"></div>
-          </section>
-        </div>
+        <details class="raw-json">
+          <summary>Raw JSON output</summary>
+          <pre id="json-output"></pre>
+        </details>
       </section>
     </main>
 
