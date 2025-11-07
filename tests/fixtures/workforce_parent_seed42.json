@@ -1,0 +1,582 @@
+{
+  "person": "Exhausted Parent",
+  "week_start": "2025-12-22",
+  "events": [
+    {
+      "date": "2025-12-22",
+      "day": "monday",
+      "start": "00:00",
+      "end": "07:14",
+      "activity": "free time",
+      "duration_minutes": 434
+    },
+    {
+      "date": "2025-12-22",
+      "day": "monday",
+      "start": "07:14",
+      "end": "07:55",
+      "activity": "breakfast",
+      "duration_minutes": 41
+    },
+    {
+      "date": "2025-12-22",
+      "day": "monday",
+      "start": "07:55",
+      "end": "09:07",
+      "activity": "free time",
+      "duration_minutes": 72
+    },
+    {
+      "date": "2025-12-22",
+      "day": "monday",
+      "start": "09:07",
+      "end": "18:01",
+      "activity": "work",
+      "duration_minutes": 534
+    },
+    {
+      "date": "2025-12-22",
+      "day": "monday",
+      "start": "18:01",
+      "end": "18:47",
+      "activity": "lunch",
+      "duration_minutes": 46
+    },
+    {
+      "date": "2025-12-22",
+      "day": "monday",
+      "start": "18:47",
+      "end": "19:28",
+      "activity": "gym",
+      "duration_minutes": 41
+    },
+    {
+      "date": "2025-12-22",
+      "day": "monday",
+      "start": "19:28",
+      "end": "20:11",
+      "activity": "dinner",
+      "duration_minutes": 43
+    },
+    {
+      "date": "2025-12-22",
+      "day": "monday",
+      "start": "20:11",
+      "end": "22:59",
+      "activity": "free time",
+      "duration_minutes": 168
+    },
+    {
+      "date": "2025-12-22",
+      "day": "monday",
+      "start": "22:59",
+      "end": "31:04",
+      "activity": "sleep",
+      "duration_minutes": 485
+    },
+    {
+      "date": "2025-12-23",
+      "day": "tuesday",
+      "start": "00:00",
+      "end": "07:15",
+      "activity": "free time",
+      "duration_minutes": 435
+    },
+    {
+      "date": "2025-12-23",
+      "day": "tuesday",
+      "start": "07:15",
+      "end": "08:07",
+      "activity": "breakfast",
+      "duration_minutes": 52
+    },
+    {
+      "date": "2025-12-23",
+      "day": "tuesday",
+      "start": "08:07",
+      "end": "08:58",
+      "activity": "free time",
+      "duration_minutes": 51
+    },
+    {
+      "date": "2025-12-23",
+      "day": "tuesday",
+      "start": "08:58",
+      "end": "18:04",
+      "activity": "work",
+      "duration_minutes": 546
+    },
+    {
+      "date": "2025-12-23",
+      "day": "tuesday",
+      "start": "18:04",
+      "end": "18:55",
+      "activity": "lunch",
+      "duration_minutes": 51
+    },
+    {
+      "date": "2025-12-23",
+      "day": "tuesday",
+      "start": "18:55",
+      "end": "19:43",
+      "activity": "dinner",
+      "duration_minutes": 48
+    },
+    {
+      "date": "2025-12-23",
+      "day": "tuesday",
+      "start": "19:43",
+      "end": "22:49",
+      "activity": "free time",
+      "duration_minutes": 186
+    },
+    {
+      "date": "2025-12-23",
+      "day": "tuesday",
+      "start": "22:49",
+      "end": "31:05",
+      "activity": "sleep",
+      "duration_minutes": 496
+    },
+    {
+      "date": "2025-12-24",
+      "day": "wednesday",
+      "start": "00:00",
+      "end": "06:53",
+      "activity": "free time",
+      "duration_minutes": 413
+    },
+    {
+      "date": "2025-12-24",
+      "day": "wednesday",
+      "start": "06:53",
+      "end": "07:45",
+      "activity": "breakfast",
+      "duration_minutes": 52
+    },
+    {
+      "date": "2025-12-24",
+      "day": "wednesday",
+      "start": "07:45",
+      "end": "12:19",
+      "activity": "free time",
+      "duration_minutes": 274
+    },
+    {
+      "date": "2025-12-24",
+      "day": "wednesday",
+      "start": "12:19",
+      "end": "13:19",
+      "activity": "lunch",
+      "duration_minutes": 60
+    },
+    {
+      "date": "2025-12-24",
+      "day": "wednesday",
+      "start": "13:19",
+      "end": "19:01",
+      "activity": "family_time",
+      "duration_minutes": 342
+    },
+    {
+      "date": "2025-12-24",
+      "day": "wednesday",
+      "start": "19:01",
+      "end": "19:44",
+      "activity": "gym",
+      "duration_minutes": 43
+    },
+    {
+      "date": "2025-12-24",
+      "day": "wednesday",
+      "start": "19:44",
+      "end": "20:41",
+      "activity": "dinner",
+      "duration_minutes": 57
+    },
+    {
+      "date": "2025-12-24",
+      "day": "wednesday",
+      "start": "20:41",
+      "end": "22:53",
+      "activity": "free time",
+      "duration_minutes": 132
+    },
+    {
+      "date": "2025-12-24",
+      "day": "wednesday",
+      "start": "22:53",
+      "end": "32:23",
+      "activity": "sleep",
+      "duration_minutes": 570
+    },
+    {
+      "date": "2025-12-25",
+      "day": "thursday",
+      "start": "00:00",
+      "end": "07:22",
+      "activity": "free time",
+      "duration_minutes": 442
+    },
+    {
+      "date": "2025-12-25",
+      "day": "thursday",
+      "start": "07:22",
+      "end": "08:23",
+      "activity": "breakfast",
+      "duration_minutes": 61
+    },
+    {
+      "date": "2025-12-25",
+      "day": "thursday",
+      "start": "08:23",
+      "end": "11:52",
+      "activity": "free time",
+      "duration_minutes": 209
+    },
+    {
+      "date": "2025-12-25",
+      "day": "thursday",
+      "start": "11:52",
+      "end": "12:51",
+      "activity": "lunch",
+      "duration_minutes": 59
+    },
+    {
+      "date": "2025-12-25",
+      "day": "thursday",
+      "start": "12:51",
+      "end": "18:43",
+      "activity": "family_time",
+      "duration_minutes": 352
+    },
+    {
+      "date": "2025-12-25",
+      "day": "thursday",
+      "start": "18:43",
+      "end": "20:11",
+      "activity": "dinner",
+      "duration_minutes": 88
+    },
+    {
+      "date": "2025-12-25",
+      "day": "thursday",
+      "start": "20:11",
+      "end": "22:51",
+      "activity": "free time",
+      "duration_minutes": 160
+    },
+    {
+      "date": "2025-12-25",
+      "day": "thursday",
+      "start": "22:51",
+      "end": "35:27",
+      "activity": "sleep",
+      "duration_minutes": 756
+    },
+    {
+      "date": "2025-12-26",
+      "day": "friday",
+      "start": "00:00",
+      "end": "06:37",
+      "activity": "free time",
+      "duration_minutes": 397
+    },
+    {
+      "date": "2025-12-26",
+      "day": "friday",
+      "start": "06:37",
+      "end": "07:29",
+      "activity": "breakfast",
+      "duration_minutes": 52
+    },
+    {
+      "date": "2025-12-26",
+      "day": "friday",
+      "start": "07:29",
+      "end": "11:52",
+      "activity": "free time",
+      "duration_minutes": 263
+    },
+    {
+      "date": "2025-12-26",
+      "day": "friday",
+      "start": "11:52",
+      "end": "12:48",
+      "activity": "lunch",
+      "duration_minutes": 56
+    },
+    {
+      "date": "2025-12-26",
+      "day": "friday",
+      "start": "12:48",
+      "end": "18:20",
+      "activity": "family_time",
+      "duration_minutes": 332
+    },
+    {
+      "date": "2025-12-26",
+      "day": "friday",
+      "start": "18:20",
+      "end": "19:40",
+      "activity": "dinner",
+      "duration_minutes": 80
+    },
+    {
+      "date": "2025-12-26",
+      "day": "friday",
+      "start": "19:40",
+      "end": "22:59",
+      "activity": "free time",
+      "duration_minutes": 199
+    },
+    {
+      "date": "2025-12-26",
+      "day": "friday",
+      "start": "22:59",
+      "end": "34:52",
+      "activity": "sleep",
+      "duration_minutes": 713
+    },
+    {
+      "date": "2025-12-27",
+      "day": "saturday",
+      "start": "00:00",
+      "end": "07:16",
+      "activity": "free time",
+      "duration_minutes": 436
+    },
+    {
+      "date": "2025-12-27",
+      "day": "saturday",
+      "start": "07:16",
+      "end": "07:53",
+      "activity": "breakfast",
+      "duration_minutes": 37
+    },
+    {
+      "date": "2025-12-27",
+      "day": "saturday",
+      "start": "07:53",
+      "end": "11:34",
+      "activity": "free time",
+      "duration_minutes": 221
+    },
+    {
+      "date": "2025-12-27",
+      "day": "saturday",
+      "start": "11:34",
+      "end": "12:16",
+      "activity": "lunch",
+      "duration_minutes": 42
+    },
+    {
+      "date": "2025-12-27",
+      "day": "saturday",
+      "start": "12:16",
+      "end": "16:46",
+      "activity": "family_time",
+      "duration_minutes": 270
+    },
+    {
+      "date": "2025-12-27",
+      "day": "saturday",
+      "start": "16:46",
+      "end": "18:11",
+      "activity": "free time",
+      "duration_minutes": 85
+    },
+    {
+      "date": "2025-12-27",
+      "day": "saturday",
+      "start": "18:11",
+      "end": "18:50",
+      "activity": "dinner",
+      "duration_minutes": 39
+    },
+    {
+      "date": "2025-12-27",
+      "day": "saturday",
+      "start": "18:50",
+      "end": "20:12",
+      "activity": "free time",
+      "duration_minutes": 82
+    },
+    {
+      "date": "2025-12-27",
+      "day": "saturday",
+      "start": "20:12",
+      "end": "22:39",
+      "activity": "social",
+      "duration_minutes": 147
+    },
+    {
+      "date": "2025-12-27",
+      "day": "saturday",
+      "start": "22:39",
+      "end": "22:50",
+      "activity": "free time",
+      "duration_minutes": 11
+    },
+    {
+      "date": "2025-12-27",
+      "day": "saturday",
+      "start": "22:50",
+      "end": "30:16",
+      "activity": "sleep",
+      "duration_minutes": 446
+    },
+    {
+      "date": "2025-12-28",
+      "day": "sunday",
+      "start": "00:00",
+      "end": "07:21",
+      "activity": "free time",
+      "duration_minutes": 441
+    },
+    {
+      "date": "2025-12-28",
+      "day": "sunday",
+      "start": "07:21",
+      "end": "08:09",
+      "activity": "breakfast",
+      "duration_minutes": 48
+    },
+    {
+      "date": "2025-12-28",
+      "day": "sunday",
+      "start": "08:09",
+      "end": "12:19",
+      "activity": "free time",
+      "duration_minutes": 250
+    },
+    {
+      "date": "2025-12-28",
+      "day": "sunday",
+      "start": "12:19",
+      "end": "13:11",
+      "activity": "lunch",
+      "duration_minutes": 52
+    },
+    {
+      "date": "2025-12-28",
+      "day": "sunday",
+      "start": "13:11",
+      "end": "18:17",
+      "activity": "family_time",
+      "duration_minutes": 306
+    },
+    {
+      "date": "2025-12-28",
+      "day": "sunday",
+      "start": "18:17",
+      "end": "19:00",
+      "activity": "dinner",
+      "duration_minutes": 43
+    },
+    {
+      "date": "2025-12-28",
+      "day": "sunday",
+      "start": "19:00",
+      "end": "21:45",
+      "activity": "social",
+      "duration_minutes": 165
+    },
+    {
+      "date": "2025-12-28",
+      "day": "sunday",
+      "start": "21:45",
+      "end": "23:11",
+      "activity": "free time",
+      "duration_minutes": 86
+    },
+    {
+      "date": "2025-12-28",
+      "day": "sunday",
+      "start": "23:11",
+      "end": "31:37",
+      "activity": "sleep",
+      "duration_minutes": 506
+    }
+  ],
+  "issues": [
+    {
+      "day": "thursday (2025-12-25)",
+      "issue_type": "overflow",
+      "severity": "warning",
+      "details": "Day exceeds 24h by 361 minutes"
+    },
+    {
+      "day": "friday (2025-12-26)",
+      "issue_type": "overflow",
+      "severity": "warning",
+      "details": "Day exceeds 24h by 259 minutes"
+    }
+  ],
+  "metadata": {
+    "total_events": 62,
+    "issue_count": 2,
+    "summary_hours": {
+      "free time": 90.78,
+      "breakfast": 5.72,
+      "work": 18.0,
+      "lunch": 6.1,
+      "gym": 1.4,
+      "dinner": 6.63,
+      "sleep": 66.2,
+      "family_time": 26.7,
+      "social": 5.2
+    },
+    "compression": {
+      "2025-12-22": {
+        "original_total": 1197,
+        "compressions": []
+      },
+      "2025-12-23": {
+        "original_total": 1189,
+        "compressions": []
+      },
+      "2025-12-24": {
+        "original_total": 1122,
+        "compressions": []
+      },
+      "2025-12-25": {
+        "original_total": 1801,
+        "compressions": [
+          "Compressed breakfast by 6m",
+          "Compressed lunch by 6m",
+          "Compressed dinner by 9m",
+          "Compressed family_time by 38m",
+          "Skipped free_time"
+        ]
+      },
+      "2025-12-26": {
+        "original_total": 1699,
+        "compressions": [
+          "Compressed breakfast by 6m",
+          "Compressed lunch by 6m",
+          "Compressed dinner by 9m",
+          "Compressed family_time by 36m",
+          "Skipped free_time"
+        ]
+      },
+      "2025-12-27": {
+        "original_total": 991,
+        "compressions": []
+      },
+      "2025-12-28": {
+        "original_total": 1123,
+        "compressions": []
+      }
+    },
+    "day_types": {
+      "2025-12-22": "weekday",
+      "2025-12-23": "weekday",
+      "2025-12-24": "weekday",
+      "2025-12-25": "public_holiday",
+      "2025-12-26": "public_holiday",
+      "2025-12-27": "weekend",
+      "2025-12-28": "weekend"
+    }
+  }
+}
