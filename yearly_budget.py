@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import List, Optional
 
-from unique_days import UniqueDay
+from modules.unique_events import UniqueDay
 
 
 @dataclass

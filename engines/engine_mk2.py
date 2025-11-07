@@ -17,7 +17,7 @@ from archetypes import (
 from modules.calendar_provider import CalendarProvider, default_calendar_provider
 from modules.friction_model import generate_daily_friction
 from models import Activity, ActivityTemplate, Event, PersonProfile
-from unique_days import UniqueDay, generate_unique_day_schedule
+from modules.unique_events import UniqueDay, generate_unique_day_schedule
 from yearly_budget import YearlyBudget
 from validation import validate_week
 
