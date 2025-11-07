@@ -1,34 +1,55 @@
-"""Core scheduling interfaces and data structures."""
+"""Core scheduling interfaces and strongly typed data structures."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Sequence
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, Mapping, MutableMapping, Optional, Sequence
 
 __all__ = [
+    "ScheduleEngine",
     "ScheduleInput",
     "ScheduleOutput",
-    "ScheduleEngine",
+    "SchedulePayload",
+    "ScheduleTotals",
 ]
 
+# -- Type aliases -----------------------------------------------------------------
 
-@dataclass(frozen=True)
+SchedulePayload = Mapping[str, Any]
+"""Type alias representing a read-only mapping for schedule metadata."""
+
+ScheduleTotals = Mapping[str, Any]
+"""Aggregated totals or summary metrics produced by a schedule engine."""
+
+
+@dataclass(frozen=True, slots=True)
 class ScheduleInput:
     """Container for data required to generate a schedule."""
 
-    constraints: Mapping[str, Any]
+    constraints: SchedulePayload
     seed: Optional[int] = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: SchedulePayload = field(default_factory=dict)
+
+    def with_metadata(self, **metadata: Any) -> "ScheduleInput":
+        """Return a new input with merged metadata without mutating the original."""
+
+        merged: MutableMapping[str, Any] = dict(self.metadata)
+        merged.update(metadata)
+        return ScheduleInput(
+            constraints=self.constraints,
+            seed=self.seed,
+            metadata=merged,
+        )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ScheduleOutput:
     """Structured response produced by a schedule engine."""
 
-    events: Sequence[Mapping[str, Any]]
-    totals: Mapping[str, Any]
-    diagnostics: Mapping[str, Any] = field(default_factory=dict)
+    events: Sequence[SchedulePayload]
+    totals: ScheduleTotals
+    diagnostics: SchedulePayload = field(default_factory=dict)
 
 
 class ScheduleEngine(ABC):
@@ -37,4 +58,6 @@ class ScheduleEngine(ABC):
     @abstractmethod
     def generate(self, schedule_input: ScheduleInput) -> ScheduleOutput:
         """Produce a schedule based on the provided input."""
+
+        raise NotImplementedError
 
