@@ -5,7 +5,7 @@ from datetime import date
 from archetypes import create_office_worker
 from calendar_gen_v2 import generate_complete_week
 from calendar_layers import classify_day
-from unique_days import UniqueDay, generate_unique_day_schedule
+from modules.unique_events import UniqueDay, generate_unique_day_schedule
 from yearly_budget import YearlyBudget
 
 

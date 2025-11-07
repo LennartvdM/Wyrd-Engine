@@ -16,7 +16,7 @@ from engines.engine_mk2 import (
     apply_special_period_effects,
 )
 from models import ActivityTemplate, PersonProfile
-from unique_days import UniqueDay
+from modules.unique_events import UniqueDay
 from yearly_budget import YearlyBudget
 
 _engine = EngineMK2()
