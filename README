@@ -8,7 +8,7 @@ Generate believable, minute-by-minute weekly schedules for fictional characters.
 ships with a stochastic "workforce" engine for archetype-driven experiments alongside the original
 configuration-based MVP and a browser playground.
 
-## Quick start
+## Workforce simulation quick start
 
 ### Workforce simulation CLI
 
@@ -26,7 +26,7 @@ Generates minute-by-minute weekly schedules for NPC-style characters based on a 
 configuration. Every generated day totals 1,440 minutes with no gaps or overlaps so the routines
 feel consistent and believable.
 
-## Quick start
+## Configuration-driven quick start
 
 ### Command-line tool
 
@@ -47,3 +47,10 @@ Netlify) to experiment with schedules visually. The interface mirrors the Python
 colour-coded timelines, and lets you download the resulting JSON.
 
 For additional setup tips and deployment notes, see [`docs/usage.md`](docs/usage.md).
+
+## Architecture & Component Docs
+
+Curious about how the Wyrd Engine evolves its systems? Visit the [documentation hub](docs/index.md)
+for component overviews. The calendar generator's [architecture evolution](docs/calendar-generator/architecture-evolution.md)
+shows how the deterministic MVP grew into today's archetype-driven simulation, with space reserved
+for future deep dives into other engine modules.
