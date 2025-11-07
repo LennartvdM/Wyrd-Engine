@@ -14,12 +14,7 @@ from archetypes import (
     create_night_owl_freelancer,
     create_office_worker,
 )
-from calendar_layers import (
-    classify_day,
-    generate_holiday_schedule,
-    get_seasonal_modifiers,
-    get_special_period_effects,
-)
+from modules.calendar_provider import CalendarProvider, default_calendar_provider
 from friction import generate_daily_friction
 from models import Activity, ActivityTemplate, Event, PersonProfile
 from unique_days import UniqueDay, generate_unique_day_schedule
@@ -67,12 +62,20 @@ def apply_micro_jitter(
 class EngineMK2:
     """Synthetic workforce calendar engine."""
 
-    def __init__(self) -> None:
+    def __init__(self, calendar_provider: Optional[CalendarProvider] = None) -> None:
         self._profile_factory = {
             "office": (create_office_worker, DEFAULT_TEMPLATES),
             "parent": (create_exhausted_parent, DEFAULT_TEMPLATES),
             "freelancer": (create_night_owl_freelancer, NIGHT_OWL_TEMPLATES),
         }
+        self._calendar_provider: CalendarProvider = (
+            calendar_provider or default_calendar_provider
+        )
+
+    def set_calendar_provider(self, provider: CalendarProvider) -> None:
+        """Replace the calendar provider used by the engine."""
+
+        self._calendar_provider = provider
 
     # ------------------------------------------------------------------
     # Workforce allocation helpers
@@ -238,7 +241,9 @@ class EngineMK2:
                     activities = unique_schedule
                     day_type = unique_day.day_type
                 else:
-                    day_type = classify_day(current_date, profile.country)
+                    day_type = self._calendar_provider.classify_day(
+                        current_date, profile.country
+                    )
                     activities = self._generate_standard_day_schedule(
                         weekday_index,
                         day_type,
@@ -249,9 +254,13 @@ class EngineMK2:
                         gym_minutes,
                     )
             else:
-                day_type = classify_day(current_date, profile.country)
+                day_type = self._calendar_provider.classify_day(
+                    current_date, profile.country
+                )
                 if day_type == "public_holiday":
-                    activities = generate_holiday_schedule(profile, current_date)
+                    activities = self._calendar_provider.generate_holiday_schedule(
+                        profile, current_date
+                    )
                 else:
                     activities = self._generate_standard_day_schedule(
                         weekday_index,
@@ -263,10 +272,10 @@ class EngineMK2:
                         gym_minutes,
                     )
 
-            seasonal = get_seasonal_modifiers(current_date)
+            seasonal = self._calendar_provider.get_seasonal_modifiers(current_date)
             self.apply_seasonal_modifiers(activities, seasonal)
 
-            special = get_special_period_effects(current_date)
+            special = self._calendar_provider.get_special_period_effects(current_date)
             activities = self.apply_special_period_effects(activities, special)
 
             for activity in activities:
