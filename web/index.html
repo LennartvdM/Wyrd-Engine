@@ -100,7 +100,10 @@
               Experiment with scripted scenarios using the Wyrd runtime.
             </p>
           </div>
-          <button type="button" id="test-console-run" disabled>Run</button>
+          <div class="test-console-actions">
+            <button type="button" id="test-console-load">Load Runtime</button>
+            <button type="button" id="test-console-run" disabled>Run</button>
+          </div>
         </div>
         <div class="test-console-body">
           <aside class="test-console-sidebar">
@@ -111,6 +114,19 @@
                 <option value="daily_summary">Daily summary</option>
                 <option value="custom">Custom script</option>
               </select>
+            </div>
+            <div class="form-row">
+              <label for="test-console-code">Python code</label>
+              <textarea
+                id="test-console-code"
+                name="test-console-code"
+                rows="14"
+                spellcheck="false"
+              ></textarea>
+              <p class="help-text">
+                The selected script runs inside an isolated Pyodide runtime. Access the
+                parsed input via the <code>payload</code> variable.
+              </p>
             </div>
             <div class="form-row">
               <label for="test-console-input">Input JSON</label>
@@ -148,8 +164,12 @@
           </div>
         </div>
         <div class="test-console-status" role="status" aria-live="polite">
-          <span class="status-indicator" aria-hidden="true"></span>
-          <span id="test-console-status-text">Pyodide loading…</span>
+          <span
+            class="status-indicator is-idle"
+            id="test-console-status-indicator"
+            aria-hidden="true"
+          ></span>
+          <span id="test-console-status-text">Runtime not loaded yet.</span>
         </div>
       </section>
     </main>
