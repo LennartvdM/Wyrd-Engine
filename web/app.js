@@ -65,7 +65,7 @@ const calendarContainer = document.querySelector("#calendar");
 const calendarWarning = document.querySelector("#calendar-warning");
 const viewButtons = document.querySelectorAll("[data-view-target]");
 const views = document.querySelectorAll("[data-view]");
-const testConsoleScriptSelect = document.querySelector("#test-console-script");
+const testConsolePresetButtons = document.querySelectorAll("[data-script-preset]");
 const testConsoleCodeInput = document.querySelector("#test-console-code");
 const testConsoleInput = document.querySelector("#test-console-input");
 const testConsoleRunButton = document.querySelector("#test-console-run");
@@ -83,66 +83,182 @@ const repoFilePreview = document.querySelector("#repo-file-preview");
 const repoFileStatus = document.querySelector("#repo-file-status");
 
 const TEST_CONSOLE_TIMEOUT_MS = 10_000;
-const TEST_CONSOLE_SCRIPTS = {
-  daily_summary: {
-    code: `from collections import defaultdict
-from datetime import datetime
+const TEST_CONSOLE_SAMPLE_CONSTRAINTS = {
+  name: "Test Pilot",
+  sleep: {
+    bedtime: "22:30",
+    duration_hours: 7.5,
+  },
+  work: {
+    start: "09:00",
+    duration_hours: 8,
+    days: ["monday", "tuesday", "wednesday", "thursday", "friday"],
+  },
+  meals: {
+    breakfast: "07:30",
+    lunch: "12:00",
+    dinner: "18:30",
+  },
+  activities: [
+    {
+      name: "gym",
+      time: "17:45",
+      duration_minutes: 60,
+      days: ["monday", "wednesday"],
+    },
+    {
+      name: "reading",
+      time: "21:15",
+      duration_minutes: 45,
+      days: ["daily"],
+    },
+  ],
+};
+
+const TEST_CONSOLE_BASE_PAYLOAD = {
+  start_date: "2024-05-06",
+  seed: 7,
+  constraints: TEST_CONSOLE_SAMPLE_CONSTRAINTS,
+};
+
+const TEST_CONSOLE_EDITOR_PRESETS = {
+  mk1_quick: {
+    code: `from engines.base import ScheduleInput
+from engines.engine_mk1 import EngineMK1
 
 payload = payload or {}
-events = payload.get("events", [])
-totals = defaultdict(float)
 
-for event in events:
-    activity = event.get("activity") or "unspecified"
-    duration = float(event.get("duration_minutes") or 0)
-    totals[activity] += duration
+def sample_constraints():
+    return {
+        "name": "Test Pilot",
+        "sleep": {"bedtime": "22:30", "duration_hours": 7.5},
+        "work": {
+            "start": "09:00",
+            "duration_hours": 8,
+            "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        },
+        "meals": {
+            "breakfast": "07:30",
+            "lunch": "12:00",
+            "dinner": "18:30",
+        },
+        "activities": [
+            {
+                "name": "gym",
+                "time": "17:45",
+                "duration_minutes": 60,
+                "days": ["monday", "wednesday"],
+            },
+            {
+                "name": "reading",
+                "time": "21:15",
+                "duration_minutes": 45,
+                "days": ["daily"],
+            },
+        ],
+    }
 
-summary = [
-    {"activity": name, "hours": round(minutes / 60.0, 2)}
-    for name, minutes in sorted(totals.items(), key=lambda item: item[1], reverse=True)
-]
+constraints = payload.get("constraints") or sample_constraints()
+start_date = payload.get("start_date") or "2024-05-06"
 
-result = {
-    "generated_at": datetime.utcnow().isoformat() + "Z",
-    "event_count": len(events),
-    "activities": summary,
+engine = EngineMK1()
+schedule_input = ScheduleInput(constraints=constraints, metadata={"start_date": start_date})
+output = engine.generate(schedule_input)
+
+print(f"MK1 produced {len(output.events)} events.")
+output.totals`,
+    input: TEST_CONSOLE_BASE_PAYLOAD,
+  },
+  mk2_quick: {
+    code: `from datetime import date
+
+from archetypes import create_office_worker
+from calendar_gen_v2 import generate_complete_week
+
+payload = payload or {}
+
+start_date = payload.get("start_date") or "2024-05-06"
+seed = int(payload.get("seed") or 7)
+
+profile = create_office_worker()
+result = generate_complete_week(profile, date.fromisoformat(start_date), week_seed=seed)
+
+print(f"MK2 generated {result['metadata']['total_events']} events for {result['person']}.")
+{
+    "week_start": result["week_start"],
+    "issue_count": result["metadata"]["issue_count"],
+    "summary_hours": result["metadata"]["summary_hours"],
+}`,
+    input: TEST_CONSOLE_BASE_PAYLOAD,
+  },
+  compare_minimal: {
+    code: `from datetime import date
+
+from archetypes import create_office_worker
+from calendar_gen_v2 import generate_complete_week
+from engines.base import ScheduleInput
+from engines.engine_mk1 import EngineMK1
+
+payload = payload or {}
+
+def sample_constraints():
+    return {
+        "name": "Test Pilot",
+        "sleep": {"bedtime": "22:30", "duration_hours": 7.5},
+        "work": {
+            "start": "09:00",
+            "duration_hours": 8,
+            "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        },
+        "meals": {
+            "breakfast": "07:30",
+            "lunch": "12:00",
+            "dinner": "18:30",
+        },
+        "activities": [
+            {
+                "name": "gym",
+                "time": "17:45",
+                "duration_minutes": 60,
+                "days": ["monday", "wednesday"],
+            },
+            {
+                "name": "reading",
+                "time": "21:15",
+                "duration_minutes": 45,
+                "days": ["daily"],
+            },
+        ],
+    }
+
+start_date = payload.get("start_date") or "2024-05-06"
+seed = int(payload.get("seed") or 7)
+constraints = payload.get("constraints") or sample_constraints()
+
+mk1_engine = EngineMK1()
+mk1_input = ScheduleInput(constraints=constraints, metadata={"start_date": start_date})
+mk1_output = mk1_engine.generate(mk1_input)
+
+profile = create_office_worker()
+mk2_result = generate_complete_week(profile, date.fromisoformat(start_date), week_seed=seed)
+
+comparison = {
+    "mk1_events": len(mk1_output.events),
+    "mk2_events": mk2_result["metadata"]["total_events"],
+    "mk1_first_event": mk1_output.events[0] if mk1_output.events else None,
+    "mk2_first_event": mk2_result["events"][0] if mk2_result["events"] else None,
 }
 
-print(f"Processed {len(events)} events")
-result`,
-    input: {
-      events: [
-        {
-          date: "2024-05-06",
-          activity: "work",
-          duration_minutes: 480,
-        },
-        {
-          date: "2024-05-06",
-          activity: "gym",
-          duration_minutes: 60,
-        },
-        {
-          date: "2024-05-07",
-          activity: "work",
-          duration_minutes: 450,
-        },
-      ],
-    },
+print("Generated comparison for MK1 and MK2.")
+comparison`,
+    input: TEST_CONSOLE_BASE_PAYLOAD,
   },
-  custom: {
-    code: `# Write your custom script here.
-# The JSON input is available as a dict in the variable \`payload\`.
-# The final expression is returned to the UI.
-
-result = payload
-result`,
-    input: {
-      message: "Hello from the sandboxed runtime!",
-    },
+  scratch: {
+    code: "",
   },
 };
 
+let refreshTestConsoleEditor = () => {};
 const DEFAULT_REPO_SLUG = document.documentElement?.dataset?.repoSlug || "openai/Wyrd-Engine";
 const DEFAULT_REPO_BRANCH = document.documentElement?.dataset?.repoBranch || "main";
 const REPO_FILE_MANIFEST = [
@@ -304,6 +420,10 @@ function showView(target) {
       button.classList.remove("is-active");
     }
   });
+
+  if (target === "test-console") {
+    refreshTestConsoleEditor();
+  }
 }
 
 function renderCalendar(events, meta) {
@@ -839,7 +959,7 @@ function dayIndices(days) {
 }
 
 function initTestConsole() {
-  if (!testConsoleRunButton || !testConsoleScriptSelect || !testConsoleStdout) {
+  if (!testConsoleRunButton || !testConsoleStdout) {
     return;
   }
 
@@ -850,29 +970,43 @@ function initTestConsole() {
   let isExecuting = false;
   let runCancelled = false;
   let activeRunToken = 0;
-  let suppressScriptPreset = false;
+  let activePresetId = null;
 
+  const presetButtonList = Array.from(testConsolePresetButtons || []);
   const repoBrowser = createRepoBrowser();
+  const codeEditor = createCodeEditor();
 
-  if (testConsoleScriptSelect && !testConsoleScriptSelect.value) {
-    testConsoleScriptSelect.value = "daily_summary";
+  refreshTestConsoleEditor = () => {
+    if (codeEditor && typeof codeEditor.refresh === "function") {
+      codeEditor.refresh();
+    }
+  };
+
+  if (testConsoleInput && !testConsoleInput.value.trim()) {
+    testConsoleInput.value = JSON.stringify(TEST_CONSOLE_BASE_PAYLOAD, null, 2);
   }
-  applyScriptPreset(testConsoleScriptSelect?.value || "");
+
+  if (presetButtonList.length) {
+    applyEditorPreset("mk1_quick");
+  } else if (testConsoleCodeInput && !testConsoleCodeInput.value.trim()) {
+    setEditorValue("");
+  }
 
   updateRunButtonState();
   updateLoadButtonLabel();
 
-  testConsoleScriptSelect.addEventListener("change", () => {
-    if (suppressScriptPreset) {
-      return;
-    }
-    applyScriptPreset(testConsoleScriptSelect.value);
-    updateRunButtonState();
+  presetButtonList.forEach((button) => {
+    button.addEventListener("click", () => {
+      const presetId = button.dataset.scriptPreset || "";
+      applyEditorPreset(presetId);
+    });
   });
 
-  testConsoleCodeInput?.addEventListener("input", () => {
-    updateRunButtonState();
-  });
+  if (!codeEditor && testConsoleCodeInput) {
+    testConsoleCodeInput.addEventListener("input", () => {
+      updateRunButtonState();
+    });
+  }
 
   testConsoleLoadButton?.addEventListener("click", () => {
     if (isExecuting) {
@@ -893,6 +1027,89 @@ function initTestConsole() {
   queueMicrotask(() => {
     loadRuntime();
   });
+
+  function createCodeEditor() {
+    if (!testConsoleCodeInput || typeof window.CodeMirror !== "function") {
+      return null;
+    }
+
+    const editor = window.CodeMirror.fromTextArea(testConsoleCodeInput, {
+      mode: "python",
+      lineNumbers: true,
+      indentUnit: 4,
+      indentWithTabs: false,
+      lineWrapping: true,
+      viewportMargin: Infinity,
+    });
+
+    editor.on("change", () => {
+      testConsoleCodeInput.value = editor.getValue();
+      updateRunButtonState();
+    });
+
+    return editor;
+  }
+
+  function getEditorValue() {
+    if (!testConsoleCodeInput) {
+      return "";
+    }
+    if (codeEditor) {
+      return codeEditor.getValue();
+    }
+    return testConsoleCodeInput.value || "";
+  }
+
+  function setEditorValue(value) {
+    const nextValue = value || "";
+    if (testConsoleCodeInput) {
+      testConsoleCodeInput.value = nextValue;
+    }
+    if (codeEditor && codeEditor.getValue() !== nextValue) {
+      codeEditor.setValue(nextValue);
+      codeEditor.refresh();
+    }
+  }
+
+  function applyEditorPreset(presetId) {
+    const preset = TEST_CONSOLE_EDITOR_PRESETS[presetId];
+    activePresetId = preset ? presetId : null;
+    updatePresetButtons();
+
+    if (!preset) {
+      setEditorValue("");
+      updateRunButtonState();
+      return;
+    }
+
+    setEditorValue(preset.code || "");
+
+    if (testConsoleInput) {
+      if (typeof preset.input !== "undefined") {
+        const payload = preset.input ?? {};
+        testConsoleInput.value = JSON.stringify(payload, null, 2);
+      } else if (!testConsoleInput.value.trim()) {
+        testConsoleInput.value = "{}";
+      }
+    }
+
+    updateRunButtonState();
+  }
+
+  function clearActivePreset() {
+    activePresetId = null;
+    updatePresetButtons();
+  }
+
+  function updatePresetButtons() {
+    presetButtonList.forEach((button) => {
+      if (button.dataset.scriptPreset === activePresetId) {
+        button.classList.add("is-active");
+      } else {
+        button.classList.remove("is-active");
+      }
+    });
+  }
 
   function createRepoBrowser() {
     if (!repoFilePanel || !repoFileSelect || !repoFilePreview) {
@@ -977,15 +1194,8 @@ function initTestConsole() {
 
       const { entry, content } = previewData;
       if (entry.target === "code" && testConsoleCodeInput) {
-        suppressScriptPreset = true;
-        if (testConsoleScriptSelect) {
-          testConsoleScriptSelect.value = "custom";
-        }
-        queueMicrotask(() => {
-          suppressScriptPreset = false;
-        });
-        testConsoleCodeInput.readOnly = false;
-        testConsoleCodeInput.value = content;
+        clearActivePreset();
+        setEditorValue(content);
       } else if (entry.target === "input" && testConsoleInput) {
         testConsoleInput.value = content;
       }
@@ -1046,28 +1256,6 @@ function initTestConsole() {
     };
   }
 
-  function applyScriptPreset(scriptId) {
-    if (!testConsoleCodeInput) {
-      return;
-    }
-
-    const preset = TEST_CONSOLE_SCRIPTS[scriptId];
-    if (!preset) {
-      testConsoleCodeInput.value = "";
-      testConsoleCodeInput.readOnly = true;
-      return;
-    }
-
-    testConsoleCodeInput.value = preset.code;
-    testConsoleCodeInput.readOnly = scriptId !== "custom";
-
-    if (testConsoleInput && preset.input) {
-      testConsoleInput.value = JSON.stringify(preset.input, null, 2);
-    } else if (testConsoleInput && !testConsoleInput.value.trim()) {
-      testConsoleInput.value = "{}";
-    }
-  }
-
   function updateRunButtonState() {
     if (!testConsoleRunButton) {
       return;
@@ -1078,7 +1266,7 @@ function initTestConsole() {
       return;
     }
 
-    const hasScript = Boolean(testConsoleScriptSelect?.value) && Boolean(testConsoleCodeInput?.value.trim());
+    const hasScript = Boolean(getEditorValue().trim());
     testConsoleRunButton.textContent = "Run";
     testConsoleRunButton.disabled = !runtimeLoaded || !hasScript;
   }
@@ -1149,7 +1337,8 @@ function initTestConsole() {
       return;
     }
 
-    if (!testConsoleCodeInput || !testConsoleCodeInput.value.trim()) {
+    const code = getEditorValue();
+    if (!code.trim()) {
       setStatusIndicator("error", "No Python code to execute.");
       return;
     }
@@ -1185,7 +1374,7 @@ function initTestConsole() {
     }, TEST_CONSOLE_TIMEOUT_MS);
 
     runtime
-      .run(testConsoleCodeInput.value, { context: payload })
+      .run(code, { context: payload })
       .then((response) => {
         if (runCancelled || runToken !== activeRunToken) {
           return;
@@ -1300,7 +1489,6 @@ function initTestConsole() {
     }
   }
 }
-
 async function fetchRepoFileContent(path, source = {}) {
   const slug = (source.slug || DEFAULT_REPO_SLUG || "").trim();
   const branch = (source.branch || DEFAULT_REPO_BRANCH || "main").trim();
