@@ -12,6 +12,7 @@ from .overlay import (
     morphology_close,
     morphology_open,
 )
+from .runner import run_script
 
 __all__ = [
     "AgentOverlay",
@@ -24,4 +25,5 @@ __all__ = [
     "mix_field",
     "morphology_close",
     "morphology_open",
+    "run_script",
 ]
