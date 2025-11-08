@@ -202,6 +202,58 @@
                 Provide JSON parameters that will be passed to the selected script.
               </p>
             </div>
+            <div class="form-row">
+              <label for="runner-config-json">Runner config JSON</label>
+              <textarea
+                id="runner-config-json"
+                name="runner-config-json"
+                rows="10"
+                spellcheck="false"
+                placeholder="{\n  \"name\": \"Alice\"\n}"
+              ></textarea>
+              <p class="help-text">
+                Parsed and injected into <code>__runner_input__['config']</code> before execution.
+              </p>
+            </div>
+            <div class="form-row">
+              <span class="form-label">Execution parameters</span>
+              <div class="runner-inputs">
+                <label class="runner-inputs__item" for="runner-seed">
+                  <span class="runner-inputs__label">Seed</span>
+                  <input
+                    id="runner-seed"
+                    name="runner-seed"
+                    type="number"
+                    inputmode="numeric"
+                    placeholder="Optional"
+                  />
+                </label>
+                <label class="runner-inputs__item" for="runner-start-date">
+                  <span class="runner-inputs__label">Start date</span>
+                  <input
+                    id="runner-start-date"
+                    name="runner-start-date"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="YYYY-MM-DD"
+                  />
+                </label>
+                <label class="runner-inputs__item" for="runner-days">
+                  <span class="runner-inputs__label">Days</span>
+                  <input
+                    id="runner-days"
+                    name="runner-days"
+                    type="number"
+                    inputmode="numeric"
+                    placeholder="Optional"
+                    min="1"
+                  />
+                </label>
+              </div>
+              <p class="help-text">
+                All values are available to scripts via the <code>__runner_input__</code> global.
+              </p>
+            </div>
           </aside>
           <div class="test-console-outputs">
             <div class="output-panel">

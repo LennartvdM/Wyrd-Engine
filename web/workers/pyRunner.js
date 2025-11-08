@@ -91,6 +91,7 @@ async function executePython({ code, context }) {
 
   let globals;
   let payloadProxy;
+  let runnerInputProxy;
   let result;
 
   try {
@@ -99,10 +100,13 @@ async function executePython({ code, context }) {
     globals.set("__builtins__", builtins);
     builtins.destroy();
 
-    if (typeof context !== "undefined") {
-      payloadProxy = pyodide.toPy(context);
-      globals.set("payload", payloadProxy);
-    }
+    const { payloadValue, runnerInputValue } = normalizeExecutionContext(context);
+
+    payloadProxy = pyodide.toPy(payloadValue);
+    globals.set("payload", payloadProxy);
+
+    runnerInputProxy = pyodide.toPy(runnerInputValue);
+    globals.set("__runner_input__", runnerInputProxy);
 
     result = await pyodide.runPythonAsync(code, { globals });
 
@@ -126,10 +130,35 @@ async function executePython({ code, context }) {
       payloadProxy.destroy();
     }
 
+    if (runnerInputProxy && typeof runnerInputProxy.destroy === "function") {
+      runnerInputProxy.destroy();
+    }
+
     if (globals && typeof globals.destroy === "function") {
       globals.destroy();
     }
   }
+}
+
+function normalizeExecutionContext(context) {
+  if (!context) {
+    return { payloadValue: {}, runnerInputValue: {} };
+  }
+
+  if (typeof context === "object" && context !== null && "runnerInput" in context) {
+    const payload = context.payload;
+    const runnerInput = context.runnerInput;
+    return {
+      payloadValue: typeof payload === "undefined" ? {} : payload,
+      runnerInputValue:
+        runnerInput && typeof runnerInput === "object" ? runnerInput : {},
+    };
+  }
+
+  return {
+    payloadValue: context,
+    runnerInputValue: {},
+  };
 }
 
 function enrichError(error, stdoutChunks, stderrChunks) {

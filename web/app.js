@@ -70,6 +70,10 @@ const testConsoleCodeInput = document.querySelector("#test-console-code");
 const testConsoleInput = document.querySelector("#test-console-input");
 const testConsoleRunButton = document.querySelector("#test-console-run");
 const testConsoleLoadButton = document.querySelector("#test-console-load");
+const runnerConfigInput = document.querySelector("#runner-config-json");
+const runnerSeedInput = document.querySelector("#runner-seed");
+const runnerStartDateInput = document.querySelector("#runner-start-date");
+const runnerDaysInput = document.querySelector("#runner-days");
 const testConsoleStdout = document.querySelector("#test-console-stdout");
 const testConsoleStderr = document.querySelector("#test-console-stderr");
 const testConsoleResult = document.querySelector("#test-console-result");
@@ -975,6 +979,7 @@ function initTestConsole() {
   const presetButtonList = Array.from(testConsolePresetButtons || []);
   const repoBrowser = createRepoBrowser();
   const codeEditor = createCodeEditor();
+  initializeRunnerInputs();
 
   refreshTestConsoleEditor = () => {
     if (codeEditor && typeof codeEditor.refresh === "function") {
@@ -1048,6 +1053,29 @@ function initTestConsole() {
     });
 
     return editor;
+  }
+
+  function initializeRunnerInputs() {
+    if (runnerConfigInput) {
+      runnerConfigInput.addEventListener("input", () => {
+        try {
+          getRunnerConfig();
+        } catch (error) {
+          // ignore errors during live validation
+        }
+      });
+      try {
+        getRunnerConfig();
+      } catch (error) {
+        // ignore initial validation errors
+      }
+    }
+
+    [runnerSeedInput, runnerStartDateInput, runnerDaysInput].forEach((input) => {
+      input?.addEventListener("input", () => {
+        clearInputValidity(input);
+      });
+    });
   }
 
   function getEditorValue() {
@@ -1343,9 +1371,9 @@ function initTestConsole() {
       return;
     }
 
-    let payload;
+    let executionInputs;
     try {
-      payload = parseInputPayload();
+      executionInputs = buildExecutionInputs();
     } catch (error) {
       setStatusIndicator("error", error.message);
       if (testConsoleStderr) {
@@ -1353,6 +1381,8 @@ function initTestConsole() {
       }
       return;
     }
+
+    const { payload, runnerInput } = executionInputs;
 
     isExecuting = true;
     runCancelled = false;
@@ -1374,7 +1404,7 @@ function initTestConsole() {
     }, TEST_CONSOLE_TIMEOUT_MS);
 
     runtime
-      .run(code, { context: payload })
+      .run(code, { context: { payload, runnerInput } })
       .then((response) => {
         if (runCancelled || runToken !== activeRunToken) {
           return;
@@ -1472,6 +1502,113 @@ function initTestConsole() {
       }
     }
     setStatusIndicator("error", error.message || "Execution failed.");
+  }
+
+  function buildExecutionInputs() {
+    const payload = parseInputPayload();
+    const config = getRunnerConfig({ strict: true });
+    const seed = parseOptionalInteger(runnerSeedInput, { fieldName: "Seed" });
+    const startDate = parseOptionalDateString(runnerStartDateInput, { fieldName: "Start date" });
+    const days = parseOptionalInteger(runnerDaysInput, { fieldName: "Days", min: 1 });
+
+    const runnerInput = { payload };
+
+    if (typeof config !== "undefined") {
+      runnerInput.config = config;
+    }
+    if (typeof seed !== "undefined") {
+      runnerInput.seed = seed;
+    }
+    if (typeof startDate !== "undefined") {
+      runnerInput.start_date = startDate;
+    }
+    if (typeof days !== "undefined") {
+      runnerInput.days = days;
+    }
+
+    return { payload, runnerInput };
+  }
+
+  function getRunnerConfig({ strict = false } = {}) {
+    if (!runnerConfigInput) {
+      return undefined;
+    }
+    const raw = runnerConfigInput.value.trim();
+    if (!raw) {
+      setInputValidity(runnerConfigInput, true);
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      setInputValidity(runnerConfigInput, true);
+      return parsed;
+    } catch (error) {
+      setInputValidity(runnerConfigInput, false);
+      if (strict) {
+        throw new Error(`Runner config JSON is invalid: ${error.message}`);
+      }
+      return undefined;
+    }
+  }
+
+  function parseOptionalInteger(input, { fieldName, min, max } = {}) {
+    if (!input) {
+      return undefined;
+    }
+    const raw = input.value.trim();
+    if (!raw) {
+      setInputValidity(input, true);
+      return undefined;
+    }
+    const value = Number(raw);
+    if (!Number.isFinite(value) || !Number.isInteger(value)) {
+      setInputValidity(input, false);
+      throw new Error(`${fieldName} must be an integer.`);
+    }
+    if (typeof min === "number" && value < min) {
+      setInputValidity(input, false);
+      throw new Error(`${fieldName} must be at least ${min}.`);
+    }
+    if (typeof max === "number" && value > max) {
+      setInputValidity(input, false);
+      throw new Error(`${fieldName} must be at most ${max}.`);
+    }
+    setInputValidity(input, true);
+    return value;
+  }
+
+  function parseOptionalDateString(input, { fieldName } = {}) {
+    if (!input) {
+      return undefined;
+    }
+    const raw = input.value.trim();
+    if (!raw) {
+      setInputValidity(input, true);
+      return undefined;
+    }
+    const pattern = /^\d{4}-\d{2}-\d{2}$/;
+    if (!pattern.test(raw)) {
+      setInputValidity(input, false);
+      throw new Error(`${fieldName} must be in YYYY-MM-DD format.`);
+    }
+    setInputValidity(input, true);
+    return raw;
+  }
+
+  function clearInputValidity(element) {
+    setInputValidity(element, true);
+  }
+
+  function setInputValidity(element, isValid) {
+    if (!element) {
+      return;
+    }
+    element.classList.toggle("is-invalid", !isValid);
+    if (isValid) {
+      element.removeAttribute("aria-invalid");
+    } else {
+      element.setAttribute("aria-invalid", "true");
+    }
   }
 
   function parseInputPayload() {
