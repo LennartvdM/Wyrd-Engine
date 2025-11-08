@@ -1,72 +1,69 @@
 # Wyrd Engine
 
-Procedural generation tools for creating believable synthetic schedules and environments.
+Procedural generation tools for believable synthetic schedules and environments.
 
 ## Overview
 
-The Synthetic Calendar Generator creates minute-by-minute schedules for fictional characters. It evolved from deterministic placement (specify exact times) to probabilistic modeling that accounts for human behavior patterns like fatigue, inefficiency, and cultural context.
+Wyrd Engine provides deterministic and probabilistic generators that create minute-by-minute schedules across a full week. The modular design separates core algorithms (engines), reusable capabilities (modules), and integration layers (rigs) so teams can mix and match features without rewriting pipelines.
 
-**Key features:**
-- Deterministic scheduling (MK1) for reproducible results
-- Behavioral modeling (MK2) with friction and fatigue curves
-- Calendar-aware generation (holidays, bridge days, seasonal variations)
-- Graceful overflow handling through compression and priority drops
-- Modular architecture enabling algorithm comparison
+## Evolution
 
-## Quick Start
+- **MK1 deterministic core.** A reproducible placement engine that fills schedules from explicit constraints.
+- **MK2 behavioural engine.** Introduced friction, fatigue, and cultural context to generate varied yet realistic days.
+- **Modular rigs.** Engines now plug into calendar, validation, and workforce rigs, letting applications swap features or extend the system with custom modules.
 
-**Generate a deterministic schedule:**
-```python
-python calendar_gen.py config.json output.json
-```
+## Quickstarts
 
-**Generate a behavioral schedule:**
-```python
-python calendar_gen_v2.py --archetype office --output schedule.json --seed 42
-```
+### 1. MK1 engine + Simple rig
+1. Prepare a deterministic config (see `tests/fixtures/deterministic_sample_config.json`).
+2. Run:
+   ```bash
+   python cli.py --engine mk1 --rig simple --config tests/fixtures/deterministic_sample_config.json --output mk1_simple.json
+   ```
+3. Review the JSON schedule and printed activity totals.
 
-**Use the modular interface:**
-```python
-python cli.py --engine mk2 --rig workforce --archetype parent --output week.json
-```
+### 2. MK2 engine + Calendar rig
+1. Choose an archetype (office, parent, freelancer).
+2. Run:
+   ```bash
+   python cli.py --engine mk2 --rig calendar --archetype office --output mk2_calendar.json --seed 7
+   ```
+3. Inspect the generated week; the calendar rig injects holidays and seasonal adjustments.
 
-## Live Demo
-
-Try the browser-based generator: [wyrrdmaek.netlify.app](https://wyrrdmaek.netlify.app)
-
-## How It Works
-
-The first version used deterministic placement—activities appear exactly when specified. This works for rigid schedules but fails to capture realistic behavior. Nobody's gym session takes exactly 60 minutes every time.
-
-The second version introduced probabilistic modeling. Provide weekly constraints (40 hours work, 3 hours fitness) and the system distributes activities while modeling inefficiency. A 60-minute workout becomes 75 minutes on Monday, 115 on Friday as fatigue accumulates. It handles weekends, holidays, and seasonal variations.
-
-The current architecture separates core algorithms (engines) from optional features (modules). This enables direct comparison between approaches and makes future extensions straightforward.
+### 3. MK2 engine + Workforce rig
+1. Optionally customise the yearly budget (see `examples/yearly_budget_alice.json`).
+2. Run:
+   ```bash
+   python cli.py --engine mk2 --rig workforce --archetype parent --yearly-budget examples/yearly_budget_alice.json --output mk2_workforce.json
+   ```
+3. Check the diagnostics for friction effects, unique days, and validation results.
 
 ## Project Structure
 
 ```
 engines/          Core scheduling algorithms (MK1, MK2)
-modules/          Optional features (calendar, friction, validation)
+modules/          Optional capabilities (calendar, friction, validation)
 rigs/             Composition layer combining engines + modules
 web/              Static browser implementation
-docs/             Architecture details and design decisions
+docs/             Extended documentation and design history
 tests/            Unit and integration tests
 ```
 
 ## Documentation
 
-- [Architecture Evolution](docs/calendar-generator/) - Design progression from prototype to modular system
-- [Algorithm Comparison](docs/calendar-generator/comparison.md) - MK1 vs MK2 analysis *(coming soon)*
-- [Technical Reference](docs/) - Component specifications
+- [Architecture overview](ARCHITECTURE.md) – High-level map of engines, modules, and rigs.
+- [Calendar generator history](docs/calendar-generator/) – Evolution notes and prototypes.
+- [Release notes](docs/releases/v3.0-modular.md) – Highlights for the v3.0-modular release.
 
 ## Development
 
-Run tests:
-```python
+Run the test suite:
+
+```bash
 pytest tests/ -v
 ```
 
-All generators produce validated schedules: exactly 1440 minutes per day, no gaps or overlaps.
+All generators produce validated schedules: exactly 1440 minutes per day with no overlaps.
 
 ## License
 
