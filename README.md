@@ -1,3 +1,6 @@
+(mal)functioning prototype:
+https://wyrrdmaek.netlify.app/
+
 # Wyrd Engine
 
 Procedural generation tools for believable synthetic schedules and environments.
