@@ -65,6 +65,77 @@ const calendarContainer = document.querySelector("#calendar");
 const calendarWarning = document.querySelector("#calendar-warning");
 const viewButtons = document.querySelectorAll("[data-view-target]");
 const views = document.querySelectorAll("[data-view]");
+const testConsoleScriptSelect = document.querySelector("#test-console-script");
+const testConsoleCodeInput = document.querySelector("#test-console-code");
+const testConsoleInput = document.querySelector("#test-console-input");
+const testConsoleRunButton = document.querySelector("#test-console-run");
+const testConsoleLoadButton = document.querySelector("#test-console-load");
+const testConsoleStdout = document.querySelector("#test-console-stdout");
+const testConsoleStderr = document.querySelector("#test-console-stderr");
+const testConsoleResult = document.querySelector("#test-console-result");
+const testConsoleStatusText = document.querySelector("#test-console-status-text");
+const testConsoleStatusIndicator = document.querySelector("#test-console-status-indicator");
+
+const TEST_CONSOLE_TIMEOUT_MS = 10_000;
+const TEST_CONSOLE_SCRIPTS = {
+  daily_summary: {
+    code: `from collections import defaultdict
+from datetime import datetime
+
+payload = payload or {}
+events = payload.get("events", [])
+totals = defaultdict(float)
+
+for event in events:
+    activity = event.get("activity") or "unspecified"
+    duration = float(event.get("duration_minutes") or 0)
+    totals[activity] += duration
+
+summary = [
+    {"activity": name, "hours": round(minutes / 60.0, 2)}
+    for name, minutes in sorted(totals.items(), key=lambda item: item[1], reverse=True)
+]
+
+result = {
+    "generated_at": datetime.utcnow().isoformat() + "Z",
+    "event_count": len(events),
+    "activities": summary,
+}
+
+print(f"Processed {len(events)} events")
+result`,
+    input: {
+      events: [
+        {
+          date: "2024-05-06",
+          activity: "work",
+          duration_minutes: 480,
+        },
+        {
+          date: "2024-05-06",
+          activity: "gym",
+          duration_minutes: 60,
+        },
+        {
+          date: "2024-05-07",
+          activity: "work",
+          duration_minutes: 450,
+        },
+      ],
+    },
+  },
+  custom: {
+    code: `# Write your custom script here.
+# The JSON input is available as a dict in the variable \`payload\`.
+# The final expression is returned to the UI.
+
+result = payload
+result`,
+    input: {
+      message: "Hello from the sandboxed runtime!",
+    },
+  },
+};
 
 let currentState = undefined;
 let calendar;
@@ -75,6 +146,7 @@ if (configInput) {
 
 initViews();
 initCalendar();
+initTestConsole();
 
 form?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -717,4 +789,417 @@ function dayIndices(days) {
     }
     return index;
   });
+}
+
+function initTestConsole() {
+  if (!testConsoleRunButton || !testConsoleScriptSelect || !testConsoleStdout) {
+    return;
+  }
+
+  const runtime = createPyRuntimeController();
+  let runtimeLoaded = false;
+  let runtimeLoading = false;
+  let runtimeLoadPromise;
+  let isExecuting = false;
+  let runCancelled = false;
+  let activeRunToken = 0;
+
+  if (testConsoleScriptSelect && !testConsoleScriptSelect.value) {
+    testConsoleScriptSelect.value = "daily_summary";
+  }
+  applyScriptPreset(testConsoleScriptSelect?.value || "");
+
+  updateRunButtonState();
+  updateLoadButtonLabel();
+
+  testConsoleScriptSelect.addEventListener("change", () => {
+    applyScriptPreset(testConsoleScriptSelect.value);
+    updateRunButtonState();
+  });
+
+  testConsoleCodeInput?.addEventListener("input", () => {
+    updateRunButtonState();
+  });
+
+  testConsoleLoadButton?.addEventListener("click", () => {
+    if (isExecuting) {
+      cancelExecution("Execution cancelled while reloading runtime.", { restart: true });
+      return;
+    }
+    loadRuntime({ restart: runtimeLoaded });
+  });
+
+  testConsoleRunButton.addEventListener("click", () => {
+    if (isExecuting) {
+      cancelExecution("Execution cancelled by user.", { restart: true });
+    } else {
+      runSelectedScript();
+    }
+  });
+
+  queueMicrotask(() => {
+    loadRuntime();
+  });
+
+  function applyScriptPreset(scriptId) {
+    if (!testConsoleCodeInput) {
+      return;
+    }
+
+    const preset = TEST_CONSOLE_SCRIPTS[scriptId];
+    if (!preset) {
+      testConsoleCodeInput.value = "";
+      testConsoleCodeInput.readOnly = true;
+      return;
+    }
+
+    testConsoleCodeInput.value = preset.code;
+    testConsoleCodeInput.readOnly = scriptId !== "custom";
+
+    if (testConsoleInput && preset.input) {
+      testConsoleInput.value = JSON.stringify(preset.input, null, 2);
+    } else if (testConsoleInput && !testConsoleInput.value.trim()) {
+      testConsoleInput.value = "{}";
+    }
+  }
+
+  function updateRunButtonState() {
+    if (!testConsoleRunButton) {
+      return;
+    }
+    if (isExecuting) {
+      testConsoleRunButton.disabled = false;
+      testConsoleRunButton.textContent = "Cancel";
+      return;
+    }
+
+    const hasScript = Boolean(testConsoleScriptSelect?.value) && Boolean(testConsoleCodeInput?.value.trim());
+    testConsoleRunButton.textContent = "Run";
+    testConsoleRunButton.disabled = !runtimeLoaded || !hasScript;
+  }
+
+  function updateLoadButtonLabel() {
+    if (!testConsoleLoadButton) {
+      return;
+    }
+    testConsoleLoadButton.textContent = runtimeLoaded ? "Reload Runtime" : "Load Runtime";
+    testConsoleLoadButton.disabled = runtimeLoading || isExecuting;
+  }
+
+  function setStatusIndicator(state, message) {
+    if (testConsoleStatusText) {
+      testConsoleStatusText.textContent = message;
+    }
+    if (!testConsoleStatusIndicator) {
+      return;
+    }
+    testConsoleStatusIndicator.classList.remove(
+      "is-idle",
+      "is-loading",
+      "is-ready",
+      "is-error",
+      "is-running",
+    );
+    if (state) {
+      testConsoleStatusIndicator.classList.add(`is-${state}`);
+    }
+  }
+
+  function loadRuntime({ restart = false } = {}) {
+    if (runtimeLoading) {
+      return runtimeLoadPromise;
+    }
+
+    runtimeLoading = true;
+    runtimeLoaded = false;
+    updateRunButtonState();
+    updateLoadButtonLabel();
+
+    const verb = restart ? "Reloading" : "Loading";
+    setStatusIndicator("loading", `${verb} Pyodide runtime…`);
+
+    const loader = restart ? runtime.restart() : runtime.load();
+    runtimeLoadPromise = loader
+      .then(() => {
+        runtimeLoaded = true;
+        setStatusIndicator("ready", "Runtime ready.");
+      })
+      .catch((error) => {
+        runtimeLoaded = false;
+        setStatusIndicator("error", `Runtime failed to load: ${error.message || error}`);
+        return Promise.reject(error);
+      })
+      .finally(() => {
+        runtimeLoading = false;
+        updateRunButtonState();
+        updateLoadButtonLabel();
+      });
+
+    return runtimeLoadPromise;
+  }
+
+  function runSelectedScript() {
+    if (!runtimeLoaded) {
+      loadRuntime();
+      return;
+    }
+
+    if (!testConsoleCodeInput || !testConsoleCodeInput.value.trim()) {
+      setStatusIndicator("error", "No Python code to execute.");
+      return;
+    }
+
+    let payload;
+    try {
+      payload = parseInputPayload();
+    } catch (error) {
+      setStatusIndicator("error", error.message);
+      if (testConsoleStderr) {
+        testConsoleStderr.textContent = error.message;
+      }
+      return;
+    }
+
+    isExecuting = true;
+    runCancelled = false;
+    activeRunToken += 1;
+    const runToken = activeRunToken;
+    setOutputsPending();
+    setStatusIndicator("running", "Running script…");
+    updateRunButtonState();
+    updateLoadButtonLabel();
+
+    const timeoutId = window.setTimeout(() => {
+      if (runCancelled || runToken !== activeRunToken) {
+        return;
+      }
+      cancelExecution("Execution timed out after 10 seconds. Restarting runtime…", {
+        restart: true,
+        timedOut: true,
+      });
+    }, TEST_CONSOLE_TIMEOUT_MS);
+
+    runtime
+      .run(testConsoleCodeInput.value, { context: payload })
+      .then((response) => {
+        if (runCancelled || runToken !== activeRunToken) {
+          return;
+        }
+        renderOutputs(response);
+        setStatusIndicator("ready", "Execution finished successfully.");
+      })
+      .catch((error) => {
+        if (runCancelled || runToken !== activeRunToken) {
+          return;
+        }
+        renderError(error);
+      })
+      .finally(() => {
+        window.clearTimeout(timeoutId);
+        if (runCancelled || runToken !== activeRunToken) {
+          runCancelled = false;
+          return;
+        }
+        isExecuting = false;
+        updateRunButtonState();
+        updateLoadButtonLabel();
+      });
+  }
+
+  function cancelExecution(message, { restart = false, timedOut = false } = {}) {
+    if (!isExecuting) {
+      return;
+    }
+    isExecuting = false;
+    runCancelled = true;
+    runtimeLoaded = false;
+    updateRunButtonState();
+
+    const note = message || (timedOut ? "Execution timed out." : "Execution cancelled.");
+    if (testConsoleStderr) {
+      testConsoleStderr.textContent = note;
+    }
+    if (testConsoleResult) {
+      testConsoleResult.textContent = JSON.stringify({ error: note }, null, 2);
+    }
+
+    if (testConsoleLoadButton) {
+      testConsoleLoadButton.disabled = true;
+    }
+
+    runtime.terminate(note);
+
+    if (restart) {
+      loadRuntime({ restart: true });
+    } else {
+      updateLoadButtonLabel();
+      setStatusIndicator(timedOut ? "error" : "ready", note);
+    }
+  }
+
+  function setOutputsPending() {
+    if (testConsoleStdout) {
+      testConsoleStdout.textContent = "Running…";
+    }
+    if (testConsoleStderr) {
+      testConsoleStderr.textContent = "Collecting stderr…";
+    }
+    if (testConsoleResult) {
+      testConsoleResult.textContent = "Awaiting result…";
+    }
+  }
+
+  function renderOutputs(response) {
+    if (testConsoleStdout) {
+      testConsoleStdout.textContent = response.stdout?.length ? response.stdout : "(no stdout captured)";
+    }
+    if (testConsoleStderr) {
+      testConsoleStderr.textContent = response.stderr?.length ? response.stderr : "(no stderr captured)";
+    }
+    if (testConsoleResult) {
+      testConsoleResult.textContent = response.resultJSON || "null";
+    }
+  }
+
+  function renderError(error) {
+    const details = error?.details || {};
+    if (testConsoleStdout) {
+      testConsoleStdout.textContent = details.stdout?.length ? details.stdout : "(no stdout captured)";
+    }
+    if (testConsoleStderr) {
+      const stderrMessage = details.stderr?.length ? details.stderr : error.message || "Execution failed.";
+      testConsoleStderr.textContent = stderrMessage;
+    }
+    if (testConsoleResult) {
+      if (details.resultJSON) {
+        testConsoleResult.textContent = details.resultJSON;
+      } else {
+        testConsoleResult.textContent = JSON.stringify({ error: error.message || "Execution failed." }, null, 2);
+      }
+    }
+    setStatusIndicator("error", error.message || "Execution failed.");
+  }
+
+  function parseInputPayload() {
+    if (!testConsoleInput) {
+      return {};
+    }
+    const raw = testConsoleInput.value.trim();
+    if (!raw) {
+      return {};
+    }
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      throw new Error(`Input JSON is invalid: ${error.message}`);
+    }
+  }
+}
+
+function createPyRuntimeController() {
+  let worker;
+  let loadPromise;
+  let requestId = 0;
+  const pending = new Map();
+
+  function ensureWorker() {
+    if (worker) {
+      return worker;
+    }
+    worker = new Worker(new URL("./workers/pyRunner.js", import.meta.url), { type: "module" });
+    worker.onmessage = handleMessage;
+    worker.onmessageerror = () => {
+      const error = new Error("Failed to process message from Pyodide runtime");
+      failPending(error);
+      terminateWorker();
+    };
+    worker.onerror = (event) => {
+      const error = new Error(event?.message || "Pyodide worker error");
+      failPending(error);
+      terminateWorker();
+    };
+    return worker;
+  }
+
+  function handleMessage(event) {
+    const message = event.data || {};
+    if (typeof message.id === "undefined") {
+      return;
+    }
+    const entry = pending.get(message.id);
+    if (!entry) {
+      return;
+    }
+    pending.delete(message.id);
+    if (message.ok) {
+      entry.resolve(message);
+    } else {
+      const error = new Error(message.error || "Pyodide runtime error");
+      error.details = message;
+      entry.reject(error);
+    }
+  }
+
+  function postMessage(type, data = {}) {
+    const instance = ensureWorker();
+    const id = ++requestId;
+    const payload = { id, type, ...data };
+    const response = new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+    });
+    instance.postMessage(payload);
+    return response;
+  }
+
+  function failPending(error) {
+    pending.forEach(({ reject }) => {
+      reject(error);
+    });
+    pending.clear();
+    loadPromise = undefined;
+  }
+
+  function terminateWorker() {
+    if (worker) {
+      worker.terminate();
+      worker = undefined;
+    }
+    loadPromise = undefined;
+  }
+
+  async function load() {
+    ensureWorker();
+    if (!loadPromise) {
+      loadPromise = postMessage("load").catch((error) => {
+        loadPromise = undefined;
+        throw error;
+      });
+    }
+    await loadPromise;
+  }
+
+  async function run(code, { context } = {}) {
+    await load();
+    return postMessage("runPython", { code, context });
+  }
+
+  async function restart() {
+    const error = new Error("Runtime restarting");
+    failPending(error);
+    terminateWorker();
+    await load();
+  }
+
+  function terminate(reason = "Runtime terminated") {
+    const error = new Error(reason);
+    failPending(error);
+    terminateWorker();
+  }
+
+  return {
+    load,
+    run,
+    restart,
+    terminate,
+  };
 }

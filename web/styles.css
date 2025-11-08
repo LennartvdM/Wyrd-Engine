@@ -200,6 +200,12 @@ button:not(:disabled):hover {
   align-items: center;
 }
 
+.test-console-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
 .test-console-header h2 {
   margin: 0 0 0.35rem;
   font-size: 1.75rem;
@@ -283,8 +289,46 @@ button:not(:disabled):hover {
   width: 0.75rem;
   height: 0.75rem;
   border-radius: 999px;
-  background: radial-gradient(circle at 30% 30%, #38bdf8, #0ea5e9);
-  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.2);
+  background: radial-gradient(circle at 30% 30%, #94a3b8, #475569);
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.15);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.status-indicator.is-idle {
+  background: radial-gradient(circle at 30% 30%, #94a3b8, #475569);
+}
+
+.status-indicator.is-loading {
+  background: radial-gradient(circle at 30% 30%, #f59e0b, #d97706);
+  box-shadow: 0 0 0 4px rgba(234, 179, 8, 0.2);
+  animation: indicator-pulse 1.2s ease-in-out infinite;
+}
+
+.status-indicator.is-running {
+  background: radial-gradient(circle at 30% 30%, #fb923c, #f97316);
+  box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.25);
+  animation: indicator-pulse 0.9s ease-in-out infinite;
+}
+
+.status-indicator.is-ready {
+  background: radial-gradient(circle at 30% 30%, #34d399, #059669);
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.25);
+}
+
+.status-indicator.is-error {
+  background: radial-gradient(circle at 30% 30%, #f87171, #ef4444);
+  box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.25);
+  transform: scale(1.05);
+}
+
+@keyframes indicator-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
 }
 
 .timeline .vis-timeline {
