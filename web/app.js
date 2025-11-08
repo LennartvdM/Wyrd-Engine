@@ -63,6 +63,8 @@ const jsonOutput = document.querySelector("#json-output");
 const downloadButton = document.querySelector("#download-json");
 const calendarContainer = document.querySelector("#calendar");
 const calendarWarning = document.querySelector("#calendar-warning");
+const viewButtons = document.querySelectorAll("[data-view-target]");
+const views = document.querySelectorAll("[data-view]");
 
 let currentState = undefined;
 let calendar;
@@ -71,6 +73,7 @@ if (configInput) {
   configInput.value = JSON.stringify(DEFAULT_CONFIG, null, 2);
 }
 
+initViews();
 initCalendar();
 
 form?.addEventListener("submit", (event) => {
@@ -145,6 +148,43 @@ function initCalendar() {
 
   calendar.render();
   calendarWarning?.classList.add("hidden");
+}
+
+function initViews() {
+  if (!viewButtons.length || !views.length) {
+    return;
+  }
+
+  showView("calendar");
+
+  viewButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = button.dataset.viewTarget;
+      if (!target) {
+        return;
+      }
+
+      showView(target);
+    });
+  });
+}
+
+function showView(target) {
+  views.forEach((view) => {
+    if (view.dataset.view === target) {
+      view.classList.remove("hidden");
+    } else {
+      view.classList.add("hidden");
+    }
+  });
+
+  viewButtons.forEach((button) => {
+    if (button.dataset.viewTarget === target) {
+      button.classList.add("is-active");
+    } else {
+      button.classList.remove("is-active");
+    }
+  });
 }
 
 function renderCalendar(events, meta) {
