@@ -8,6 +8,13 @@
       rel="stylesheet"
       href="https://unpkg.com/vis-timeline@9.5.1/styles/vis-timeline-graph2d.min.css"
     />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css"
+      integrity="sha512-U4nxsLOT9KfPWnYbxcd/WnIr+ChH9cx/kXzMpF9nf4KhQ4Fs10Idgl7J77foDsw9KyYN53ZDy1Y4wl7zngzMuA=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -130,12 +137,44 @@
               </div>
             </section>
             <div class="form-row">
-              <label for="test-console-script">Script</label>
-              <select id="test-console-script" name="test-console-script">
-                <option value="">Select a script…</option>
-                <option value="daily_summary">Daily summary</option>
-                <option value="custom">Custom script</option>
-              </select>
+              <span class="form-label">Editor presets</span>
+              <div
+                class="test-console-presets"
+                role="group"
+                aria-label="Python editor presets"
+              >
+                <button
+                  type="button"
+                  class="preset-button"
+                  data-script-preset="mk1_quick"
+                >
+                  Run MK1 quick test
+                </button>
+                <button
+                  type="button"
+                  class="preset-button"
+                  data-script-preset="mk2_quick"
+                >
+                  Run MK2 quick test
+                </button>
+                <button
+                  type="button"
+                  class="preset-button"
+                  data-script-preset="compare_minimal"
+                >
+                  Compare MK1 vs MK2 (minimal)
+                </button>
+                <button
+                  type="button"
+                  class="preset-button"
+                  data-script-preset="scratch"
+                >
+                  Scratch Pad
+                </button>
+              </div>
+              <p class="help-text">
+                Load a ready-to-run script or start with an empty scratch pad.
+              </p>
             </div>
             <div class="form-row">
               <label for="test-console-code">Python code</label>
@@ -210,6 +249,18 @@
         <div class="event-duration"></div>
       </div>
     </template>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"
+      integrity="sha512-vuKXu95syEHCqB6f+GO6zkRgZNpmjDoE7YQDdyCjTiMQuuLHfoalGexiLRNvKcJsteVEhDWUpAJZciV06P88hg=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"
+      integrity="sha512-ykBLL8GMDIS9ZhDJW60Trw7O3cu6UytzszbmWzxubUoil58x2oyWZMhUlCT3VkOITkkpFmS6r30YIOCwRvDDcw=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
     <script src="https://unpkg.com/vis-timeline@9.5.1/standalone/umd/vis-timeline-graph2d.min.js"></script>
     <script src="app.js" type="module"></script>
   </body>
