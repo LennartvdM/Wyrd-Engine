@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from modules.validation import assert_day_coverage
+
 from .base import ScheduleEngine, ScheduleInput, ScheduleOutput
 
 __all__ = ["EngineMK1", "load_character_config"]
@@ -277,18 +279,7 @@ class DaySchedule:
     def validate(self) -> None:
         """Ensure that events cover the day without gaps or overlaps."""
 
-        if not self._events:
-            raise ValueError("Day has no events")
-
-        current = 0
-        for start, end, _ in self._events:
-            if start != current:
-                raise ValueError(f"Gap detected in {self.day_name}")
-            if end <= start:
-                raise ValueError(f"Invalid event duration in {self.day_name}")
-            current = end
-        if current != 1440:
-            raise ValueError(f"Day {self.day_name} does not cover full 24 hours")
+        assert_day_coverage(self.day_name, self._events)
 
     def to_events(self) -> List[Event]:
         return [Event(self.date, self.day_name, start, end, activity) for start, end, activity in self._events]
