@@ -5,9 +5,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from models import Activity, PersonProfile
+
+
+DayGenerator = Callable[[PersonProfile, Dict[str, object]], List[Activity]]
 
 logger = logging.getLogger(__name__)
 
@@ -29,20 +32,9 @@ def generate_unique_day_schedule(
 ) -> Optional[List[Activity]]:
     """Dispatch to the correct generator for the supplied unique day."""
 
-    day_type = unique_day.day_type.lower()
-
-    if day_type == "vacation":
-        return generate_vacation_day(profile, unique_day.rules)
-    if day_type == "sick":
-        return generate_sick_day(profile, unique_day.rules)
-    if day_type == "wedding":
-        return generate_wedding_day(profile, unique_day.rules)
-    if day_type == "birthday":
-        return generate_birthday_day(profile, unique_day.rules)
-    if day_type == "tax_deadline":
-        return generate_tax_day(profile, unique_day.rules)
-    if day_type == "custom":
-        return generate_custom_day(profile, unique_day.rules)
+    generator = _UNIQUE_DAY_GENERATORS.get(unique_day.day_type.lower())
+    if generator:
+        return generator(profile, unique_day.rules)
 
     logger.warning("Unknown unique day type: %s on %s", unique_day.day_type, day)
     return None
@@ -171,6 +163,16 @@ def generate_custom_day(profile: PersonProfile, rules: Dict[str, object]) -> Lis
         activities.append(Activity("sleep", 420, 1.0, optional=False, priority=1))
 
     return activities
+
+
+_UNIQUE_DAY_GENERATORS: Dict[str, DayGenerator] = {
+    "vacation": generate_vacation_day,
+    "sick": generate_sick_day,
+    "wedding": generate_wedding_day,
+    "birthday": generate_birthday_day,
+    "tax_deadline": generate_tax_day,
+    "custom": generate_custom_day,
+}
 
 
 __all__ = [
