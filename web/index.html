@@ -91,6 +91,84 @@
             <div id="calendar"></div>
           </div>
         </div>
+        <section
+          class="replay-inspector hidden"
+          id="replay-inspector"
+          aria-label="Minute picker and JSON inspector"
+        >
+          <div class="replay-inspector__visual">
+            <div class="replay-inspector__header">
+              <h3>Minute picker</h3>
+              <p
+                class="replay-minute"
+                id="replay-minute-label"
+                role="status"
+                aria-live="polite"
+              >
+                Hover or tap the wheel to inspect minute ranges.
+              </p>
+            </div>
+            <svg
+              class="replay-radial"
+              id="replay-radial"
+              viewBox="0 0 420 420"
+              role="presentation"
+            ></svg>
+          </div>
+          <div class="replay-inspector__data">
+            <div class="replay-inspector__header">
+              <h3>Event JSON</h3>
+              <p class="replay-inspector__hint">
+                Click any entry to highlight its arc and scroll into view.
+              </p>
+            </div>
+            <div class="replay-inspector__actions">
+              <button
+                type="button"
+                id="replay-export-svg"
+                data-tooltip="Download an SVG of the current radial layout"
+                aria-label="Export current frame as SVG"
+                disabled
+              >
+                Export SVG
+              </button>
+              <button
+                type="button"
+                id="replay-export-png"
+                data-tooltip="Download a PNG snapshot of the current frame"
+                aria-label="Export current frame as PNG"
+                disabled
+              >
+                Export PNG
+              </button>
+              <button
+                type="button"
+                id="replay-export-gif"
+                data-tooltip="Render a 5 second replay as an animated GIF"
+                aria-label="Export five second replay as GIF"
+                disabled
+              >
+                Export GIF
+              </button>
+              <button
+                type="button"
+                id="replay-export-mp4"
+                data-tooltip="Render a 5 second replay as a video clip"
+                aria-label="Export five second replay as MP4"
+                disabled
+              >
+                Export MP4
+              </button>
+            </div>
+            <p
+              class="replay-export-status"
+              id="replay-export-status"
+              role="status"
+              aria-live="polite"
+            ></p>
+            <div class="replay-event-list" id="replay-event-list" role="list"></div>
+          </div>
+        </section>
         <details class="raw-json">
           <summary>Raw JSON output</summary>
           <pre id="json-output"></pre>
