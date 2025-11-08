@@ -274,6 +274,44 @@
               </div>
               <pre id="test-console-result">No output yet.</pre>
             </div>
+            <div class="output-panel diff-panel" id="fixture-diff-panel">
+              <div class="output-panel-header diff-panel__header">
+                <div class="diff-panel__header-text">
+                  <h3>Fixture Diff</h3>
+                  <p class="diff-panel__subtitle">
+                    Compare the latest script output to repository fixtures.
+                  </p>
+                </div>
+                <div class="diff-panel__controls">
+                  <label class="diff-panel__select" for="fixture-select">
+                    <span>Select expected fixture</span>
+                    <select id="fixture-select" name="fixture-select" disabled>
+                      <option value="">Loading fixtures…</option>
+                    </select>
+                  </label>
+                  <span class="diff-panel__badge is-pending" id="fixture-diff-badge"
+                    >No fixture selected</span
+                  >
+                </div>
+              </div>
+              <div class="diff-panel__summary" id="fixture-diff-summary">
+                Choose a fixture to compare against the most recent result.
+              </div>
+              <div class="diff-panel__body">
+                <div class="diff-panel__column">
+                  <h4 class="diff-panel__column-title">Expected fixture</h4>
+                  <pre class="diff-panel__output" id="fixture-expected-output"
+                    >Select a fixture to load expected JSON.</pre
+                  >
+                </div>
+                <div class="diff-panel__column">
+                  <h4 class="diff-panel__column-title">Actual output</h4>
+                  <pre class="diff-panel__output" id="fixture-actual-output"
+                    >Run the script to capture JSON output.</pre
+                  >
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <div class="test-console-status" role="status" aria-live="polite">

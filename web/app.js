@@ -79,6 +79,12 @@ const testConsoleStderr = document.querySelector("#test-console-stderr");
 const testConsoleResult = document.querySelector("#test-console-result");
 const testConsoleStatusText = document.querySelector("#test-console-status-text");
 const testConsoleStatusIndicator = document.querySelector("#test-console-status-indicator");
+const fixtureDiffPanel = document.querySelector("#fixture-diff-panel");
+const fixtureSelect = document.querySelector("#fixture-select");
+const fixtureDiffSummary = document.querySelector("#fixture-diff-summary");
+const fixtureExpectedOutput = document.querySelector("#fixture-expected-output");
+const fixtureActualOutput = document.querySelector("#fixture-actual-output");
+const fixtureDiffBadge = document.querySelector("#fixture-diff-badge");
 const repoFilePanel = document.querySelector("#repo-file-panel");
 const repoFileSelect = document.querySelector("#repo-file-select");
 const repoFileFetchButton = document.querySelector("#repo-file-fetch");
@@ -303,6 +309,11 @@ const REPO_FILE_MANIFEST = [
     target: "input",
   },
 ];
+
+const FIXTURE_DIRECTORY_PATH = "../tests/fixtures";
+const FIXTURE_MANIFEST_NAME = "manifest.json";
+const FIXTURE_SUMMARY_LIMIT = 8;
+const DIFF_VALUE_PREVIEW_LIMIT = 80;
 
 let currentState = undefined;
 let calendar;
@@ -979,6 +990,7 @@ function initTestConsole() {
   const presetButtonList = Array.from(testConsolePresetButtons || []);
   const repoBrowser = createRepoBrowser();
   const codeEditor = createCodeEditor();
+  const fixtureDiffController = createFixtureDiffController();
   initializeRunnerInputs();
 
   refreshTestConsoleEditor = () => {
@@ -1443,9 +1455,11 @@ function initTestConsole() {
     if (testConsoleStderr) {
       testConsoleStderr.textContent = note;
     }
+    const errorPayload = JSON.stringify({ error: note }, null, 2);
     if (testConsoleResult) {
-      testConsoleResult.textContent = JSON.stringify({ error: note }, null, 2);
+      testConsoleResult.textContent = errorPayload;
     }
+    fixtureDiffController.updateActual(errorPayload, { runtimeError: note });
 
     if (testConsoleLoadButton) {
       testConsoleLoadButton.disabled = true;
@@ -1471,6 +1485,7 @@ function initTestConsole() {
     if (testConsoleResult) {
       testConsoleResult.textContent = "Awaiting result…";
     }
+    fixtureDiffController.handleExecutionStarted();
   }
 
   function renderOutputs(response) {
@@ -1480,9 +1495,12 @@ function initTestConsole() {
     if (testConsoleStderr) {
       testConsoleStderr.textContent = response.stderr?.length ? response.stderr : "(no stderr captured)";
     }
+    const rawResult = typeof response.resultJSON === "string" ? response.resultJSON : "";
+    const resultPayload = rawResult.trim().length ? rawResult : "null";
     if (testConsoleResult) {
-      testConsoleResult.textContent = response.resultJSON || "null";
+      testConsoleResult.textContent = resultPayload;
     }
+    fixtureDiffController.updateActual(resultPayload);
   }
 
   function renderError(error) {
@@ -1494,13 +1512,13 @@ function initTestConsole() {
       const stderrMessage = details.stderr?.length ? details.stderr : error.message || "Execution failed.";
       testConsoleStderr.textContent = stderrMessage;
     }
+    const rawResult = typeof details.resultJSON === "string" ? details.resultJSON : "";
+    const fallbackResult = JSON.stringify({ error: error.message || "Execution failed." }, null, 2);
+    const resultPayload = rawResult.trim().length ? rawResult : fallbackResult;
     if (testConsoleResult) {
-      if (details.resultJSON) {
-        testConsoleResult.textContent = details.resultJSON;
-      } else {
-        testConsoleResult.textContent = JSON.stringify({ error: error.message || "Execution failed." }, null, 2);
-      }
+      testConsoleResult.textContent = resultPayload;
     }
+    fixtureDiffController.handleExecutionError(error, { resultText: resultPayload });
     setStatusIndicator("error", error.message || "Execution failed.");
   }
 
@@ -1626,6 +1644,683 @@ function initTestConsole() {
     }
   }
 }
+
+function createFixtureDiffController() {
+  if (
+    !fixtureDiffPanel ||
+    !fixtureSelect ||
+    !fixtureDiffSummary ||
+    !fixtureExpectedOutput ||
+    !fixtureActualOutput ||
+    !fixtureDiffBadge
+  ) {
+    return {
+      updateActual() {},
+      handleExecutionStarted() {},
+      handleExecutionError() {},
+    };
+  }
+
+  const state = {
+    manifestPromise: null,
+    manifestEntries: [],
+    manifestMap: new Map(),
+    manifestLoadError: "",
+    fixtureCache: new Map(),
+    selectedFixture: "",
+    selectedLabel: "",
+    expectedLoaded: false,
+    expectedError: "",
+    expectedData: undefined,
+    actualLoaded: false,
+    actualData: undefined,
+    actualParseError: "",
+    actualRuntimeError: "",
+  };
+
+  let fixtureRequestToken = 0;
+
+  initialize();
+
+  return {
+    updateActual(resultText, options = {}) {
+      applyActual(resultText, options);
+    },
+    handleExecutionStarted() {
+      state.actualLoaded = false;
+      state.actualData = undefined;
+      state.actualParseError = "";
+      state.actualRuntimeError = "";
+      if (fixtureActualOutput) {
+        fixtureActualOutput.textContent = "Awaiting result…";
+      }
+      updateSummary();
+    },
+    handleExecutionError(error, options = {}) {
+      const runtimeMessage = options.runtimeError || error?.message || "Execution failed.";
+      const overrideResult = typeof options.resultText === "string" ? options.resultText : undefined;
+      const rawResult =
+        overrideResult ??
+        (typeof error?.details?.resultJSON === "string" ? error.details.resultJSON : "");
+      if (rawResult.trim().length) {
+        applyActual(rawResult, { runtimeError: runtimeMessage });
+        return;
+      }
+      state.actualLoaded = true;
+      state.actualData = undefined;
+      state.actualParseError = "";
+      state.actualRuntimeError = runtimeMessage;
+      if (fixtureActualOutput) {
+        fixtureActualOutput.textContent = runtimeMessage;
+      }
+      updateSummary();
+    },
+  };
+
+  function initialize() {
+    fixtureSelect.disabled = true;
+    updateSummary();
+    populateManifest();
+    fixtureSelect.addEventListener("change", () => {
+      handleFixtureChange(fixtureSelect.value);
+    });
+  }
+
+  function fetchManifest() {
+    if (state.manifestPromise) {
+      return state.manifestPromise;
+    }
+    const url = resolveFixtureUrl(FIXTURE_MANIFEST_NAME);
+    state.manifestPromise = fetch(url, { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Manifest request failed with status ${response.status}`);
+        }
+        return response.json();
+      })
+      .then((data) => normalizeManifest(data))
+      .catch((error) => {
+        state.manifestPromise = null;
+        throw error;
+      });
+    return state.manifestPromise;
+  }
+
+  function populateManifest() {
+    fixtureSelect.innerHTML = "";
+    const loadingOption = document.createElement("option");
+    loadingOption.value = "";
+    loadingOption.textContent = "Loading fixtures…";
+    fixtureSelect.appendChild(loadingOption);
+
+    fetchManifest()
+      .then((entries) => {
+        state.manifestEntries = entries;
+        state.manifestMap = new Map(entries.map((entry) => [entry.file, entry]));
+        state.manifestLoadError = "";
+
+        fixtureSelect.innerHTML = "";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Select expected fixture…";
+        fixtureSelect.appendChild(placeholder);
+
+        for (const entry of entries) {
+          const option = document.createElement("option");
+          option.value = entry.file;
+          option.textContent = entry.label;
+          fixtureSelect.appendChild(option);
+        }
+
+        if (!entries.length) {
+          fixtureSelect.disabled = true;
+          state.manifestLoadError = "No JSON fixtures found in tests/fixtures.";
+        } else {
+          fixtureSelect.disabled = false;
+        }
+
+        if (state.selectedFixture && !state.manifestMap.has(state.selectedFixture)) {
+          state.selectedFixture = "";
+          state.selectedLabel = "";
+          state.expectedLoaded = false;
+          state.expectedError = "";
+          state.expectedData = undefined;
+          fixtureExpectedOutput.textContent = "Select a fixture to load expected JSON.";
+        }
+
+        updateSummary();
+      })
+      .catch((error) => {
+        console.error("Failed to load fixture manifest", error);
+        state.manifestEntries = [];
+        state.manifestMap.clear();
+        state.manifestLoadError = error?.message || "Failed to load fixture manifest.";
+        fixtureSelect.innerHTML = "";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Fixtures unavailable";
+        fixtureSelect.appendChild(placeholder);
+        fixtureSelect.disabled = true;
+        updateSummary();
+      });
+  }
+
+  function handleFixtureChange(value) {
+    fixtureRequestToken += 1;
+    const requestId = fixtureRequestToken;
+
+    state.selectedFixture = value;
+    state.selectedLabel = value ? state.manifestMap.get(value)?.label || value : "";
+    state.expectedLoaded = false;
+    state.expectedError = "";
+    state.expectedData = undefined;
+
+    if (!value) {
+      fixtureExpectedOutput.textContent = "Select a fixture to load expected JSON.";
+      updateSummary();
+      return;
+    }
+
+    const manifestEntry = state.manifestMap.get(value);
+    if (!manifestEntry) {
+      state.expectedLoaded = true;
+      state.expectedError = "Fixture not listed in manifest.";
+      fixtureExpectedOutput.textContent = state.expectedError;
+      updateSummary();
+      return;
+    }
+
+    const cached = state.fixtureCache.get(value);
+    if (cached) {
+      applyFixtureData(cached);
+      return;
+    }
+
+    fixtureExpectedOutput.textContent = `Loading ${manifestEntry.label}…`;
+    updateSummary();
+
+    fetchFixture(manifestEntry.file)
+      .then((payload) => {
+        if (requestId !== fixtureRequestToken) {
+          return;
+        }
+        state.fixtureCache.set(manifestEntry.file, payload);
+        applyFixtureData(payload);
+      })
+      .catch((error) => {
+        if (requestId !== fixtureRequestToken) {
+          return;
+        }
+        console.error(`Failed to load fixture ${manifestEntry.file}`, error);
+        state.expectedLoaded = true;
+        state.expectedError = error?.message || "Failed to load fixture.";
+        fixtureExpectedOutput.textContent = state.expectedError;
+        updateSummary();
+      });
+  }
+
+  function applyFixtureData(payload) {
+    state.expectedLoaded = true;
+    state.expectedError = "";
+    state.expectedData = payload.data;
+    fixtureExpectedOutput.textContent = payload.display;
+    updateSummary();
+  }
+
+  async function fetchFixture(file) {
+    const url = resolveFixtureUrl(file);
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Failed to load fixture (status ${response.status})`);
+    }
+    const text = await response.text();
+    try {
+      const parsed = JSON.parse(text);
+      return { data: parsed, display: formatJsonForDisplay(parsed) };
+    } catch (error) {
+      throw new Error(`Fixture JSON is invalid: ${error.message}`);
+    }
+  }
+
+  function applyActual(resultText, options = {}) {
+    state.actualLoaded = true;
+    state.actualRuntimeError = options.runtimeError || "";
+    state.actualParseError = "";
+    const raw = typeof resultText === "string" ? resultText : "";
+    const normalized = raw.trim().length ? raw : "null";
+
+    try {
+      const parsed = JSON.parse(normalized);
+      state.actualData = parsed;
+      const display = formatJsonForDisplay(parsed);
+      fixtureActualOutput.textContent = display;
+    } catch (error) {
+      state.actualData = undefined;
+      state.actualParseError = error?.message || "Actual output is not valid JSON.";
+      const display = raw.trim().length ? raw : "(empty result)";
+      fixtureActualOutput.textContent = `${display}\n\n⚠️ ${state.actualParseError}`;
+    }
+
+    updateSummary();
+  }
+
+  function updateSummary() {
+    fixtureDiffSummary.innerHTML = "";
+    setPanelState(null);
+
+    if (state.manifestLoadError) {
+      setBadgeState("error", "Fixtures unavailable");
+      const message = document.createElement("p");
+      message.textContent = state.manifestLoadError;
+      fixtureDiffSummary.appendChild(message);
+      return;
+    }
+
+    if (!state.selectedFixture) {
+      setBadgeState("pending", "No fixture selected");
+      const message = document.createElement("p");
+      message.textContent = "Choose a fixture to compare against the latest run.";
+      fixtureDiffSummary.appendChild(message);
+      return;
+    }
+
+    if (!state.expectedLoaded) {
+      setBadgeState("pending", "Loading fixture…");
+      const message = document.createElement("p");
+      message.textContent = `Loading ${state.selectedLabel || state.selectedFixture}…`;
+      fixtureDiffSummary.appendChild(message);
+      return;
+    }
+
+    if (state.expectedError) {
+      setBadgeState("error", "Fixture load failed");
+      setPanelState("error");
+      const message = document.createElement("p");
+      message.textContent = `Could not load ${state.selectedLabel || state.selectedFixture}: ${state.expectedError}`;
+      fixtureDiffSummary.appendChild(message);
+      return;
+    }
+
+    if (!state.actualLoaded) {
+      setBadgeState("pending", "Awaiting result…");
+      const message = document.createElement("p");
+      message.textContent = `Run the script to compare against ${state.selectedLabel || state.selectedFixture}.`;
+      fixtureDiffSummary.appendChild(message);
+      return;
+    }
+
+    if (state.actualParseError) {
+      setBadgeState("error", "Invalid JSON");
+      setPanelState("error");
+      const message = document.createElement("p");
+      message.textContent = `Actual output is not valid JSON: ${state.actualParseError}`;
+      fixtureDiffSummary.appendChild(message);
+      return;
+    }
+
+    if (typeof state.actualData === "undefined") {
+      setBadgeState("error", "Execution failed");
+      setPanelState("error");
+      const message = document.createElement("p");
+      message.textContent =
+        state.actualRuntimeError || "Execution failed before producing JSON output.";
+      fixtureDiffSummary.appendChild(message);
+      return;
+    }
+
+    const diff = computeJsonDiff(state.expectedData, state.actualData);
+    const differenceTotal =
+      diff.addedKeys.length +
+      diff.removedKeys.length +
+      diff.lengthChanges.length +
+      diff.typeMismatches.length +
+      diff.valueDifferences.length;
+
+    const notes = [];
+    if (state.actualRuntimeError) {
+      notes.push(`Execution reported an error: ${state.actualRuntimeError}`);
+    }
+
+    if (differenceTotal === 0) {
+      setBadgeState("match", "MATCH ✅");
+      setPanelState("match");
+      renderMatchSummary(notes);
+      return;
+    }
+
+    setBadgeState(
+      "mismatch",
+      `${differenceTotal} difference${differenceTotal === 1 ? "" : "s"}`,
+    );
+    setPanelState("mismatch");
+    renderMismatchSummary(diff, notes);
+  }
+
+  function renderMatchSummary(notes) {
+    const fragment = document.createDocumentFragment();
+    const message = document.createElement("p");
+    message.textContent = `${state.selectedLabel || state.selectedFixture} matches the latest output.`;
+    fragment.appendChild(message);
+
+    if (notes.length) {
+      fragment.appendChild(renderNotes(notes));
+    }
+
+    fixtureDiffSummary.appendChild(fragment);
+  }
+
+  function renderMismatchSummary(diff, notes) {
+    const fragment = document.createDocumentFragment();
+    const intro = document.createElement("p");
+    intro.textContent = `Differences found while comparing to ${state.selectedLabel || state.selectedFixture}.`;
+    fragment.appendChild(intro);
+
+    fragment.appendChild(renderMetrics(diff));
+
+    const details = buildDetailEntries(diff);
+    if (details.length) {
+      const list = document.createElement("ul");
+      list.className = "diff-panel__details";
+      details.slice(0, FIXTURE_SUMMARY_LIMIT).forEach((entry) => {
+        const item = document.createElement("li");
+        const label = document.createElement("strong");
+        label.textContent = `${entry.kind}: `;
+        const text = document.createElement("span");
+        text.textContent = entry.message;
+        item.append(label, text);
+        list.appendChild(item);
+      });
+      if (details.length > FIXTURE_SUMMARY_LIMIT) {
+        const more = document.createElement("li");
+        more.textContent = `…and ${details.length - FIXTURE_SUMMARY_LIMIT} more differences.`;
+        list.appendChild(more);
+      }
+      fragment.appendChild(list);
+    }
+
+    if (notes.length) {
+      fragment.appendChild(renderNotes(notes));
+    }
+
+    fixtureDiffSummary.appendChild(fragment);
+  }
+
+  function renderMetrics(diff) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "diff-panel__metrics";
+    const metrics = [
+      { label: "Added keys", value: diff.addedKeys.length },
+      { label: "Removed keys", value: diff.removedKeys.length },
+      { label: "Length changes", value: diff.lengthChanges.length },
+      { label: "Type mismatches", value: diff.typeMismatches.length },
+      { label: "Value differences", value: diff.valueDifferences.length },
+    ];
+    metrics.forEach((metric) => {
+      const metricEl = document.createElement("div");
+      metricEl.className = "diff-panel__metric";
+      const label = document.createElement("span");
+      label.textContent = metric.label;
+      const value = document.createElement("span");
+      value.className = "diff-panel__metric-value";
+      value.textContent = String(metric.value);
+      metricEl.append(label, value);
+      wrapper.appendChild(metricEl);
+    });
+    return wrapper;
+  }
+
+  function renderNotes(notes) {
+    const list = document.createElement("ul");
+    list.className = "diff-panel__notes";
+    notes.forEach((note) => {
+      const item = document.createElement("li");
+      item.textContent = note;
+      list.appendChild(item);
+    });
+    return list;
+  }
+
+  function buildDetailEntries(diff) {
+    const entries = [];
+    diff.addedKeys.forEach((path) => {
+      entries.push({ kind: "Added", message: path });
+    });
+    diff.removedKeys.forEach((path) => {
+      entries.push({ kind: "Removed", message: path });
+    });
+    diff.lengthChanges.forEach(({ path, expected, actual }) => {
+      entries.push({ kind: "Length", message: `${path}: expected ${expected}, actual ${actual}` });
+    });
+    diff.typeMismatches.forEach(({ path, expectedType, actualType }) => {
+      entries.push({
+        kind: "Type",
+        message: `${path}: expected ${expectedType}, actual ${actualType}`,
+      });
+    });
+    diff.valueDifferences.forEach(({ path, expected, actual }) => {
+      entries.push({
+        kind: "Value",
+        message: `${path}: expected ${formatValuePreview(expected)}, actual ${formatValuePreview(actual)}`,
+      });
+    });
+    return entries;
+  }
+
+  function setBadgeState(stateName, text) {
+    fixtureDiffBadge.textContent = text;
+    fixtureDiffBadge.classList.remove("is-match", "is-mismatch", "is-error", "is-pending");
+    const className = stateName ? `is-${stateName}` : "is-pending";
+    fixtureDiffBadge.classList.add(className);
+  }
+
+  function setPanelState(stateName) {
+    fixtureDiffPanel.classList.remove("diff-panel--match", "diff-panel--mismatch", "diff-panel--error");
+    if (stateName) {
+      fixtureDiffPanel.classList.add(`diff-panel--${stateName}`);
+    }
+  }
+}
+
+function normalizeManifest(data) {
+  if (!Array.isArray(data)) {
+    throw new Error("Fixture manifest must be an array.");
+  }
+  return data
+    .filter((item) => item && typeof item.file === "string" && item.file.toLowerCase().endsWith(".json"))
+    .map((item) => ({
+      file: item.file,
+      label:
+        typeof item.label === "string" && item.label.trim().length
+          ? item.label.trim()
+          : createFallbackLabel(item.file),
+    }));
+}
+
+function createFallbackLabel(fileName) {
+  const base = fileName.replace(/\.json$/i, "");
+  return base
+    .split(/[_-]+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function resolveFixtureUrl(fileName) {
+  try {
+    return new URL(`${FIXTURE_DIRECTORY_PATH}/${fileName}`, window.location.href).toString();
+  } catch (error) {
+    return `${FIXTURE_DIRECTORY_PATH}/${fileName}`;
+  }
+}
+
+function formatJsonForDisplay(value) {
+  try {
+    return JSON.stringify(normalizeForDisplay(value), null, 2);
+  } catch (error) {
+    return JSON.stringify(value, null, 2);
+  }
+}
+
+function normalizeForDisplay(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeForDisplay(entry));
+  }
+  if (isPlainObject(value)) {
+    const result = {};
+    for (const key of Object.keys(value).sort()) {
+      result[key] = normalizeForDisplay(value[key]);
+    }
+    return result;
+  }
+  return value;
+}
+
+function computeJsonDiff(expected, actual) {
+  const diff = {
+    addedKeys: [],
+    removedKeys: [],
+    typeMismatches: [],
+    lengthChanges: [],
+    valueDifferences: [],
+  };
+
+  compare(expected, actual, []);
+
+  return diff;
+
+  function compare(expectedValue, actualValue, path) {
+    if (Object.is(expectedValue, actualValue)) {
+      return;
+    }
+
+    const expectedType = describeType(expectedValue);
+    const actualType = describeType(actualValue);
+
+    if (expectedType !== actualType) {
+      diff.typeMismatches.push({
+        path: formatPath(path),
+        expectedType,
+        actualType,
+      });
+      return;
+    }
+
+    if (expectedType === "array") {
+      const expectedArray = expectedValue;
+      const actualArray = actualValue;
+      if (expectedArray.length !== actualArray.length) {
+        diff.lengthChanges.push({
+          path: formatPath(path),
+          expected: expectedArray.length,
+          actual: actualArray.length,
+        });
+      }
+      const limit = Math.min(expectedArray.length, actualArray.length);
+      for (let index = 0; index < limit; index += 1) {
+        compare(expectedArray[index], actualArray[index], [...path, index]);
+      }
+      return;
+    }
+
+    if (expectedType === "object") {
+      const expectedKeys = Object.keys(expectedValue);
+      const actualKeys = Object.keys(actualValue);
+      for (const key of expectedKeys) {
+        if (!Object.prototype.hasOwnProperty.call(actualValue, key)) {
+          diff.removedKeys.push(formatPath([...path, key]));
+        }
+      }
+      for (const key of actualKeys) {
+        if (!Object.prototype.hasOwnProperty.call(expectedValue, key)) {
+          diff.addedKeys.push(formatPath([...path, key]));
+        }
+      }
+      for (const key of expectedKeys) {
+        if (Object.prototype.hasOwnProperty.call(actualValue, key)) {
+          compare(expectedValue[key], actualValue[key], [...path, key]);
+        }
+      }
+      return;
+    }
+
+    diff.valueDifferences.push({
+      path: formatPath(path),
+      expected: expectedValue,
+      actual: actualValue,
+    });
+  }
+}
+
+function describeType(value) {
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  if (value === null) {
+    return "null";
+  }
+  if (isPlainObject(value)) {
+    return "object";
+  }
+  return typeof value;
+}
+
+function formatPath(segments) {
+  if (!segments.length) {
+    return "root";
+  }
+  let result = "";
+  segments.forEach((segment) => {
+    if (typeof segment === "number") {
+      result += `[${segment}]`;
+    } else {
+      if (result.length) {
+        result += ".";
+      }
+      result += segment;
+    }
+  });
+  return result || "root";
+}
+
+function isPlainObject(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function formatValuePreview(value) {
+  if (typeof value === "string") {
+    return `"${truncateValue(value, DIFF_VALUE_PREVIEW_LIMIT)}"`;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value === null) {
+    return "null";
+  }
+  if (Array.isArray(value)) {
+    return `array(${value.length})`;
+  }
+  if (isPlainObject(value)) {
+    const keys = Object.keys(value);
+    const preview = keys.slice(0, 3).join(", ");
+    return `object{${preview}${keys.length > 3 ? ", …" : ""}}`;
+  }
+  return typeof value;
+}
+
+function truncateValue(value, limit = DIFF_VALUE_PREVIEW_LIMIT) {
+  if (typeof value !== "string") {
+    return String(value);
+  }
+  if (value.length <= limit) {
+    return value;
+  }
+  const safeLimit = Math.max(1, limit);
+  return `${value.slice(0, safeLimit - 1)}…`;
+}
+
 async function fetchRepoFileContent(path, source = {}) {
   const slug = (source.slug || DEFAULT_REPO_SLUG || "").trim();
   const branch = (source.branch || DEFAULT_REPO_BRANCH || "main").trim();
