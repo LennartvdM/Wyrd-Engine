@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-repo-slug="openai/Wyrd-Engine" data-repo-branch="main">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -107,6 +107,28 @@
         </div>
         <div class="test-console-body">
           <aside class="test-console-sidebar">
+            <section class="repo-browser" id="repo-file-panel">
+              <div class="repo-browser__header">
+                <h3 class="repo-browser__title">Repo files</h3>
+                <p class="repo-browser__subtitle">
+                  Browse curated project scripts and fixtures hosted on GitHub.
+                </p>
+              </div>
+              <div class="form-row repo-browser__row">
+                <label for="repo-file-select">File</label>
+                <div class="repo-browser__controls">
+                  <select id="repo-file-select" name="repo-file-select"></select>
+                  <button type="button" id="repo-file-fetch">Preview</button>
+                </div>
+              </div>
+              <div class="repo-browser__preview" aria-live="polite">
+                <pre id="repo-file-preview">Select a file to preview its contents.</pre>
+              </div>
+              <div class="repo-browser__actions">
+                <button type="button" id="repo-file-load" disabled>Load into editor</button>
+                <p class="repo-browser__status" id="repo-file-status" role="status"></p>
+              </div>
+            </section>
             <div class="form-row">
               <label for="test-console-script">Script</label>
               <select id="test-console-script" name="test-console-script">

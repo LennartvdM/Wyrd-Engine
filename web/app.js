@@ -75,6 +75,12 @@ const testConsoleStderr = document.querySelector("#test-console-stderr");
 const testConsoleResult = document.querySelector("#test-console-result");
 const testConsoleStatusText = document.querySelector("#test-console-status-text");
 const testConsoleStatusIndicator = document.querySelector("#test-console-status-indicator");
+const repoFilePanel = document.querySelector("#repo-file-panel");
+const repoFileSelect = document.querySelector("#repo-file-select");
+const repoFileFetchButton = document.querySelector("#repo-file-fetch");
+const repoFileLoadButton = document.querySelector("#repo-file-load");
+const repoFilePreview = document.querySelector("#repo-file-preview");
+const repoFileStatus = document.querySelector("#repo-file-status");
 
 const TEST_CONSOLE_TIMEOUT_MS = 10_000;
 const TEST_CONSOLE_SCRIPTS = {
@@ -136,6 +142,47 @@ result`,
     },
   },
 };
+
+const DEFAULT_REPO_SLUG = document.documentElement?.dataset?.repoSlug || "openai/Wyrd-Engine";
+const DEFAULT_REPO_BRANCH = document.documentElement?.dataset?.repoBranch || "main";
+const REPO_FILE_MANIFEST = [
+  {
+    id: "engine-mk1",
+    label: "Engine Mk1 (engines/engine_mk1.py)",
+    path: "engines/engine_mk1.py",
+    target: "code",
+  },
+  {
+    id: "engine-mk2",
+    label: "Engine Mk2 (engines/engine_mk2.py)",
+    path: "engines/engine_mk2.py",
+    target: "code",
+  },
+  {
+    id: "calendar-gen",
+    label: "Calendar generator CLI (calendar_gen.py)",
+    path: "calendar_gen.py",
+    target: "code",
+  },
+  {
+    id: "example-budget",
+    label: "Example payload (examples/yearly_budget_alice.json)",
+    path: "examples/yearly_budget_alice.json",
+    target: "input",
+  },
+  {
+    id: "fixture-deterministic-config",
+    label: "Fixture: deterministic config (tests/fixtures/deterministic_sample_config.json)",
+    path: "tests/fixtures/deterministic_sample_config.json",
+    target: "input",
+  },
+  {
+    id: "fixture-deterministic-output",
+    label: "Fixture: deterministic output (tests/fixtures/deterministic_sample_output.json)",
+    path: "tests/fixtures/deterministic_sample_output.json",
+    target: "input",
+  },
+];
 
 let currentState = undefined;
 let calendar;
@@ -803,6 +850,9 @@ function initTestConsole() {
   let isExecuting = false;
   let runCancelled = false;
   let activeRunToken = 0;
+  let suppressScriptPreset = false;
+
+  const repoBrowser = createRepoBrowser();
 
   if (testConsoleScriptSelect && !testConsoleScriptSelect.value) {
     testConsoleScriptSelect.value = "daily_summary";
@@ -813,6 +863,9 @@ function initTestConsole() {
   updateLoadButtonLabel();
 
   testConsoleScriptSelect.addEventListener("change", () => {
+    if (suppressScriptPreset) {
+      return;
+    }
     applyScriptPreset(testConsoleScriptSelect.value);
     updateRunButtonState();
   });
@@ -840,6 +893,158 @@ function initTestConsole() {
   queueMicrotask(() => {
     loadRuntime();
   });
+
+  function createRepoBrowser() {
+    if (!repoFilePanel || !repoFileSelect || !repoFilePreview) {
+      return null;
+    }
+
+    repoFileSelect.innerHTML = "";
+    const placeholderOption = document.createElement("option");
+    placeholderOption.value = "";
+    placeholderOption.textContent = "Select a file…";
+    repoFileSelect.appendChild(placeholderOption);
+
+    for (const entry of REPO_FILE_MANIFEST) {
+      const option = document.createElement("option");
+      option.value = entry.id;
+      option.textContent = entry.label;
+      repoFileSelect.appendChild(option);
+    }
+
+    let previewData;
+    let loading = false;
+
+    setPreviewMessage("Select a file to preview its contents.");
+    setStatus("");
+    updateLoadButtonState();
+
+    repoFileSelect.addEventListener("change", () => {
+      previewData = undefined;
+      updateLoadButtonState();
+      if (!repoFileSelect.value) {
+        setPreviewMessage("Select a file to preview its contents.");
+      } else {
+        setPreviewMessage("Click Preview to fetch the latest contents.");
+      }
+      setStatus("");
+    });
+
+    repoFileFetchButton?.addEventListener("click", async () => {
+      if (loading) {
+        return;
+      }
+      const entry = findManifestEntry(repoFileSelect.value);
+      if (!entry) {
+        setStatus("Choose a file before requesting a preview.");
+        return;
+      }
+
+      loading = true;
+      setStatus(`Fetching ${entry.path}…`);
+      setPreviewMessage("Loading preview…");
+      setLoadingState(true);
+
+      try {
+        const source = getRepoSource();
+        const { content, viaProxy } = await fetchRepoFileContent(entry.path, source);
+        previewData = {
+          entry,
+          content,
+          viaProxy,
+        };
+        repoFilePreview.textContent = content || "(File is empty)";
+        setStatus(
+          viaProxy
+            ? `Loaded via proxy from ${entry.path}.`
+            : `Loaded from GitHub: ${entry.path}.`,
+        );
+      } catch (error) {
+        previewData = undefined;
+        setPreviewMessage("Unable to load file preview.");
+        setStatus(error?.message ? `Error: ${error.message}` : "Error loading file.");
+      } finally {
+        loading = false;
+        setLoadingState(false);
+        updateLoadButtonState();
+      }
+    });
+
+    repoFileLoadButton?.addEventListener("click", () => {
+      if (!previewData) {
+        return;
+      }
+
+      const { entry, content } = previewData;
+      if (entry.target === "code" && testConsoleCodeInput) {
+        suppressScriptPreset = true;
+        if (testConsoleScriptSelect) {
+          testConsoleScriptSelect.value = "custom";
+        }
+        queueMicrotask(() => {
+          suppressScriptPreset = false;
+        });
+        testConsoleCodeInput.readOnly = false;
+        testConsoleCodeInput.value = content;
+      } else if (entry.target === "input" && testConsoleInput) {
+        testConsoleInput.value = content;
+      }
+
+      updateRunButtonState();
+      setStatus(
+        entry.target === "code"
+          ? "Loaded into the Python editor."
+          : "Loaded into the input JSON field.",
+      );
+    });
+
+    function updateLoadButtonState() {
+      if (repoFileLoadButton) {
+        repoFileLoadButton.disabled = loading || !previewData;
+      }
+    }
+
+    function setPreviewMessage(message) {
+      if (repoFilePreview) {
+        repoFilePreview.textContent = message;
+      }
+    }
+
+    function setStatus(message) {
+      if (repoFileStatus) {
+        repoFileStatus.textContent = message;
+      }
+    }
+
+    function setLoadingState(isLoading) {
+      if (repoFileSelect) {
+        repoFileSelect.disabled = isLoading;
+      }
+      if (repoFileFetchButton) {
+        repoFileFetchButton.disabled = isLoading;
+      }
+      if (repoFileLoadButton) {
+        repoFileLoadButton.disabled = isLoading || !previewData;
+      }
+    }
+
+    function findManifestEntry(id) {
+      return REPO_FILE_MANIFEST.find((item) => item.id === id);
+    }
+
+    function getRepoSource() {
+      return {
+        slug: DEFAULT_REPO_SLUG,
+        branch: DEFAULT_REPO_BRANCH,
+      };
+    }
+
+    return {
+      get selectedEntry() {
+        return previewData?.entry;
+      },
+    };
+  }
 
   function applyScriptPreset(scriptId) {
     if (!testConsoleCodeInput) {
@@ -1093,6 +1298,68 @@ function initTestConsole() {
     } catch (error) {
       throw new Error(`Input JSON is invalid: ${error.message}`);
     }
+  }
+}
+
+async function fetchRepoFileContent(path, source = {}) {
+  const slug = (source.slug || DEFAULT_REPO_SLUG || "").trim();
+  const branch = (source.branch || DEFAULT_REPO_BRANCH || "main").trim();
+  if (!slug) {
+    throw new Error("Missing repository slug.");
+  }
+
+  const directUrl = `https://raw.githubusercontent.com/${slug}/${branch}/${path}`;
+
+  try {
+    const response = await fetch(directUrl, { credentials: "omit" });
+    if (response.ok) {
+      const content = await response.text();
+      return {
+        content,
+        viaProxy: false,
+        url: directUrl,
+      };
+    }
+    throw new Error(`Direct request returned status ${response.status}.`);
+  } catch (error) {
+    const proxyUrl = resolveProxyUrl();
+    proxyUrl.searchParams.set("path", path);
+    proxyUrl.searchParams.set("slug", slug);
+    proxyUrl.searchParams.set("branch", branch);
+
+    const response = await fetch(proxyUrl.toString(), { credentials: "omit" });
+    if (!response.ok) {
+      const fallbackBody = await safeReadText(response);
+      throw new Error(
+        fallbackBody
+          ? `Proxy request failed with status ${response.status}: ${fallbackBody}`
+          : `Proxy request failed with status ${response.status}.`,
+      );
+    }
+
+    const content = await response.text();
+    return {
+      content,
+      viaProxy: true,
+      url: directUrl,
+    };
+  }
+}
+
+function resolveProxyUrl() {
+  try {
+    return new URL("/.netlify/functions/proxy", window.location.origin);
+  } catch (error) {
+    return new URL("./.netlify/functions/proxy", window.location.href);
+  }
+}
+
+async function safeReadText(response) {
+  try {
+    const text = await response.text();
+    return text.length > 120 ? `${text.slice(0, 117)}…` : text;
+  } catch (error) {
+    return "";
   }
 }
 
