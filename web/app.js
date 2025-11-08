@@ -60,6 +60,10 @@ const resultsTitle = document.querySelector("#results-title");
 const resultsSubtitle = document.querySelector("#results-subtitle");
 const totalsContainer = document.querySelector("#totals");
 const jsonOutput = document.querySelector("#json-output");
+const replayInspector = document.querySelector("#replay-inspector");
+const replaySvg = document.querySelector("#replay-radial");
+const replayEventList = document.querySelector("#replay-event-list");
+const replayMinuteLabel = document.querySelector("#replay-minute-label");
 const downloadButton = document.querySelector("#download-json");
 const calendarContainer = document.querySelector("#calendar");
 const calendarWarning = document.querySelector("#calendar-warning");
@@ -91,6 +95,17 @@ const repoFileFetchButton = document.querySelector("#repo-file-fetch");
 const repoFileLoadButton = document.querySelector("#repo-file-load");
 const repoFilePreview = document.querySelector("#repo-file-preview");
 const repoFileStatus = document.querySelector("#repo-file-status");
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const REPLAY_DEFAULT_LABEL = "Hover or tap the wheel to inspect minute ranges.";
+
+let replayState = createEmptyReplayState();
+
+if (replaySvg) {
+  replaySvg.addEventListener("pointermove", handleReplayPointerMove);
+  replaySvg.addEventListener("pointerleave", handleReplayPointerLeave);
+  replaySvg.addEventListener("click", handleReplayPointerClick);
+}
 
 const TEST_CONSOLE_TIMEOUT_MS = 10_000;
 const TEST_CONSOLE_SAMPLE_CONSTRAINTS = {
@@ -357,7 +372,7 @@ form?.addEventListener("submit", (event) => {
     updateResultsHeader(meta);
     renderTotals(totals);
     renderCalendar(events, meta);
-    renderJson(events);
+    renderJson(events, meta);
     enableDownload(events, config.name);
     resultsSection?.classList.remove("hidden");
   } catch (error) {
@@ -519,11 +534,934 @@ function renderTotals(totals) {
   });
 }
 
-function renderJson(events) {
+function renderJson(events, meta) {
   if (!jsonOutput) {
     return;
   }
   jsonOutput.textContent = JSON.stringify(events, null, 2);
+  renderReplayInspector(events, meta);
+}
+
+function createEmptyReplayState() {
+  return {
+    events: [],
+    originalEvents: [],
+    meta: null,
+    layout: null,
+    segmentsByDay: [],
+    eventElements: new Map(),
+    hoveredEventIndices: new Set(),
+    selectedEventIndex: null,
+    hoverSource: null,
+    lastPointerInfo: null,
+    weekStartDate: null,
+  };
+}
+
+function renderReplayInspector(events, meta) {
+  if (!replayInspector || !replaySvg || !replayEventList || !replayMinuteLabel) {
+    return;
+  }
+
+  if (!Array.isArray(events) || events.length === 0) {
+    replayState = createEmptyReplayState();
+    replaySvg.replaceChildren();
+    replayEventList.innerHTML = "";
+    replayInspector.classList.add("hidden");
+    replayMinuteLabel.textContent = REPLAY_DEFAULT_LABEL;
+    return;
+  }
+
+  const weekStartDate = determineWeekStartDate(meta, events);
+  const prepared = prepareReplayEvents(events, weekStartDate);
+
+  replayState = createEmptyReplayState();
+  replayState.events = prepared.events;
+  replayState.originalEvents = events;
+  replayState.meta = meta || null;
+  replayState.weekStartDate = weekStartDate;
+  replayState.layout = prepared.layout;
+  replayState.segmentsByDay = prepared.segmentsByDay;
+
+  replayInspector.classList.remove("hidden");
+  replayMinuteLabel.textContent = REPLAY_DEFAULT_LABEL;
+
+  buildReplaySvg(prepared);
+  buildReplayEventList(prepared);
+
+  updateReplayHighlights();
+  updateMinuteLabelForSelection();
+}
+
+function determineWeekStartDate(meta, events) {
+  if (meta?.weekStart) {
+    const candidate = parseIsoDate(meta.weekStart);
+    if (!Number.isNaN(candidate.getTime())) {
+      return candidate;
+    }
+  }
+  for (const event of events) {
+    if (typeof event?.date === "string") {
+      const candidate = parseIsoDate(event.date);
+      if (!Number.isNaN(candidate.getTime())) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function prepareReplayEvents(events, weekStartDate) {
+  const preparedEvents = events.map((event, index) =>
+    computeReplayEventInfo(event, index, weekStartDate)
+  );
+
+  let maxDayIndex = -Infinity;
+  for (const info of preparedEvents) {
+    for (const segment of info.segments) {
+      if (segment.dayIndex > maxDayIndex) {
+        maxDayIndex = segment.dayIndex;
+      }
+    }
+  }
+
+  const dayCount = maxDayIndex >= 0 ? maxDayIndex + 1 : 0;
+  const layout = dayCount > 0 ? computeReplayLayout(dayCount) : null;
+  const segmentsByDay = layout ? Array.from({ length: layout.dayCount }, () => []) : [];
+
+  if (layout) {
+    for (const info of preparedEvents) {
+      for (const segment of info.segments) {
+        if (!segmentsByDay[segment.dayIndex]) {
+          segmentsByDay[segment.dayIndex] = [];
+        }
+        segmentsByDay[segment.dayIndex].push(segment);
+      }
+    }
+  }
+
+  return { events: preparedEvents, layout, segmentsByDay };
+}
+
+function computeReplayEventInfo(event, eventIndex, weekStartDate) {
+  const info = {
+    event,
+    eventIndex,
+    absoluteStart: null,
+    absoluteEnd: null,
+    durationMinutes: null,
+    segments: [],
+  };
+
+  const explicitRange = extractAbsoluteMinuteRange(event);
+  let absoluteStart;
+  let absoluteEnd;
+
+  if (explicitRange) {
+    absoluteStart = Number(explicitRange[0]);
+    absoluteEnd = Number(explicitRange[1]);
+  } else {
+    const inferred = computeAbsoluteRangeFromEvent(event, weekStartDate);
+    if (inferred) {
+      absoluteStart = inferred[0];
+      absoluteEnd = inferred[1];
+    }
+  }
+
+  if (Number.isFinite(absoluteStart) && Number.isFinite(absoluteEnd)) {
+    if (absoluteEnd <= absoluteStart) {
+      const duration = Number(
+        event?.duration_minutes ?? event?.duration ?? event?.minutes ?? 1
+      );
+      const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 1;
+      absoluteEnd = absoluteStart + safeDuration;
+    }
+    info.absoluteStart = absoluteStart;
+    info.absoluteEnd = absoluteEnd;
+    info.durationMinutes = absoluteEnd - absoluteStart;
+    info.segments = splitEventIntoSegments(absoluteStart, absoluteEnd, eventIndex);
+  } else {
+    const duration = Number(event?.duration_minutes ?? event?.duration ?? event?.minutes);
+    if (Number.isFinite(duration) && duration > 0) {
+      info.durationMinutes = duration;
+    }
+  }
+
+  return info;
+}
+
+function extractAbsoluteMinuteRange(event) {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  const directRange = event.minute_range ?? event.minuteRange;
+  if (Array.isArray(directRange) && directRange.length >= 2) {
+    const start = Number(directRange[0]);
+    const end = Number(directRange[1]);
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      return [start, end];
+    }
+  }
+  if (directRange && typeof directRange === "object") {
+    const start = Number(
+      directRange.start ?? directRange.from ?? directRange.begin ?? directRange[0]
+    );
+    const end = Number(
+      directRange.end ?? directRange.to ?? directRange.finish ?? directRange[1]
+    );
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      return [start, end];
+    }
+  }
+  const startAlt = Number(event.minute_start ?? event.start_minute);
+  const endAlt = Number(event.minute_end ?? event.end_minute);
+  if (Number.isFinite(startAlt) && Number.isFinite(endAlt)) {
+    return [startAlt, endAlt];
+  }
+  return null;
+}
+
+function computeAbsoluteRangeFromEvent(event, weekStartDate) {
+  const startValue = parseExtendedTimeValue(
+    event?.start ?? event?.start_time ?? event?.startTime ?? event?.time
+  );
+  let endValue = parseExtendedTimeValue(event?.end ?? event?.end_time ?? event?.endTime);
+
+  if (!Number.isFinite(startValue)) {
+    return null;
+  }
+
+  const duration = Number(
+    event?.duration_minutes ?? event?.duration ?? event?.minutes ?? event?.length_minutes
+  );
+  if (!Number.isFinite(endValue) && Number.isFinite(duration)) {
+    endValue = startValue + duration;
+  }
+
+  if (!Number.isFinite(endValue)) {
+    return null;
+  }
+
+  if (endValue <= startValue) {
+    if (Number.isFinite(duration) && duration > 0) {
+      endValue = startValue + duration;
+    } else {
+      while (endValue <= startValue) {
+        endValue += 1440;
+        if (endValue - startValue > 14 * 1440) {
+          break;
+        }
+      }
+    }
+  }
+
+  if (endValue <= startValue) {
+    endValue = startValue + 1;
+  }
+
+  const dayIndex = inferDayIndex(event, weekStartDate);
+  const absoluteStart = dayIndex * 1440 + startValue;
+  const absoluteEnd = dayIndex * 1440 + endValue;
+  return [absoluteStart, absoluteEnd];
+}
+
+function inferDayIndex(event, weekStartDate) {
+  if (typeof event?.day === "string") {
+    const normalized = event.day.toLowerCase();
+    const index = DAY_NAMES.indexOf(normalized);
+    if (index >= 0) {
+      return index;
+    }
+  }
+  if (typeof event?.day_index === "number" && Number.isFinite(event.day_index)) {
+    return Math.floor(event.day_index);
+  }
+  if (typeof event?.date === "string") {
+    const eventDate = parseIsoDate(event.date);
+    if (
+      !Number.isNaN(eventDate.getTime()) &&
+      weekStartDate instanceof Date &&
+      !Number.isNaN(weekStartDate.getTime())
+    ) {
+      const diffMs = eventDate.getTime() - weekStartDate.getTime();
+      const diffDays = Math.round(diffMs / (24 * 60 * 60 * 1000));
+      if (Number.isFinite(diffDays)) {
+        return diffDays;
+      }
+    }
+  }
+  return 0;
+}
+
+function parseExtendedTimeValue(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : NaN;
+  }
+  if (typeof value !== "string") {
+    return NaN;
+  }
+  const trimmed = value.trim();
+  if (!trimmed.length) {
+    return NaN;
+  }
+  const parts = trimmed.split(":");
+  if (parts.length < 2) {
+    const numeric = Number(trimmed);
+    return Number.isFinite(numeric) ? numeric : NaN;
+  }
+  const hours = Number(parts[0]);
+  const minutes = Number(parts[1]);
+  const seconds = parts.length >= 3 ? Number(parts[2]) : 0;
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || Number.isNaN(seconds)) {
+    return NaN;
+  }
+  const secondsPortion = Number.isFinite(seconds) ? seconds / 60 : 0;
+  return hours * 60 + minutes + secondsPortion;
+}
+
+function splitEventIntoSegments(absoluteStart, absoluteEnd, eventIndex) {
+  const segments = [];
+  if (
+    !Number.isFinite(absoluteStart) ||
+    !Number.isFinite(absoluteEnd) ||
+    absoluteEnd <= absoluteStart
+  ) {
+    return segments;
+  }
+  let cursor = absoluteStart;
+  let guard = 0;
+  const maxIterations = 366 * 2;
+  while (cursor < absoluteEnd && guard < maxIterations) {
+    const dayIndex = Math.floor(cursor / 1440);
+    const dayStart = dayIndex * 1440;
+    const dayEnd = dayStart + 1440;
+    const segmentEnd = Math.min(dayEnd, absoluteEnd);
+    const startMinute = cursor - dayStart;
+    const endMinute = segmentEnd - dayStart;
+    segments.push({ eventIndex, dayIndex, startMinute, endMinute });
+    if (segmentEnd <= cursor) {
+      break;
+    }
+    cursor = segmentEnd;
+    guard += 1;
+  }
+  return segments;
+}
+
+function computeReplayLayout(dayCount) {
+  const MIN_RADIUS = 40;
+  const RING_WIDTH = 22;
+  const RING_GAP = 4;
+  const effectiveDayCount = Math.max(7, dayCount);
+  const step = RING_WIDTH + RING_GAP;
+  const outerRadius = MIN_RADIUS + effectiveDayCount * step;
+  const viewBoxSize = outerRadius * 2 + 40;
+  const center = viewBoxSize / 2;
+  return {
+    minRadius: MIN_RADIUS,
+    ringWidth: RING_WIDTH,
+    gap: RING_GAP,
+    step,
+    dayCount: effectiveDayCount,
+    outerRadius,
+    viewBoxSize,
+    center,
+  };
+}
+
+function buildReplaySvg(prepared) {
+  if (!replaySvg) {
+    return;
+  }
+
+  replaySvg.replaceChildren();
+
+  const layout = prepared.layout;
+  if (!layout) {
+    replaySvg.setAttribute("viewBox", "0 0 400 160");
+    const message = document.createElementNS(SVG_NS, "text");
+    message.setAttribute("x", "50%");
+    message.setAttribute("y", "50%");
+    message.setAttribute("text-anchor", "middle");
+    message.setAttribute("dominant-baseline", "middle");
+    message.setAttribute("class", "replay-empty-message");
+    message.textContent = "No minute ranges available.";
+    replaySvg.appendChild(message);
+    return;
+  }
+
+  replaySvg.setAttribute("viewBox", `0 0 ${layout.viewBoxSize} ${layout.viewBoxSize}`);
+
+  const backdropGroup = document.createElementNS(SVG_NS, "g");
+  backdropGroup.classList.add("replay-backdrop");
+
+  const tickInner = layout.minRadius - 6;
+  const tickOuter = layout.minRadius + layout.dayCount * layout.step + 6;
+  for (let hour = 0; hour < 24; hour += 1) {
+    const minuteValue = hour * 60;
+    const startPoint = minuteToPoint(layout, minuteValue, tickInner);
+    const endPoint = minuteToPoint(layout, minuteValue, tickOuter);
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("x1", startPoint.x.toFixed(3));
+    line.setAttribute("y1", startPoint.y.toFixed(3));
+    line.setAttribute("x2", endPoint.x.toFixed(3));
+    line.setAttribute("y2", endPoint.y.toFixed(3));
+    backdropGroup.appendChild(line);
+  }
+
+  for (let dayIndex = 0; dayIndex < layout.dayCount; dayIndex += 1) {
+    const radius =
+      layout.minRadius + dayIndex * layout.step + layout.ringWidth / 2;
+    const circle = document.createElementNS(SVG_NS, "circle");
+    circle.setAttribute("cx", layout.center);
+    circle.setAttribute("cy", layout.center);
+    circle.setAttribute("r", radius);
+    circle.setAttribute("stroke-width", layout.ringWidth);
+    backdropGroup.appendChild(circle);
+  }
+
+  replaySvg.appendChild(backdropGroup);
+
+  const arcsGroup = document.createElementNS(SVG_NS, "g");
+  arcsGroup.classList.add("replay-arcs");
+
+  for (const info of prepared.events) {
+    for (const segment of info.segments) {
+      const innerRadius = layout.minRadius + segment.dayIndex * layout.step;
+      const outerRadius = innerRadius + layout.ringWidth;
+      const pathData = describeMinuteArc(
+        layout,
+        innerRadius,
+        outerRadius,
+        segment.startMinute,
+        segment.endMinute
+      );
+      if (!pathData) {
+        continue;
+      }
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", pathData);
+      path.setAttribute("fill", getReplayEventColor(info.event));
+      path.dataset.eventIndex = String(segment.eventIndex);
+      path.dataset.dayIndex = String(segment.dayIndex);
+      arcsGroup.appendChild(path);
+      registerReplayArc(segment.eventIndex, path);
+    }
+  }
+
+  replaySvg.appendChild(arcsGroup);
+}
+
+function minuteToPoint(layout, minute, radius) {
+  const angle = (minute / 1440) * Math.PI * 2;
+  const x = layout.center + radius * Math.sin(angle);
+  const y = layout.center - radius * Math.cos(angle);
+  return { x, y };
+}
+
+function describeMinuteArc(layout, innerRadius, outerRadius, startMinute, endMinute) {
+  if (!Number.isFinite(startMinute) || !Number.isFinite(endMinute)) {
+    return "";
+  }
+  let span = endMinute - startMinute;
+  if (span <= 0) {
+    return "";
+  }
+  if (span >= 1440) {
+    span = 1440;
+  }
+  let effectiveEnd = startMinute + span;
+  if (span >= 1440) {
+    effectiveEnd = startMinute + 1440 - 0.001;
+  }
+  const largeArc = span > 720 ? 1 : 0;
+  const outerStart = minuteToPoint(layout, startMinute, outerRadius);
+  const outerEnd = minuteToPoint(layout, effectiveEnd, outerRadius);
+  const innerStart = minuteToPoint(layout, startMinute, innerRadius);
+  const innerEnd = minuteToPoint(layout, effectiveEnd, innerRadius);
+
+  return [
+    "M",
+    outerStart.x.toFixed(3),
+    outerStart.y.toFixed(3),
+    "A",
+    outerRadius.toFixed(3),
+    outerRadius.toFixed(3),
+    0,
+    largeArc,
+    1,
+    outerEnd.x.toFixed(3),
+    outerEnd.y.toFixed(3),
+    "L",
+    innerEnd.x.toFixed(3),
+    innerEnd.y.toFixed(3),
+    "A",
+    innerRadius.toFixed(3),
+    innerRadius.toFixed(3),
+    0,
+    largeArc,
+    0,
+    innerStart.x.toFixed(3),
+    innerStart.y.toFixed(3),
+    "Z",
+  ].join(" ");
+}
+
+function buildReplayEventList(prepared) {
+  if (!replayEventList) {
+    return;
+  }
+
+  replayEventList.innerHTML = "";
+  replayEventList.scrollTop = 0;
+
+  if (!prepared.events.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No events to display.";
+    replayEventList.appendChild(empty);
+    return;
+  }
+
+  for (const info of prepared.events) {
+    const eventIndex = info.eventIndex;
+    const container = document.createElement("article");
+    container.className = "replay-event";
+    container.setAttribute("role", "listitem");
+    container.tabIndex = 0;
+    container.dataset.eventIndex = String(eventIndex);
+
+    const summary = document.createElement("div");
+    summary.className = "replay-event__summary";
+    summary.textContent = capitalize(formatReplayEventName(info.event));
+    container.appendChild(summary);
+
+    const metaText = buildEventMetaText(info);
+    if (metaText) {
+      const meta = document.createElement("div");
+      meta.className = "replay-event__meta";
+      meta.textContent = metaText;
+      container.appendChild(meta);
+    }
+
+    const jsonPre = document.createElement("pre");
+    jsonPre.className = "replay-event__json";
+    jsonPre.textContent = JSON.stringify(info.event, null, 2);
+    container.appendChild(jsonPre);
+
+    const diffPayload = info.event?.diff_from_prev;
+    if (diffPayload !== undefined) {
+      const diffSection = document.createElement("div");
+      diffSection.className = "replay-event__diff";
+      const diffTitle = document.createElement("div");
+      diffTitle.className = "replay-event__diff-title";
+      diffTitle.textContent = "Diff vs previous frame";
+      const diffPre = document.createElement("pre");
+      diffPre.className = "replay-event__diff-json";
+      diffPre.textContent =
+        typeof diffPayload === "string"
+          ? diffPayload
+          : JSON.stringify(diffPayload, null, 2);
+      diffSection.append(diffTitle, diffPre);
+      container.appendChild(diffSection);
+    }
+
+    container.addEventListener("click", () => {
+      selectReplayEvent(eventIndex, { scrollIntoView: false });
+    });
+    container.addEventListener("mouseenter", () => {
+      handleReplayListHover(eventIndex);
+    });
+    container.addEventListener("mouseleave", () => {
+      handleReplayListLeave();
+    });
+    container.addEventListener("focus", () => {
+      handleReplayListHover(eventIndex);
+    });
+    container.addEventListener("blur", () => {
+      handleReplayListLeave();
+    });
+    container.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectReplayEvent(eventIndex, { scrollIntoView: false });
+      }
+    });
+
+    replayEventList.appendChild(container);
+    registerReplayListItem(eventIndex, container);
+  }
+}
+
+function buildEventMetaText(info) {
+  if (info.absoluteStart != null && info.absoluteEnd != null) {
+    const startLabel = formatAbsoluteMinuteLabel(info.absoluteStart, replayState.weekStartDate);
+    const endLabel = formatAbsoluteMinuteLabel(info.absoluteEnd, replayState.weekStartDate);
+    const durationText = formatDurationMinutes(info.durationMinutes);
+    return `${startLabel} → ${endLabel}${durationText ? ` • ${durationText}` : ""}`;
+  }
+  if (info.event?.date && info.event?.start && info.event?.end) {
+    return `${info.event.date} ${info.event.start} → ${info.event.end}`;
+  }
+  const minuteRange = extractAbsoluteMinuteRange(info.event);
+  if (minuteRange) {
+    return `Minute range: ${minuteRange[0]} → ${minuteRange[1]}`;
+  }
+  return "";
+}
+
+function registerReplayArc(eventIndex, element) {
+  const index = Number(eventIndex);
+  if (!Number.isFinite(index)) {
+    return;
+  }
+  let entry = replayState.eventElements.get(index);
+  if (!entry) {
+    entry = { paths: [], listItem: null };
+    replayState.eventElements.set(index, entry);
+  }
+  entry.paths.push(element);
+}
+
+function registerReplayListItem(eventIndex, element) {
+  const index = Number(eventIndex);
+  if (!Number.isFinite(index)) {
+    return;
+  }
+  let entry = replayState.eventElements.get(index);
+  if (!entry) {
+    entry = { paths: [], listItem: null };
+    replayState.eventElements.set(index, entry);
+  }
+  entry.listItem = element;
+}
+
+function getReplayEventColor(event) {
+  const key =
+    typeof event?.activity === "string"
+      ? event.activity
+      : getReplayEventName(event);
+  const name = typeof key === "string" && key.length ? key : "event";
+  return getActivityColor(name);
+}
+
+function getReplayEventName(event = {}) {
+  const raw =
+    event.activity ??
+    event.name ??
+    event.label ??
+    event.title ??
+    event.type ??
+    event.id;
+  if (typeof raw === "string") {
+    return raw;
+  }
+  if (typeof raw === "number") {
+    return String(raw);
+  }
+  return "Event";
+}
+
+function formatReplayEventName(event) {
+  const name = getReplayEventName(event);
+  if (typeof name !== "string") {
+    return "Event";
+  }
+  return name.trim().length ? name : "Event";
+}
+
+function formatDurationMinutes(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "";
+  }
+  if (value >= 60) {
+    const hours = value / 60;
+    if (Number.isInteger(hours)) {
+      return `${hours} h`;
+    }
+    return `${hours.toFixed(1)} h`;
+  }
+  return `${Math.round(value)} min`;
+}
+
+function formatMinutesOfDay(value) {
+  if (!Number.isFinite(value)) {
+    return "00:00";
+  }
+  const normalized = ((value % 1440) + 1440) % 1440;
+  const hours = Math.floor(normalized / 60);
+  const minutes = Math.floor(normalized % 60);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function formatDayName(dayIndex, weekStartDate) {
+  if (Number.isFinite(dayIndex) && dayIndex >= 0) {
+    if (dayIndex < DAY_NAMES.length) {
+      return capitalize(DAY_NAMES[dayIndex]);
+    }
+    if (weekStartDate instanceof Date && !Number.isNaN(weekStartDate.getTime())) {
+      const targetDate = addDays(weekStartDate, dayIndex);
+      const formatter = new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+      return formatter.format(targetDate);
+    }
+  }
+  return `Day ${dayIndex + 1}`;
+}
+
+function formatAbsoluteMinuteLabel(absoluteMinute, weekStartDate) {
+  if (!Number.isFinite(absoluteMinute)) {
+    return "";
+  }
+  const dayIndex = Math.floor(absoluteMinute / 1440);
+  const minuteOfDay = absoluteMinute - dayIndex * 1440;
+  const dayLabel = formatDayName(dayIndex, weekStartDate);
+  return `${dayLabel} ${formatMinutesOfDay(minuteOfDay)}`;
+}
+
+function buildSelectedEventLabel(info) {
+  if (!info) {
+    return "";
+  }
+  const name = capitalize(formatReplayEventName(info.event));
+  if (info.absoluteStart != null && info.absoluteEnd != null) {
+    const startLabel = formatAbsoluteMinuteLabel(info.absoluteStart, replayState.weekStartDate);
+    const endLabel = formatAbsoluteMinuteLabel(info.absoluteEnd, replayState.weekStartDate);
+    const durationText = formatDurationMinutes(info.durationMinutes);
+    return `${name}: ${startLabel} → ${endLabel}${durationText ? ` • ${durationText}` : ""}`;
+  }
+  if (info.event?.date && info.event?.start && info.event?.end) {
+    return `${name}: ${info.event.date} ${info.event.start} → ${info.event.end}`;
+  }
+  const minuteRange = extractAbsoluteMinuteRange(info.event);
+  if (minuteRange) {
+    return `${name}: minute ${minuteRange[0]} → ${minuteRange[1]}`;
+  }
+  return name;
+}
+
+function updateReplayHighlights() {
+  for (const [eventIndex, elements] of replayState.eventElements.entries()) {
+    const isSelected = replayState.selectedEventIndex === eventIndex;
+    const isHovered = replayState.hoveredEventIndices.has(eventIndex);
+    for (const path of elements.paths) {
+      path.classList.toggle("is-selected", isSelected);
+      path.classList.toggle("is-hovered", isHovered && !isSelected);
+    }
+    if (elements.listItem) {
+      elements.listItem.classList.toggle("is-selected", isSelected);
+      elements.listItem.classList.toggle("is-hovered", isHovered && !isSelected);
+      elements.listItem.setAttribute("aria-pressed", isSelected ? "true" : "false");
+    }
+  }
+}
+
+function updateMinuteLabelForSelection() {
+  if (!replayMinuteLabel) {
+    return;
+  }
+  if (
+    typeof replayState.selectedEventIndex === "number" &&
+    replayState.selectedEventIndex >= 0
+  ) {
+    const info = replayState.events[replayState.selectedEventIndex];
+    const label = buildSelectedEventLabel(info);
+    if (label) {
+      replayMinuteLabel.textContent = `Selected: ${label}`;
+      return;
+    }
+  }
+  replayMinuteLabel.textContent = REPLAY_DEFAULT_LABEL;
+}
+
+function updateMinuteLabelFromPointer(info, segments) {
+  if (!replayMinuteLabel) {
+    return;
+  }
+  const dayLabel = formatDayName(info.dayIndex, replayState.weekStartDate);
+  const minuteLabel = formatMinutesOfDay(info.minute);
+  const minuteIndex = info.dayIndex * 1440 + info.minute;
+  let suffix = " — no events";
+  if (segments.length === 1) {
+    suffix = ` — ${capitalize(formatReplayEventName(replayState.events[segments[0].eventIndex]?.event))}`;
+  } else if (segments.length > 1) {
+    suffix = ` — ${segments.length} events`;
+  }
+  replayMinuteLabel.textContent = `${dayLabel} · ${minuteLabel} (minute ${minuteIndex})${suffix}`;
+}
+
+function getSegmentsForPointer(info) {
+  if (!Array.isArray(replayState.segmentsByDay)) {
+    return [];
+  }
+  const bucket = replayState.segmentsByDay[info.dayIndex] || [];
+  return bucket.filter(
+    (segment) => info.minute >= segment.startMinute && info.minute < segment.endMinute
+  );
+}
+
+function applyPointerHighlight(info) {
+  if (!info.withinRing) {
+    return;
+  }
+  const matches = getSegmentsForPointer(info);
+  replayState.hoveredEventIndices = new Set(matches.map((segment) => segment.eventIndex));
+  updateMinuteLabelFromPointer(info, matches);
+  updateReplayHighlights();
+}
+
+function getReplayPointerInfo(event) {
+  if (!replayState.layout || !replaySvg) {
+    return null;
+  }
+  const rect = replaySvg.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    return null;
+  }
+  const scaleX = replayState.layout.viewBoxSize / rect.width;
+  const scaleY = replayState.layout.viewBoxSize / rect.height;
+  const x = (event.clientX - rect.left) * scaleX;
+  const y = (event.clientY - rect.top) * scaleY;
+  const center = replayState.layout.center;
+  const dx = x - center;
+  const dy = y - center;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  if (distance === 0) {
+    return { withinRing: false };
+  }
+  const step = replayState.layout.step;
+  const relativeDistance = distance - replayState.layout.minRadius;
+  const dayIndex = Math.floor(relativeDistance / step);
+  const withinBounds =
+    relativeDistance >= 0 && dayIndex >= 0 && dayIndex < replayState.layout.dayCount;
+  if (!withinBounds) {
+    return { withinRing: false };
+  }
+  const distanceWithinRing = relativeDistance - dayIndex * step;
+  const withinRing = distanceWithinRing <= replayState.layout.ringWidth;
+  const sinAngle = (x - center) / distance;
+  const cosAngle = (center - y) / distance;
+  let angle = Math.atan2(sinAngle, cosAngle);
+  if (angle < 0) {
+    angle += Math.PI * 2;
+  }
+  const minuteFloat = (angle / (Math.PI * 2)) * 1440;
+  const minute = Math.floor(((minuteFloat % 1440) + 1440) % 1440);
+  return {
+    x,
+    y,
+    distance,
+    dayIndex,
+    minute,
+    withinRing,
+  };
+}
+
+function handleReplayPointerMove(event) {
+  if (!replayState.layout) {
+    return;
+  }
+  const info = getReplayPointerInfo(event);
+  if (!info || !info.withinRing) {
+    if (replayState.hoverSource === "svg") {
+      replayState.hoverSource = null;
+      replayState.hoveredEventIndices = new Set();
+      replayState.lastPointerInfo = null;
+      updateReplayHighlights();
+      updateMinuteLabelForSelection();
+    }
+    return;
+  }
+  replayState.hoverSource = "svg";
+  replayState.lastPointerInfo = info;
+  applyPointerHighlight(info);
+}
+
+function handleReplayPointerLeave() {
+  if (replayState.hoverSource === "svg") {
+    replayState.hoverSource = null;
+    replayState.hoveredEventIndices = new Set();
+    replayState.lastPointerInfo = null;
+    updateReplayHighlights();
+    updateMinuteLabelForSelection();
+  }
+}
+
+function handleReplayPointerClick(event) {
+  if (!replayState.layout) {
+    return;
+  }
+  const info = getReplayPointerInfo(event);
+  if (!info || !info.withinRing) {
+    clearReplaySelection();
+    return;
+  }
+  const matches = getSegmentsForPointer(info);
+  if (matches.length) {
+    selectReplayEvent(matches[0].eventIndex, { scrollIntoView: true });
+  } else {
+    replayState.hoverSource = "svg";
+    replayState.lastPointerInfo = info;
+    clearReplaySelection();
+    replayState.hoveredEventIndices = new Set();
+    updateMinuteLabelFromPointer(info, matches);
+    updateReplayHighlights();
+  }
+}
+
+function handleReplayListHover(eventIndex) {
+  replayState.hoverSource = "list";
+  replayState.hoveredEventIndices = new Set([eventIndex]);
+  const info = replayState.events[eventIndex];
+  const label = buildSelectedEventLabel(info);
+  if (label && replayMinuteLabel) {
+    replayMinuteLabel.textContent = `Preview: ${label}`;
+  }
+  updateReplayHighlights();
+}
+
+function handleReplayListLeave() {
+  if (replayState.hoverSource !== "list") {
+    return;
+  }
+  replayState.hoverSource = null;
+  if (replayState.lastPointerInfo && replayState.lastPointerInfo.withinRing) {
+    applyPointerHighlight(replayState.lastPointerInfo);
+    return;
+  }
+  replayState.hoveredEventIndices = new Set();
+  updateReplayHighlights();
+  updateMinuteLabelForSelection();
+}
+
+function selectReplayEvent(eventIndex, options = {}) {
+  const index = Number(eventIndex);
+  if (!Number.isFinite(index) || index < 0 || index >= replayState.events.length) {
+    return;
+  }
+  if (replayState.selectedEventIndex === index) {
+    updateMinuteLabelForSelection();
+    return;
+  }
+  replayState.selectedEventIndex = index;
+  updateReplayHighlights();
+  if (options.scrollIntoView) {
+    const target = replayState.eventElements.get(index)?.listItem;
+    target?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  updateMinuteLabelForSelection();
+}
+
+function clearReplaySelection() {
+  if (replayState.selectedEventIndex === null) {
+    updateMinuteLabelForSelection();
+    return;
+  }
+  replayState.selectedEventIndex = null;
+  updateReplayHighlights();
+  updateMinuteLabelForSelection();
 }
 
 function enableDownload(events, name) {

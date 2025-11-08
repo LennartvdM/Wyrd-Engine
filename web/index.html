@@ -91,6 +91,35 @@
             <div id="calendar"></div>
           </div>
         </div>
+        <section
+          class="replay-inspector hidden"
+          id="replay-inspector"
+          aria-label="Minute picker and JSON inspector"
+        >
+          <div class="replay-inspector__visual">
+            <div class="replay-inspector__header">
+              <h3>Minute picker</h3>
+              <p class="replay-minute" id="replay-minute-label">
+                Hover or tap the wheel to inspect minute ranges.
+              </p>
+            </div>
+            <svg
+              class="replay-radial"
+              id="replay-radial"
+              viewBox="0 0 420 420"
+              role="presentation"
+            ></svg>
+          </div>
+          <div class="replay-inspector__data">
+            <div class="replay-inspector__header">
+              <h3>Event JSON</h3>
+              <p class="replay-inspector__hint">
+                Click any entry to highlight its arc and scroll into view.
+              </p>
+            </div>
+            <div class="replay-event-list" id="replay-event-list" role="list"></div>
+          </div>
+        </section>
         <details class="raw-json">
           <summary>Raw JSON output</summary>
           <pre id="json-output"></pre>
