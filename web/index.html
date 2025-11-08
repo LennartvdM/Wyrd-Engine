@@ -19,7 +19,24 @@
       </p>
     </header>
 
-    <main class="page-layout">
+    <nav class="page-nav" aria-label="Primary">
+      <button
+        type="button"
+        class="page-nav__link is-active"
+        data-view-target="calendar"
+      >
+        Calendar
+      </button>
+      <button
+        type="button"
+        class="page-nav__link"
+        data-view-target="test-console"
+      >
+        Test Console
+      </button>
+    </nav>
+
+    <main class="page-layout view" data-view="calendar">
       <section class="card form-card">
         <h2>Configuration</h2>
         <form id="config-form" novalidate>
@@ -71,6 +88,69 @@
           <summary>Raw JSON output</summary>
           <pre id="json-output"></pre>
         </details>
+      </section>
+    </main>
+
+    <main class="view view--test-console hidden" data-view="test-console">
+      <section class="card test-console-card">
+        <div class="test-console-header">
+          <div>
+            <h2>Test Console</h2>
+            <p class="test-console-subtitle">
+              Experiment with scripted scenarios using the Wyrd runtime.
+            </p>
+          </div>
+          <button type="button" id="test-console-run" disabled>Run</button>
+        </div>
+        <div class="test-console-body">
+          <aside class="test-console-sidebar">
+            <div class="form-row">
+              <label for="test-console-script">Script</label>
+              <select id="test-console-script" name="test-console-script">
+                <option value="">Select a script…</option>
+                <option value="daily_summary">Daily summary</option>
+                <option value="custom">Custom script</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="test-console-input">Input JSON</label>
+              <textarea
+                id="test-console-input"
+                name="test-console-input"
+                rows="12"
+                spellcheck="false"
+                placeholder='{"events": []}'
+              ></textarea>
+              <p class="help-text">
+                Provide JSON parameters that will be passed to the selected script.
+              </p>
+            </div>
+          </aside>
+          <div class="test-console-outputs">
+            <div class="output-panel">
+              <div class="output-panel-header">
+                <h3>Stdout</h3>
+              </div>
+              <pre id="test-console-stdout">Waiting for execution…</pre>
+            </div>
+            <div class="output-panel">
+              <div class="output-panel-header">
+                <h3>Stderr</h3>
+              </div>
+              <pre id="test-console-stderr">No errors yet.</pre>
+            </div>
+            <div class="output-panel">
+              <div class="output-panel-header">
+                <h3>Result</h3>
+              </div>
+              <pre id="test-console-result">No output yet.</pre>
+            </div>
+          </div>
+        </div>
+        <div class="test-console-status" role="status" aria-live="polite">
+          <span class="status-indicator" aria-hidden="true"></span>
+          <span id="test-console-status-text">Pyodide loading…</span>
+        </div>
       </section>
     </main>
 
