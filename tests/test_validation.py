@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from models import Activity
-from validation import validate_day
+from modules.validation import validate_day
 
 
 class TestValidation(unittest.TestCase):

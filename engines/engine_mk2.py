@@ -19,7 +19,7 @@ from modules.friction_model import generate_daily_friction
 from models import Activity, ActivityTemplate, Event, PersonProfile
 from modules.unique_events import UniqueDay, generate_unique_day_schedule
 from yearly_budget import YearlyBudget
-from validation import validate_week
+from modules.validation import validate_week
 
 __all__ = [
     "EngineMK2",
