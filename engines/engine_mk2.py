@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from archetypes import (
     DEFAULT_TEMPLATES,
@@ -62,7 +62,16 @@ def apply_micro_jitter(
 class EngineMK2:
     """Synthetic workforce calendar engine."""
 
-    def __init__(self, calendar_provider: Optional[CalendarProvider] = None) -> None:
+    def __init__(
+        self,
+        calendar_provider: Optional[CalendarProvider] = None,
+        *,
+        friction_generator: Optional[Callable[[int, float, float], float]] = None,
+        unique_schedule_generator: Optional[
+            Callable[[PersonProfile, date, "UniqueDay"], Optional[List[Activity]]]
+        ] = None,
+        validator: Optional[Callable[[Dict[str, List[Activity]]], List[object]]] = None,
+    ) -> None:
         self._profile_factory = {
             "office": (create_office_worker, DEFAULT_TEMPLATES),
             "parent": (create_exhausted_parent, DEFAULT_TEMPLATES),
@@ -71,11 +80,41 @@ class EngineMK2:
         self._calendar_provider: CalendarProvider = (
             calendar_provider or default_calendar_provider
         )
+        self._friction_generator: Callable[[int, float, float], float]
+        self._unique_schedule_generator: Callable[
+            [PersonProfile, date, "UniqueDay"], Optional[List[Activity]]
+        ]
+        self._validator: Callable[[Dict[str, List[Activity]]], List[object]]
+        self.set_friction_generator(friction_generator or generate_daily_friction)
+        self.set_unique_schedule_generator(
+            unique_schedule_generator or generate_unique_day_schedule
+        )
+        self.set_validator(validator or validate_week)
 
     def set_calendar_provider(self, provider: CalendarProvider) -> None:
         """Replace the calendar provider used by the engine."""
 
         self._calendar_provider = provider
+
+    def set_friction_generator(
+        self, generator: Optional[Callable[[int, float, float], float]]
+    ) -> None:
+        self._friction_generator = generator or generate_daily_friction
+
+    def set_unique_schedule_generator(
+        self,
+        generator: Optional[Callable[
+            [PersonProfile, date, "UniqueDay"], Optional[List[Activity]]
+        ]],
+    ) -> None:
+        self._unique_schedule_generator = (
+            generator or generate_unique_day_schedule
+        )
+
+    def set_validator(
+        self, validator: Optional[Callable[[Dict[str, List[Activity]]], List[object]]]
+    ) -> None:
+        self._validator = validator or validate_week
 
     # ------------------------------------------------------------------
     # Workforce allocation helpers
@@ -225,7 +264,7 @@ class EngineMK2:
             current_date = start_date + timedelta(days=day_offset)
             day_name = current_date.strftime("%A").lower()
             weekday_index = current_date.weekday()
-            daily_friction = generate_daily_friction(
+            daily_friction = self._friction_generator(
                 weekday_index, profile.base_waste_factor, profile.friction_variance
             )
 
@@ -234,7 +273,9 @@ class EngineMK2:
                 unique_day = yearly_budget.get_day_type(current_date)
 
             if unique_day:
-                unique_schedule = generate_unique_day_schedule(profile, current_date, unique_day)
+                unique_schedule = self._unique_schedule_generator(
+                    profile, current_date, unique_day
+                )
                 activities: List[Activity]
                 day_type: str
                 if unique_schedule is not None:
@@ -454,7 +495,9 @@ class EngineMK2:
         templates = templates or DEFAULT_TEMPLATES
 
         week_plans = self._generate_week_activities(profile, start_date, yearly_budget)
-        issues = validate_week({f"{plan.day_name} ({plan.date.isoformat()})": plan.activities for plan in week_plans})
+        issues = self._validator(
+            {f"{plan.day_name} ({plan.date.isoformat()})": plan.activities for plan in week_plans}
+        )
 
         compression_metadata: Dict[str, Dict[str, object]] = {}
         for plan in week_plans:

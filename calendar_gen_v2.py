@@ -15,11 +15,12 @@ from engines.engine_mk2 import (
     apply_seasonal_modifiers,
     apply_special_period_effects,
 )
+from rigs.workforce_rig import WorkforceRig
 from models import ActivityTemplate, PersonProfile
 from modules.unique_events import UniqueDay
 from yearly_budget import YearlyBudget
 
-_engine = EngineMK2()
+_rig = WorkforceRig()
 
 __all__ = [
     "DayPlan",
@@ -40,11 +41,11 @@ def generate_complete_week(
 ) -> Dict[str, object]:
     """Generate a complete timed schedule for a week."""
 
-    return _engine.generate_complete_week(profile, start_date, week_seed, templates, yearly_budget)
+    return _rig.generate_complete_week(profile, start_date, week_seed, templates, yearly_budget)
 
 
 def _select_profile(archetype: str):
-    return _engine.select_profile(archetype)
+    return _rig.select_profile(archetype)
 
 
 def _load_yearly_budget(path: Optional[Path]) -> Optional[YearlyBudget]:

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, Optional, Sequence
 
 from engines.base import ScheduleInput
-from engines.engine_mk1 import EngineMK1
+from rigs.simple_rig import SimpleRig
 
 
 def load_config(path: Path) -> Dict[str, object]:
@@ -43,9 +43,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     raw_config = load_config(args.config)
 
-    engine = EngineMK1()
+    rig = SimpleRig()
     schedule_input = ScheduleInput(constraints=raw_config)
-    result = engine.generate(schedule_input)
+    result = rig.generate(schedule_input)
 
     write_output(result.events, args.output)
 
