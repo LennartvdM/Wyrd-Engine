@@ -312,6 +312,27 @@ let refreshTestConsoleEditor = () => {};
 const DEFAULT_REPO_SLUG =
   document.documentElement?.dataset?.repoSlug || "LennartvdM/Wyrd-Engine";
 const DEFAULT_REPO_BRANCH = document.documentElement?.dataset?.repoBranch || "main";
+const PYTHON_RUNTIME_FILE_PATHS = [
+  "archetypes.py",
+  "calendar_gen.py",
+  "calendar_gen_v2.py",
+  "calendar_layers.py",
+  "cli.py",
+  "friction.py",
+  "models.py",
+  "unique_days.py",
+  "validation.py",
+  "yearly_budget.py",
+  "engines/__init__.py",
+  "engines/base.py",
+  "engines/engine_mk1.py",
+  "engines/engine_mk2.py",
+  "modules/__init__.py",
+  "modules/calendar_provider.py",
+  "modules/friction_model.py",
+  "modules/unique_events.py",
+  "modules/validation.py",
+];
 const REPO_FILE_MANIFEST = [
   {
     id: "engine-mk1",
@@ -4594,6 +4615,25 @@ async function safeReadText(response) {
   }
 }
 
+async function loadPythonRuntimeFiles() {
+  const source = {
+    slug: DEFAULT_REPO_SLUG,
+    branch: DEFAULT_REPO_BRANCH,
+  };
+
+  const downloads = PYTHON_RUNTIME_FILE_PATHS.map(async (path) => {
+    try {
+      const { content } = await fetchRepoFileContent(path, source);
+      return { path, content };
+    } catch (error) {
+      const reason = error?.message || error;
+      throw new Error(`Failed to load ${path}: ${reason}`);
+    }
+  });
+
+  return Promise.all(downloads);
+}
+
 function createPyRuntimeController() {
   let worker;
   let loadPromise;
@@ -4668,7 +4708,10 @@ function createPyRuntimeController() {
   async function load() {
     ensureWorker();
     if (!loadPromise) {
-      loadPromise = postMessage("load").catch((error) => {
+      loadPromise = (async () => {
+        const files = await loadPythonRuntimeFiles();
+        return postMessage("load", { files });
+      })().catch((error) => {
         loadPromise = undefined;
         throw error;
       });
