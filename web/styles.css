@@ -526,12 +526,21 @@ button.preset-button:not(:disabled):hover {
   color: var(--color-text-muted);
 }
 
-.form-error {
+.form-status {
   min-height: 1.5rem;
-  color: #fca5a5;
   margin: 0;
   flex-shrink: 0;
   grid-column: 1 / -1;
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.form-status--success {
+  color: #86efac;
+}
+
+.form-status--error {
+  color: #fca5a5;
 }
 
 .results-header {
