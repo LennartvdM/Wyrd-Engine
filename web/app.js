@@ -464,6 +464,8 @@ function initViews() {
 }
 
 function showView(target) {
+  document.body?.setAttribute("data-active-view", target);
+
   views.forEach((view) => {
     if (view.dataset.view === target) {
       view.classList.remove("hidden");
