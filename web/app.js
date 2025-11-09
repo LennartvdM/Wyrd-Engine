@@ -336,7 +336,10 @@ const PYTHON_RUNTIME_FILE_PATHS = [
 ];
 
 const ENGINE_FILE_PATTERN = /^engines\/engine_(mk\d+)\.py$/i;
-const ENGINE_OPTIONS = deriveEngineOptions(PYTHON_RUNTIME_FILE_PATHS);
+const SUPPORTED_ENGINE_IDS = new Set(["mk1"]);
+const ENGINE_OPTIONS = deriveEngineOptions(PYTHON_RUNTIME_FILE_PATHS).filter((option) =>
+  SUPPORTED_ENGINE_IDS.has(option.id)
+);
 const ENGINE_LABEL_LOOKUP = new Map(ENGINE_OPTIONS.map((option) => [option.id, option.label]));
 const DEFAULT_ENGINE_ID =
   ENGINE_OPTIONS.find((option) => option.id === "mk1")?.id ||
