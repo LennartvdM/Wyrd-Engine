@@ -57,11 +57,6 @@ const formError = document.querySelector("#form-error");
 const startDateInput = document.querySelector("#start-date");
 const engineSelect = document.querySelector("#engine-select");
 const mk2OptionsFieldset = document.querySelector("#mk2-options");
-const mk2ArchetypeInput = document.querySelector("#mk2-archetype");
-const mk2RigInput = document.querySelector("#mk2-rig");
-const mk2SeedInput = document.querySelector("#mk2-seed");
-const mk2WeekStartInput = document.querySelector("#mk2-week-start");
-const mk2YearlyBudgetInput = document.querySelector("#mk2-yearly-budget");
 const resultsSection = document.querySelector("#results");
 const resultsTitle = document.querySelector("#results-title");
 const resultsSubtitle = document.querySelector("#results-subtitle");
@@ -501,7 +496,9 @@ if (configInput) {
 }
 
 if (engineSelect) {
-  populateEngineSelect(engineSelect, ENGINE_OPTIONS, DEFAULT_ENGINE_ID);
+  // TODO: Remove MK2 filter once generateScheduleForEngine supports the MK2 branch.
+  const selectableEngineOptions = ENGINE_OPTIONS.filter((option) => option.id !== "mk2");
+  populateEngineSelect(engineSelect, selectableEngineOptions, DEFAULT_ENGINE_ID);
 
   const toggleMk2OptionsVisibility = () => {
     if (!mk2OptionsFieldset) {
