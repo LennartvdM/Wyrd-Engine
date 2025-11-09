@@ -81,6 +81,17 @@ const exportReplayMp4Button = document.querySelector("#export-replay-mp4");
 const exportStatus = document.querySelector("#export-status");
 const calendarContainer = document.querySelector("#calendar");
 const calendarWarning = document.querySelector("#calendar-warning");
+const diagnosticsPanel = document.querySelector("#diagnostics-panel");
+const diagnosticsDetails = document.querySelector("#diagnostics-details");
+const diagnosticsIssueCount = document.querySelector("#diagnostics-issue-count");
+const diagnosticsIssuesSection = document.querySelector("#diagnostics-issues-section");
+const diagnosticsIssuesList = document.querySelector("#diagnostics-issues");
+const diagnosticsMetadataSection = document.querySelector("#diagnostics-metadata-section");
+const diagnosticsStatsList = document.querySelector("#diagnostics-stats");
+const diagnosticsDayTypesSection = document.querySelector("#diagnostics-day-types-section");
+const diagnosticsDayTypesList = document.querySelector("#diagnostics-day-types");
+const diagnosticsCompressionSection = document.querySelector("#diagnostics-compression-section");
+const diagnosticsCompressionContainer = document.querySelector("#diagnostics-compression");
 const viewButtons = document.querySelectorAll("[data-view-target]");
 const views = document.querySelectorAll("[data-view]");
 const testConsolePresetButtons = document.querySelectorAll("[data-script-preset]");
@@ -492,6 +503,7 @@ const FIXTURE_DIRECTORY_PATH = "tests/fixtures";
 const FIXTURE_MANIFEST_NAME = "manifest.json";
 const FIXTURE_SUMMARY_LIMIT = 8;
 const DIFF_VALUE_PREVIEW_LIMIT = 80;
+const DIAGNOSTICS_COMPRESSION_PREVIEW_LIMIT = 4;
 
 let currentState = undefined;
 let calendar;
@@ -535,6 +547,7 @@ form?.addEventListener("submit", async (event) => {
 
   formError.textContent = "";
   disableDownload();
+  resetDiagnosticsPanel();
 
   let config;
   try {
@@ -554,7 +567,7 @@ form?.addEventListener("submit", async (event) => {
 
   try {
     const engineId = engineSelect?.value || DEFAULT_ENGINE_ID;
-    const { events, totals, meta } = await generateScheduleForEngine(
+    const { events, totals, meta, issues, metadata } = await generateScheduleForEngine(
       engineId,
       config,
       startDate,
@@ -563,12 +576,15 @@ form?.addEventListener("submit", async (event) => {
       events,
       totals,
       meta,
+      issues: Array.isArray(issues) ? issues : [],
+      metadata: metadata && typeof metadata === "object" ? metadata : {},
       configName: typeof config?.name === "string" ? config.name : "",
     };
     updateResultsHeader(meta);
     renderTotals(totals);
     renderCalendar(events, meta);
     renderJson(events, meta);
+    renderDiagnostics({ issues, metadata, meta });
     enableDownload(events, config.name);
     resultsSection?.classList.remove("hidden");
   } catch (error) {
@@ -838,6 +854,388 @@ function renderJson(events, meta) {
   }
   jsonOutput.textContent = JSON.stringify(events, null, 2);
   renderReplayInspector(events, meta);
+}
+
+function resetDiagnosticsPanel() {
+  if (!diagnosticsPanel) {
+    return;
+  }
+
+  diagnosticsPanel.classList.add("hidden");
+  if (diagnosticsDetails) {
+    diagnosticsDetails.open = false;
+  }
+
+  if (diagnosticsIssueCount) {
+    diagnosticsIssueCount.textContent = "";
+    diagnosticsIssueCount.classList.add("hidden");
+  }
+
+  if (diagnosticsIssuesList) {
+    diagnosticsIssuesList.innerHTML = "";
+  }
+  diagnosticsIssuesSection?.classList.add("hidden");
+
+  if (diagnosticsStatsList) {
+    diagnosticsStatsList.innerHTML = "";
+    diagnosticsStatsList.classList.remove("hidden");
+  }
+  diagnosticsMetadataSection?.classList.add("hidden");
+
+  if (diagnosticsDayTypesList) {
+    diagnosticsDayTypesList.innerHTML = "";
+  }
+  diagnosticsDayTypesSection?.classList.add("hidden");
+
+  if (diagnosticsCompressionContainer) {
+    diagnosticsCompressionContainer.innerHTML = "";
+  }
+  diagnosticsCompressionSection?.classList.add("hidden");
+}
+
+function renderDiagnostics(payload = {}) {
+  if (!diagnosticsPanel) {
+    return;
+  }
+
+  resetDiagnosticsPanel();
+
+  const issues = Array.isArray(payload?.issues)
+    ? payload.issues.filter((issue) => issue !== null && issue !== undefined)
+    : [];
+  const metadata = payload?.metadata && typeof payload.metadata === "object" ? payload.metadata : {};
+  const meta = payload?.meta && typeof payload.meta === "object" ? payload.meta : {};
+
+  const stats = buildDiagnosticsStats(meta, metadata);
+  const dayTypes = getDayTypeEntries(metadata?.day_types);
+  const compression = getCompressionEntries(metadata?.compression);
+
+  const hasIssues = issues.length > 0;
+  const hasMetadata = Boolean(stats.length || dayTypes.length || compression.length);
+
+  if (!hasIssues && !hasMetadata) {
+    return;
+  }
+
+  diagnosticsPanel.classList.remove("hidden");
+
+  const issueCountValue = hasIssues
+    ? issues.length
+    : Number.isFinite(meta?.issueCount) && meta.issueCount > 0
+      ? meta.issueCount
+      : 0;
+
+  if (diagnosticsIssueCount) {
+    if (issueCountValue > 0) {
+      diagnosticsIssueCount.textContent = `${issueCountValue} ${issueCountValue === 1 ? "issue" : "issues"}`;
+      diagnosticsIssueCount.classList.remove("hidden");
+    } else {
+      diagnosticsIssueCount.textContent = "";
+      diagnosticsIssueCount.classList.add("hidden");
+    }
+  }
+
+  if (diagnosticsDetails) {
+    diagnosticsDetails.open = hasIssues;
+  }
+
+  renderDiagnosticsIssues(issues, issueCountValue);
+  renderDiagnosticsMetadata(stats, dayTypes, compression);
+}
+
+function renderDiagnosticsIssues(issues, reportedIssueCount = 0) {
+  if (!diagnosticsIssuesSection || !diagnosticsIssuesList) {
+    return;
+  }
+
+  diagnosticsIssuesList.innerHTML = "";
+  const hasIssueEntries = Array.isArray(issues) && issues.length > 0;
+
+  if (!hasIssueEntries) {
+    if (reportedIssueCount > 0) {
+      diagnosticsIssuesSection.classList.remove("hidden");
+      const item = document.createElement("li");
+      item.className = "diagnostics-issue";
+      const message = document.createElement("p");
+      message.textContent = "Issue metadata was reported, but no detailed diagnostics were returned.";
+      item.append(message);
+      diagnosticsIssuesList.append(item);
+    } else {
+      diagnosticsIssuesSection.classList.add("hidden");
+    }
+    return;
+  }
+
+  diagnosticsIssuesSection.classList.remove("hidden");
+
+  issues.forEach((issue) => {
+    const item = document.createElement("li");
+    item.className = "diagnostics-issue";
+
+    if (issue && typeof issue === "object") {
+      const severity = normalizeIssueSeverity(issue.severity);
+      const header = document.createElement("div");
+      header.className = "diagnostics-issue__header";
+
+      const severityBadge = document.createElement("span");
+      severityBadge.className = `diagnostics-issue__severity diagnostics-issue__severity--${severity}`;
+      severityBadge.textContent = formatDiagnosticLabel(severity) || "Info";
+      header.append(severityBadge);
+
+      const title = document.createElement("span");
+      title.className = "diagnostics-issue__title";
+      const titleParts = [];
+      const typeLabel = formatDiagnosticLabel(issue.issue_type || issue.type);
+      if (typeLabel) {
+        titleParts.push(typeLabel);
+      }
+      if (typeof issue.day === "string" && issue.day) {
+        titleParts.push(issue.day);
+      } else if (typeof issue.date === "string" && issue.date) {
+        titleParts.push(issue.date);
+      }
+      title.textContent = titleParts.join(" · ") || "Issue";
+      header.append(title);
+
+      item.append(header);
+
+      const detailText =
+        (typeof issue.details === "string" && issue.details) ||
+        (typeof issue.message === "string" && issue.message) ||
+        "";
+      if (detailText) {
+        const detail = document.createElement("p");
+        detail.textContent = detailText;
+        item.append(detail);
+      }
+    } else {
+      item.textContent = typeof issue === "string" ? issue : JSON.stringify(issue);
+    }
+
+    diagnosticsIssuesList.append(item);
+  });
+}
+
+function renderDiagnosticsMetadata(stats, dayTypes, compression) {
+  if (!diagnosticsMetadataSection) {
+    return;
+  }
+
+  const hasStats = Array.isArray(stats) && stats.length > 0;
+  const hasDayTypes = Array.isArray(dayTypes) && dayTypes.length > 0;
+  const hasCompression = Array.isArray(compression) && compression.length > 0;
+
+  if (!hasStats && !hasDayTypes && !hasCompression) {
+    diagnosticsMetadataSection.classList.add("hidden");
+    if (diagnosticsStatsList) {
+      diagnosticsStatsList.classList.add("hidden");
+    }
+    return;
+  }
+
+  diagnosticsMetadataSection.classList.remove("hidden");
+
+  if (diagnosticsStatsList) {
+    diagnosticsStatsList.innerHTML = "";
+    if (hasStats) {
+      diagnosticsStatsList.classList.remove("hidden");
+      stats.forEach(({ label, value }) => {
+        const dt = document.createElement("dt");
+        dt.textContent = label;
+        const dd = document.createElement("dd");
+        dd.textContent = value;
+        diagnosticsStatsList.append(dt, dd);
+      });
+    } else {
+      diagnosticsStatsList.classList.add("hidden");
+    }
+  }
+
+  if (diagnosticsDayTypesSection && diagnosticsDayTypesList) {
+    diagnosticsDayTypesList.innerHTML = "";
+    if (hasDayTypes) {
+      diagnosticsDayTypesSection.classList.remove("hidden");
+      const dayFormatter = new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+      dayTypes.forEach(({ date, label }) => {
+        const item = document.createElement("li");
+        const time = document.createElement("time");
+        time.setAttribute("datetime", date);
+        time.textContent = formatDiagnosticsDate(date, dayFormatter);
+        const span = document.createElement("span");
+        span.textContent = label;
+        item.append(time, span);
+        diagnosticsDayTypesList.append(item);
+      });
+    } else {
+      diagnosticsDayTypesSection.classList.add("hidden");
+    }
+  }
+
+  if (diagnosticsCompressionSection && diagnosticsCompressionContainer) {
+    diagnosticsCompressionContainer.innerHTML = "";
+    if (hasCompression) {
+      diagnosticsCompressionSection.classList.remove("hidden");
+      const dayFormatter = new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+      compression.forEach(({ date, logs, total }) => {
+        const entry = document.createElement("details");
+        const summary = document.createElement("summary");
+        const dateLabel = formatDiagnosticsDate(date, dayFormatter);
+        const adjustmentLabel = `${logs.length} ${logs.length === 1 ? "adjustment" : "adjustments"}`;
+        const summaryParts = [dateLabel, adjustmentLabel];
+        if (Number.isFinite(total)) {
+          const hours = (total / 60).toFixed(1);
+          summaryParts.push(`${hours} h scheduled`);
+        }
+        summary.textContent = summaryParts.join(" · ");
+        entry.append(summary);
+
+        const list = document.createElement("ul");
+        const preview = logs.slice(0, DIAGNOSTICS_COMPRESSION_PREVIEW_LIMIT);
+        preview.forEach((text) => {
+          const item = document.createElement("li");
+          item.textContent = text;
+          list.append(item);
+        });
+        if (logs.length > preview.length) {
+          const more = document.createElement("li");
+          more.textContent = `…and ${logs.length - preview.length} more adjustments.`;
+          list.append(more);
+        }
+        entry.append(list);
+        diagnosticsCompressionContainer.append(entry);
+      });
+    } else {
+      diagnosticsCompressionSection.classList.add("hidden");
+    }
+  }
+}
+
+function buildDiagnosticsStats(meta, metadata) {
+  const stats = [];
+  const totalEvents = Number(metadata?.total_events);
+  if (Number.isFinite(totalEvents)) {
+    stats.push({ label: "Events", value: totalEvents.toLocaleString() });
+  }
+
+  const issueCount = Number.isFinite(meta?.issueCount)
+    ? meta.issueCount
+    : Number.isFinite(metadata?.issue_count)
+      ? metadata.issue_count
+      : 0;
+  if (issueCount > 0) {
+    stats.push({ label: "Issues logged", value: issueCount });
+  }
+
+  if (meta?.weekStart && meta?.weekEnd) {
+    stats.push({ label: "Week", value: formatWeekRange(meta.weekStart, meta.weekEnd) });
+  }
+
+  if (meta?.rig) {
+    stats.push({ label: "Rig", value: formatDiagnosticLabel(meta.rig) });
+  }
+
+  if (meta?.archetype) {
+    stats.push({ label: "Archetype", value: formatDiagnosticLabel(meta.archetype) });
+  }
+
+  if (typeof meta?.seed === "number" && Number.isFinite(meta.seed)) {
+    stats.push({ label: "Seed", value: meta.seed });
+  }
+
+  return stats;
+}
+
+function getDayTypeEntries(dayTypes) {
+  if (!dayTypes || typeof dayTypes !== "object") {
+    return [];
+  }
+
+  return Object.entries(dayTypes)
+    .map(([date, label]) => {
+      if (typeof date !== "string" || !date) {
+        return null;
+      }
+      const resolvedLabel = formatDiagnosticLabel(typeof label === "string" ? label : String(label));
+      return resolvedLabel ? { date, label: resolvedLabel } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function getCompressionEntries(compression) {
+  if (!compression || typeof compression !== "object") {
+    return [];
+  }
+
+  return Object.entries(compression)
+    .map(([date, entry]) => {
+      if (typeof date !== "string" || !date || typeof entry !== "object" || entry === null) {
+        return null;
+      }
+      const logs = Array.isArray(entry.compressions)
+        ? entry.compressions.filter((value) => typeof value === "string" && value.trim().length > 0)
+        : [];
+      if (!logs.length) {
+        return null;
+      }
+      const total = Number(entry.original_total);
+      return { date, logs, total: Number.isFinite(total) ? total : null };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function formatDiagnosticsDate(value, formatter) {
+  if (typeof value !== "string" || !value) {
+    return "";
+  }
+  try {
+    const date = parseIsoDate(value);
+    if (formatter && typeof formatter.format === "function") {
+      return formatter.format(date);
+    }
+    const defaultFormatter = new Intl.DateTimeFormat(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    return defaultFormatter.format(date);
+  } catch (error) {
+    return value;
+  }
+}
+
+function formatDiagnosticLabel(value) {
+  if (typeof value !== "string" || !value) {
+    return "";
+  }
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => capitalize(part))
+    .join(" ");
+}
+
+function normalizeIssueSeverity(value) {
+  if (typeof value !== "string") {
+    return "info";
+  }
+  const normalized = value.toLowerCase();
+  if (normalized === "warn") {
+    return "warning";
+  }
+  if (["info", "warning", "error", "critical"].includes(normalized)) {
+    return normalized;
+  }
+  return "info";
 }
 
 function createEmptyReplayState() {
@@ -3038,6 +3436,12 @@ async function generateScheduleForEngine(engineId, config, startDate) {
       events: result.events,
       totals: result.totals,
       meta: { ...result.meta, engine: normalizedId, engineLabel },
+      issues: [],
+      metadata: {
+        engine: normalizedId,
+        issue_count: 0,
+        total_events: Array.isArray(result.events) ? result.events.length : undefined,
+      },
     };
   } else if (normalizedId === "mk2") {
     return generateScheduleWithMk2(config, {

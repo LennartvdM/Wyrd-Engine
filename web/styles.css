@@ -553,6 +553,247 @@ button.preset-button:not(:disabled):hover {
   color: var(--color-text-muted);
 }
 
+.diagnostics-panel {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 0.85rem;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.diagnostics-details {
+  display: block;
+}
+
+.diagnostics-details > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.diagnostics-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.diagnostics-summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 0.75rem;
+  height: 0.75rem;
+  border: 2px solid rgba(148, 163, 184, 0.55);
+  border-left-color: transparent;
+  border-top-color: transparent;
+  transform: rotate(45deg);
+  transition: transform 0.2s ease;
+  margin-right: 0.25rem;
+}
+
+.diagnostics-details[open] > .diagnostics-summary::before {
+  transform: rotate(225deg);
+}
+
+.diagnostics-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.diagnostics-summary__label {
+  flex: 1 1 auto;
+}
+
+.diagnostics-summary__badge {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.25);
+  color: #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+}
+
+.diagnostics-details > summary:focus-visible,
+.diagnostics-compression summary:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 3px;
+}
+
+.diagnostics-content {
+  display: grid;
+  gap: 1rem;
+  padding: 0 1rem 1.15rem;
+}
+
+.diagnostics-section h3,
+.diagnostics-subsection h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.diagnostics-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.diagnostics-issues {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.diagnostics-issue {
+  border: 1px solid rgba(248, 113, 113, 0.25);
+  background: rgba(30, 41, 59, 0.55);
+  border-radius: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.diagnostics-issue__header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.diagnostics-issue__severity {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  padding: 0.25rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  color: #fecaca;
+  background: rgba(248, 113, 113, 0.25);
+}
+
+.diagnostics-issue__severity--info {
+  border-color: rgba(56, 189, 248, 0.4);
+  background: rgba(56, 189, 248, 0.18);
+  color: #bae6fd;
+}
+
+.diagnostics-issue__severity--warning {
+  border-color: rgba(250, 204, 21, 0.45);
+  background: rgba(250, 204, 21, 0.22);
+  color: #fef3c7;
+}
+
+.diagnostics-issue__severity--error,
+.diagnostics-issue__severity--critical {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(248, 113, 113, 0.3);
+  color: #fecaca;
+}
+
+.diagnostics-issue__title {
+  font-weight: 600;
+}
+
+.diagnostics-issue p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.diagnostics-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem 1.25rem;
+  margin: 0;
+}
+
+.diagnostics-stats dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.diagnostics-stats dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.diagnostics-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.diagnostics-day-types {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.diagnostics-day-types li {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 0.65rem;
+  padding: 0.45rem 0.65rem;
+  background: rgba(30, 41, 59, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.diagnostics-day-types time {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.diagnostics-day-types span {
+  font-weight: 600;
+}
+
+.diagnostics-compression {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.diagnostics-compression details {
+  border: 1px solid rgba(129, 140, 248, 0.35);
+  border-radius: 0.65rem;
+  background: rgba(79, 70, 229, 0.12);
+  padding: 0.5rem 0.65rem;
+}
+
+.diagnostics-compression summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.diagnostics-compression summary::-webkit-details-marker {
+  display: none;
+}
+
+.diagnostics-compression ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.diagnostics-compression li {
+  margin-bottom: 0.25rem;
+}
+
 .results-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
