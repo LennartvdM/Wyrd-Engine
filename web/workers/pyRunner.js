@@ -13,7 +13,12 @@ self.onmessage = async (event) => {
 
   try {
     if (type === "load") {
-      await ensurePyodide();
+      const pyodide = await ensurePyodide();
+      const files = Array.isArray(payload.files) ? payload.files : [];
+      if (files.length) {
+        writeRepoFilesToPyodide(pyodide, files);
+      }
+      ensurePythonImportPath(pyodide);
       respond(id, { ok: true, event: "load" });
       return;
     }
@@ -209,6 +214,56 @@ function disableNetworkAccess(pyodide) {
       throw errorFactory();
     };
   }
+}
+
+function writeRepoFilesToPyodide(pyodide, files) {
+  files.forEach((file) => {
+    if (!file || typeof file.path !== "string") {
+      return;
+    }
+    const targetPath = normalizePyodidePath(file.path);
+    ensureParentDirectories(pyodide, targetPath);
+    const content =
+      typeof file.content === "string" ? file.content : String(file.content ?? "");
+    pyodide.FS.writeFile(targetPath, content, { encoding: "utf8" });
+  });
+}
+
+function ensureParentDirectories(pyodide, filePath) {
+  const segments = filePath.split("/").filter(Boolean);
+  if (segments.length <= 1) {
+    return;
+  }
+  let currentPath = "";
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    currentPath += `/${segments[index]}`;
+    const pathInfo = pyodide.FS.analyzePath(currentPath);
+    if (!pathInfo.exists) {
+      pyodide.FS.mkdir(currentPath);
+    }
+  }
+}
+
+function normalizePyodidePath(path) {
+  const value = typeof path === "string" ? path.trim() : "";
+  if (!value) {
+    throw new Error("Invalid file path provided to Pyodide writer");
+  }
+  const sanitized = value.replace(/\\/g, "/");
+  if (sanitized.startsWith("/")) {
+    return sanitized;
+  }
+  const trimmed = sanitized.replace(/^\/+/, "");
+  if (trimmed.startsWith("home/pyodide/")) {
+    return `/${trimmed}`;
+  }
+  return `/home/pyodide/${trimmed}`;
+}
+
+function ensurePythonImportPath(pyodide) {
+  pyodide.runPython(
+    "import sys\nroot = '/home/pyodide'\nif root not in sys.path:\n    sys.path.insert(0, root)",
+  );
 }
 
 function safeStringify(value) {
