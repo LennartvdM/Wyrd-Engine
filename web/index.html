@@ -58,6 +58,41 @@
               Choose which engine implementation to run when generating a schedule.
             </p>
           </div>
+          <fieldset class="form-row form-row--full hidden" id="mk2-options">
+            <legend class="form-label">MK2 options</legend>
+            <div class="form-row">
+              <label for="mk2-archetype">Archetype</label>
+              <select id="mk2-archetype" name="mk2-archetype">
+                <option value="office">Office</option>
+                <option value="parent">Parent</option>
+                <option value="freelancer">Freelancer</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="mk2-rig">Rig</label>
+              <select id="mk2-rig" name="mk2-rig">
+                <option value="calendar">Calendar</option>
+                <option value="workforce">Workforce</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="mk2-seed">Seed</label>
+              <input id="mk2-seed" name="mk2-seed" type="number" inputmode="numeric" />
+            </div>
+            <div class="form-row">
+              <label for="mk2-week-start">Week start</label>
+              <input id="mk2-week-start" name="mk2-week-start" type="date" />
+            </div>
+            <div class="form-row form-row--full">
+              <label for="mk2-yearly-budget">Yearly budget (optional)</label>
+              <textarea
+                id="mk2-yearly-budget"
+                name="mk2-yearly-budget"
+                rows="3"
+                spellcheck="false"
+              ></textarea>
+            </div>
+          </fieldset>
           <div class="form-row form-row--full">
             <label for="config-input">Configuration JSON</label>
             <textarea

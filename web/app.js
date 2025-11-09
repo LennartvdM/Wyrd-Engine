@@ -56,6 +56,7 @@ const form = document.querySelector("#config-form");
 const formError = document.querySelector("#form-error");
 const startDateInput = document.querySelector("#start-date");
 const engineSelect = document.querySelector("#engine-select");
+const mk2OptionsFieldset = document.querySelector("#mk2-options");
 const resultsSection = document.querySelector("#results");
 const resultsTitle = document.querySelector("#results-title");
 const resultsSubtitle = document.querySelector("#results-subtitle");
@@ -431,6 +432,21 @@ if (engineSelect) {
   // TODO: Remove MK2 filter once generateScheduleForEngine supports the MK2 branch.
   const selectableEngineOptions = ENGINE_OPTIONS.filter((option) => option.id !== "mk2");
   populateEngineSelect(engineSelect, selectableEngineOptions, DEFAULT_ENGINE_ID);
+
+  const toggleMk2OptionsVisibility = () => {
+    if (!mk2OptionsFieldset) {
+      return;
+    }
+
+    if (engineSelect.value === "mk2") {
+      mk2OptionsFieldset.classList.remove("hidden");
+    } else {
+      mk2OptionsFieldset.classList.add("hidden");
+    }
+  };
+
+  toggleMk2OptionsVisibility();
+  engineSelect.addEventListener("change", toggleMk2OptionsVisibility);
 }
 
 initViews();
