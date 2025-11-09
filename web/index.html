@@ -19,30 +19,32 @@
   </head>
   <body>
     <main class="page-layout view" data-view="calendar" id="calendar-view">
-      <div class="view-tabs" role="group" aria-label="Primary views">
-        <button
-          type="button"
-          class="view-tab is-active"
-          data-view-target="calendar"
-          aria-controls="calendar-view"
-          aria-label="Show calendar view"
-          data-tooltip="Show the generated calendar"
-        >
-          Calendar
-        </button>
-        <button
-          type="button"
-          class="view-tab"
-          data-view-target="test-console"
-          aria-controls="test-console-view"
-          aria-label="Show test console"
-          data-tooltip="Switch to the test console"
-        >
-          Test Console
-        </button>
-      </div>
       <section class="card form-card">
-        <h2>Configuration</h2>
+        <div class="card-heading">
+          <h2>Configuration</h2>
+          <div class="view-switcher" role="group" aria-label="Primary views">
+            <button
+              type="button"
+              class="view-tab is-active"
+              data-view-target="calendar"
+              aria-controls="calendar-view"
+              aria-label="Show calendar view"
+              data-tooltip="Show the generated calendar"
+            >
+              Calendar
+            </button>
+            <button
+              type="button"
+              class="view-tab"
+              data-view-target="test-console"
+              aria-controls="test-console-view"
+              aria-label="Show test console"
+              data-tooltip="Switch to the test console"
+            >
+              Test Console
+            </button>
+          </div>
+        </div>
         <form id="config-form" novalidate>
           <div class="form-row">
             <label for="start-date">Week starting (optional)</label>
@@ -231,39 +233,33 @@
     </main>
 
     <main class="view view--test-console hidden" data-view="test-console" id="test-console-view">
-      <div class="view-tabs" role="group" aria-label="Primary views">
-        <button
-          type="button"
-          class="view-tab"
-          data-view-target="calendar"
-          aria-controls="calendar-view"
-          aria-label="Show calendar view"
-          data-tooltip="Show the generated calendar"
-        >
-          Calendar
-        </button>
-        <button
-          type="button"
-          class="view-tab is-active"
-          data-view-target="test-console"
-          aria-controls="test-console-view"
-          aria-label="Show test console"
-          data-tooltip="Switch to the test console"
-        >
-          Test Console
-        </button>
-      </div>
       <section class="card test-console-card">
         <div class="test-console-header">
           <div class="test-console-actions">
             <button type="button" id="test-console-load">Load Runtime</button>
             <button type="button" id="test-console-run" disabled>Run</button>
           </div>
-          <div class="test-console-heading">
-            <h2>Test Console</h2>
-            <p class="test-console-subtitle">
-              Experiment with scripted scenarios using the Wyrd runtime.
-            </p>
+          <div class="view-switcher" role="group" aria-label="Primary views">
+            <button
+              type="button"
+              class="view-tab"
+              data-view-target="calendar"
+              aria-controls="calendar-view"
+              aria-label="Show calendar view"
+              data-tooltip="Show the generated calendar"
+            >
+              Calendar
+            </button>
+            <button
+              type="button"
+              class="view-tab is-active"
+              data-view-target="test-console"
+              aria-controls="test-console-view"
+              aria-label="Show test console"
+              data-tooltip="Switch to the test console"
+            >
+              Test Console
+            </button>
           </div>
         </div>
         <div class="test-console-body">
