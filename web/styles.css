@@ -47,9 +47,8 @@ body {
 body {
   margin: 0;
   min-height: 100vh;
-  height: 100vh;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   background:
     radial-gradient(120% 120% at 20% 10%, rgba(56, 189, 248, 0.16), transparent 60%),
@@ -66,104 +65,6 @@ a {
 a:hover {
   color: #bae6fd;
 }
-
-.page-nav {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  padding: 0.6rem var(--layout-inline-padding);
-  background: rgba(7, 15, 34, 0.82);
-  border-bottom: 1px solid rgba(56, 189, 248, 0.12);
-  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.25);
-  width: min(100%, var(--layout-content-max));
-  margin: 0 auto;
-  position: sticky;
-  top: 0;
-  z-index: 2;
-}
-
-.page-nav--compact {
-  justify-content: space-between;
-}
-
-.page-nav__brand {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  min-width: 0;
-}
-
-.page-nav__title {
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-
-.page-nav__subtitle {
-  font-size: var(--font-size-small);
-  color: var(--color-text-muted);
-}
-
-.page-nav__actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.page-footer {
-  padding: var(--layout-block-padding) var(--layout-inline-padding);
-  text-align: center;
-  background: linear-gradient(135deg, rgba(29, 46, 85, 0.35), transparent);
-  border-top: 1px solid rgba(56, 189, 248, 0.16);
-}
-
-@media (max-width: 720px) {
-  .page-nav {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .page-nav__actions {
-    justify-content: flex-start;
-  }
-}
-
-.page-nav__link {
-  background: rgba(255, 255, 255, 0.02);
-  color: inherit;
-  border: 1px solid var(--color-border);
-  box-shadow: none;
-  padding: 0.45rem 0.9rem;
-  border-radius: 0.5rem;
-  font-size: 0.85rem;
-  transition: color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, transform 0.2s ease;
-}
-
-.page-nav__link.is-active,
-.page-nav__link[aria-pressed="true"] {
-  background: linear-gradient(135deg, var(--color-accent), var(--color-compression));
-  color: var(--color-base-950);
-  border-color: transparent;
-  box-shadow: 0 14px 32px rgba(56, 189, 248, 0.35);
-  transform: translateY(-1px);
-}
-
-.page-nav__link:not(:disabled):hover {
-  background: linear-gradient(135deg, var(--color-accent-strong), var(--color-compression));
-  color: var(--color-base-950);
-}
-
-.page-nav__link:focus-visible {
-  outline: 3px solid var(--color-focus);
-  outline-offset: 3px;
-}
-
-
 .view {
   min-height: 0;
   height: 100%;
@@ -174,10 +75,48 @@ a:hover {
   gap: 1rem;
   width: min(100%, var(--layout-content-max));
   margin: 0 auto;
+  flex: 1 1 auto;
 }
 
 .view--test-console {
   overflow: hidden;
+}
+
+.view-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.view-tab {
+  background: rgba(255, 255, 255, 0.02);
+  color: inherit;
+  border: 1px solid var(--color-border);
+  box-shadow: none;
+  padding: 0.45rem 0.9rem;
+  border-radius: 0.5rem;
+  font-size: 0.85rem;
+  transition: color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.view-tab.is-active,
+.view-tab[aria-pressed="true"] {
+  background: linear-gradient(135deg, var(--color-accent), var(--color-compression));
+  color: var(--color-base-950);
+  border-color: transparent;
+  box-shadow: 0 14px 32px rgba(56, 189, 248, 0.35);
+  transform: translateY(-1px);
+}
+
+.view-tab:not(:disabled):hover {
+  background: linear-gradient(135deg, var(--color-accent-strong), var(--color-compression));
+  color: var(--color-base-950);
+}
+
+.view-tab:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 3px;
 }
 
 .page-layout {
@@ -911,9 +850,8 @@ button.preset-button:not(:disabled):hover {
 .test-console-header {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 0.75rem;
-  align-items: center;
+  gap: 1.5rem;
+  align-items: flex-start;
 }
 
 .test-console-actions {
@@ -926,6 +864,14 @@ button.preset-button:not(:disabled):hover {
   padding: 0.55rem 1.1rem;
   border-radius: 0.65rem;
   font-size: 0.95rem;
+}
+
+.test-console-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex: 1 1 260px;
+  min-width: 0;
 }
 
 .test-console-header h2 {
