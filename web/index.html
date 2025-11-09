@@ -19,26 +19,32 @@
   </head>
   <body>
     <nav class="page-nav page-nav--compact" aria-label="Primary view navigation">
-      <button
-        type="button"
-        class="page-nav__link is-active"
-        data-view-target="calendar"
-        aria-controls="calendar-view"
-        aria-label="Show calendar view"
-        data-tooltip="Show the generated calendar"
-      >
-        Calendar
-      </button>
-      <button
-        type="button"
-        class="page-nav__link"
-        data-view-target="test-console"
-        aria-controls="test-console-view"
-        aria-label="Show test console"
-        data-tooltip="Switch to the test console"
-      >
-        Test Console
-      </button>
+      <div class="page-nav__brand" aria-label="Synthetic Calendar Generator">
+        <span class="page-nav__title">Synthetic Calendar Generator</span>
+        <span class="page-nav__subtitle">Generate, inspect, and export schedules</span>
+      </div>
+      <div class="page-nav__actions" role="group" aria-label="Primary views">
+        <button
+          type="button"
+          class="page-nav__link is-active"
+          data-view-target="calendar"
+          aria-controls="calendar-view"
+          aria-label="Show calendar view"
+          data-tooltip="Show the generated calendar"
+        >
+          Calendar
+        </button>
+        <button
+          type="button"
+          class="page-nav__link"
+          data-view-target="test-console"
+          aria-controls="test-console-view"
+          aria-label="Show test console"
+          data-tooltip="Switch to the test console"
+        >
+          Test Console
+        </button>
+      </div>
     </nav>
 
     <main class="page-layout view" data-view="calendar" id="calendar-view">
@@ -50,13 +56,13 @@
             <input id="start-date" name="start-date" type="date" />
             <p class="help-text">Leave blank to start on the current week&#8217;s Monday.</p>
           </div>
-          <div class="form-row">
+          <div class="form-row form-row--full">
             <label for="config-input">Configuration JSON</label>
             <textarea
               id="config-input"
               name="config-input"
               spellcheck="false"
-              rows="16"
+              rows="12"
             ></textarea>
             <p class="help-text">
               Provide the same JSON structure used by <code>calendar_gen.py</code>.
