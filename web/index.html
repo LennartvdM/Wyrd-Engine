@@ -18,7 +18,14 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="command-bar">
+    <header class="page-header">
+      <div class="page-header__intro">
+        <h1>Synthetic Calendar Generator</h1>
+        <p>
+          Generate weekly schedules from configuration JSON and explore the results in
+          a familiar calendar interface powered by FullCalendar.
+        </p>
+      </div>
       <nav class="page-nav" aria-label="Primary view navigation">
         <button
           type="button"
@@ -41,18 +48,6 @@
           Test Console
         </button>
       </nav>
-      <div
-        class="test-console-status command-bar__status"
-        role="status"
-        aria-live="polite"
-      >
-        <span
-          class="status-indicator is-idle"
-          id="test-console-status-indicator"
-          aria-hidden="true"
-        ></span>
-        <span id="test-console-status-text">Runtime not loaded yet.</span>
-      </div>
     </header>
 
     <main class="page-layout view" data-view="calendar" id="calendar-view">
