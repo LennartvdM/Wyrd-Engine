@@ -5,7 +5,19 @@ from __future__ import annotations
 import random
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 
 from archetypes import (
     DEFAULT_TEMPLATES,
@@ -16,7 +28,7 @@ from archetypes import (
 )
 from modules.calendar_provider import CalendarProvider, default_calendar_provider
 from modules.friction_model import generate_daily_friction
-from models import Activity, ActivityTemplate, Event, PersonProfile
+from models import Activity, ActivityTemplate, Event, PersonProfile, DAY_NAMES
 from modules.unique_events import UniqueDay, generate_unique_day_schedule
 from yearly_budget import YearlyBudget
 from modules.validation import validate_week
@@ -27,6 +39,7 @@ __all__ = [
     "apply_micro_jitter",
     "apply_seasonal_modifiers",
     "apply_special_period_effects",
+    "normalize_mk2_events",
 ]
 
 
@@ -505,7 +518,7 @@ class EngineMK2:
             plan.activities = compressed
             compression_metadata[plan.date.isoformat()] = metadata
 
-        all_events: List[Event] = []
+        normalized_inputs: List[Dict[str, Any]] = []
         for plan in week_plans:
             events = self._place_activities_in_day(plan.date.weekday(), plan.day_name, plan.activities, templates)
             for event in events:
@@ -513,9 +526,31 @@ class EngineMK2:
                 event.day = plan.day_name
             events = self.fill_free_time(events)
             events = self.apply_micro_jitter(events)
-            all_events.extend(events)
+            day_offset = (plan.date - start_date).days
+            weekday_index = plan.date.weekday()
+            for event in events:
+                normalized_inputs.append(
+                    {
+                        "date": event.date,
+                        "day": event.day,
+                        "day_index": day_offset,
+                        "weekday_index": weekday_index,
+                        "start_minutes": event.start_minutes,
+                        "end_minutes": event.end_minutes,
+                        "duration_minutes": max(0, event.end_minutes - event.start_minutes),
+                        "activity": event.activity.name,
+                        "activity_details": {
+                            "base_duration_minutes": event.activity.base_duration_minutes,
+                            "waste_multiplier": event.activity.waste_multiplier,
+                            "optional": event.activity.optional,
+                            "priority": event.activity.priority,
+                            "actual_duration": event.activity.actual_duration,
+                        },
+                        "day_type": plan.day_type,
+                    }
+                )
 
-        events_payload = [event.to_dict() for event in all_events]
+        events_payload = normalize_mk2_events(normalized_inputs, week_start=start_date)
         summary_hours = self._generate_summary(events_payload)
 
         return {
@@ -539,3 +574,382 @@ class EngineMK2:
         factory, templates = self._profile_factory[archetype]
         return factory(), templates
 
+
+def normalize_mk2_events(
+    events: Iterable[Mapping[str, object]], *, week_start: Optional[date] = None
+) -> List[Dict[str, Any]]:
+    """Coerce MK2 event payloads into the MK1 renderer shape."""
+
+    normalized: List[Dict[str, Any]] = []
+    for raw in events:
+        event = _normalize_single_event(raw, week_start=week_start)
+        if event is not None:
+            normalized.append(event)
+
+    normalized.sort(key=_event_sort_key)
+    return normalized
+
+
+def _normalize_single_event(
+    raw: Mapping[str, object], *, week_start: Optional[date]
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, Mapping):
+        return None
+
+    day_offset = _coerce_int(
+        raw.get("day_index") if "day_index" in raw else raw.get("dayIndex")
+    )
+    weekday_index = _coerce_int(
+        raw.get("weekday_index") if "weekday_index" in raw else raw.get("weekdayIndex")
+    )
+
+    event_date = _coerce_date(raw.get("date"), week_start, day_offset)
+    date_iso = event_date.isoformat() if event_date else ""
+
+    day_name = _coerce_day_name(
+        raw.get("day"), event_date, weekday_index, day_offset, week_start
+    )
+
+    start_minutes = _extract_minutes(
+        raw,
+        [
+            "start_minutes",
+            "start_minute",
+            "minute_start",
+            "start",
+            "start_time",
+            "startTime",
+            "time",
+        ],
+    )
+    end_minutes = _extract_minutes(
+        raw,
+        [
+            "end_minutes",
+            "end_minute",
+            "minute_end",
+            "end",
+            "end_time",
+            "endTime",
+        ],
+    )
+
+    duration_minutes = _extract_positive_int(
+        raw,
+        [
+            "duration_minutes",
+            "duration",
+            "minutes",
+            "length_minutes",
+        ],
+    )
+
+    computed_duration = _compute_duration(start_minutes, end_minutes)
+    if (duration_minutes is None or duration_minutes <= 0) and computed_duration is not None:
+        duration_minutes = computed_duration
+
+    if duration_minutes is None or duration_minutes < 0:
+        duration_minutes = 0
+
+    if end_minutes is None and start_minutes is not None and duration_minutes:
+        end_minutes = start_minutes + duration_minutes
+
+    if end_minutes is not None and start_minutes is not None and end_minutes <= start_minutes:
+        # Ensure the range is strictly positive by rolling the end forward.
+        adjusted = end_minutes
+        while adjusted <= start_minutes:
+            adjusted += 1440
+            if adjusted - start_minutes > 14 * 1440:
+                break
+        if adjusted > start_minutes:
+            end_minutes = adjusted
+            if duration_minutes <= 0:
+                duration_minutes = adjusted - start_minutes
+
+    start_display = _format_minutes(start_minutes)
+    end_display = _format_end_minutes(end_minutes, start_minutes, duration_minutes)
+
+    activity_name = _coerce_activity_name(raw.get("activity"))
+    if not activity_name:
+        activity_name = _coerce_activity_name(raw.get("activity_name"))
+    if not activity_name:
+        activity_name = _coerce_activity_name(raw.get("activityName"))
+    if not activity_name:
+        activity_name = ""
+
+    minute_range = _coerce_minute_range(raw.get("minute_range"))
+    if minute_range is None:
+        minute_range = _coerce_minute_range(raw.get("minuteRange"))
+
+    if (
+        minute_range is None
+        and start_minutes is not None
+        and end_minutes is not None
+        and day_offset is not None
+    ):
+        absolute_start = day_offset * 1440 + start_minutes
+        absolute_end = day_offset * 1440 + end_minutes
+        if absolute_end <= absolute_start and duration_minutes:
+            absolute_end = absolute_start + duration_minutes
+        minute_range = [absolute_start, absolute_end]
+
+    extras = _collect_extras(
+        raw,
+        {
+            "date",
+            "day",
+            "day_index",
+            "dayIndex",
+            "weekday_index",
+            "weekdayIndex",
+            "start",
+            "start_time",
+            "startTime",
+            "start_minutes",
+            "start_minute",
+            "minute_start",
+            "time",
+            "end",
+            "end_time",
+            "endTime",
+            "end_minutes",
+            "end_minute",
+            "minute_end",
+            "duration",
+            "duration_minutes",
+            "minutes",
+            "length_minutes",
+            "activity",
+            "activity_name",
+            "activityName",
+            "minute_range",
+            "minuteRange",
+        },
+    )
+
+    if start_minutes is not None:
+        extras.setdefault("start_minutes", start_minutes)
+    if end_minutes is not None:
+        extras.setdefault("end_minutes", end_minutes)
+    if day_offset is not None:
+        extras.setdefault("day_index", day_offset)
+    if weekday_index is not None:
+        extras.setdefault("weekday_index", weekday_index)
+    if minute_range is not None:
+        extras["minute_range"] = minute_range
+
+    normalized: Dict[str, Any] = {
+        "date": date_iso,
+        "day": day_name,
+        "start": start_display,
+        "end": end_display,
+        "activity": activity_name,
+        "duration_minutes": int(duration_minutes),
+    }
+    normalized.update(extras)
+    return normalized
+
+
+def _event_sort_key(event: Mapping[str, Any]) -> Tuple[str, str]:
+    date_value = str(event.get("date") or "")
+    start_value = str(event.get("start") or "")
+    return (date_value, start_value)
+
+
+def _coerce_date(
+    value: object, week_start: Optional[date], day_offset: Optional[int]
+) -> Optional[date]:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        candidate = value.strip()
+        if candidate:
+            try:
+                return date.fromisoformat(candidate.split("T")[0])
+            except ValueError:
+                return None
+        return None
+    if week_start is not None and day_offset is not None:
+        try:
+            return week_start + timedelta(days=day_offset)
+        except OverflowError:
+            return None
+    return None
+
+
+def _coerce_day_name(
+    value: object,
+    event_date: Optional[date],
+    weekday_index: Optional[int],
+    day_offset: Optional[int],
+    week_start: Optional[date],
+) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
+
+    if weekday_index is not None and 0 <= weekday_index < len(DAY_NAMES):
+        return DAY_NAMES[weekday_index]
+
+    if event_date is not None:
+        return event_date.strftime("%A").lower()
+
+    if week_start is not None and day_offset is not None:
+        try:
+            computed = week_start + timedelta(days=day_offset)
+            return computed.strftime("%A").lower()
+        except OverflowError:
+            return ""
+
+    return ""
+
+
+def _extract_minutes(raw: Mapping[str, object], keys: Sequence[str]) -> Optional[int]:
+    for key in keys:
+        if key not in raw:
+            continue
+        minutes = _coerce_minutes(raw.get(key))
+        if minutes is not None:
+            return minutes
+    return None
+
+
+def _coerce_minutes(value: object) -> Optional[int]:
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        if "T" in candidate:
+            candidate = candidate.split("T", 1)[1]
+        parts = candidate.split(":")
+        if len(parts) >= 2:
+            try:
+                hours = int(parts[0])
+                minutes = int(parts[1])
+                return hours * 60 + minutes
+            except ValueError:
+                return None
+        try:
+            return int(candidate)
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_positive_int(raw: Mapping[str, object], keys: Sequence[str]) -> Optional[int]:
+    for key in keys:
+        if key not in raw:
+            continue
+        value = _coerce_int(raw.get(key))
+        if value is not None and value > 0:
+            return value
+    return None
+
+
+def _coerce_int(value: object) -> Optional[int]:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(float(value))
+        except ValueError:
+            return None
+    return None
+
+
+def _compute_duration(
+    start_minutes: Optional[int], end_minutes: Optional[int]
+) -> Optional[int]:
+    if start_minutes is None or end_minutes is None:
+        return None
+    if end_minutes > start_minutes:
+        return end_minutes - start_minutes
+    difference = end_minutes - start_minutes
+    while difference <= 0:
+        difference += 1440
+        if difference > 14 * 1440:
+            return None
+    return difference
+
+
+def _format_minutes(value: Optional[int]) -> str:
+    if value is None:
+        total = 0
+    else:
+        total = int(value) % 1440
+    hours, minutes = divmod(total, 60)
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def _format_end_minutes(
+    end_minutes: Optional[int],
+    start_minutes: Optional[int],
+    duration_minutes: Optional[int],
+) -> str:
+    if end_minutes is not None and end_minutes < 1440:
+        return _format_minutes(end_minutes)
+
+    baseline = start_minutes or 0
+    if end_minutes is not None and end_minutes >= 1440:
+        return "00:00"
+
+    if duration_minutes:
+        candidate = baseline + duration_minutes
+        if candidate >= 1440:
+            return "00:00"
+        return _format_minutes(candidate)
+
+    return _format_minutes(baseline)
+
+
+def _coerce_activity_name(value: object) -> Optional[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return text if text else None
+    if isinstance(value, Mapping):
+        candidate = value.get("name")
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    if hasattr(value, "name"):
+        candidate = getattr(value, "name")
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
+def _coerce_minute_range(value: object) -> Optional[List[int]]:
+    if isinstance(value, Sequence) and len(value) >= 2:
+        start = _coerce_int(value[0])
+        end = _coerce_int(value[1])
+        if start is not None and end is not None:
+            return [start, end]
+    if isinstance(value, Mapping):
+        start = _coerce_int(
+            value.get("start")
+            or value.get("from")
+            or value.get("begin")
+            or value.get(0)
+        )
+        end = _coerce_int(
+            value.get("end")
+            or value.get("to")
+            or value.get("finish")
+            or value.get(1)
+        )
+        if start is not None and end is not None:
+            return [start, end]
+    return None
+
+
+def _collect_extras(
+    raw: Mapping[str, object], canonical: Set[str]
+) -> Dict[str, Any]:
+    extras: Dict[str, Any] = {}
+    for key, value in raw.items():
+        if key in canonical:
+            continue
+        extras[key] = value
+    return extras
