@@ -578,12 +578,16 @@ function createEmptyReplayState() {
     meta: null,
     layout: null,
     segmentsByDay: [],
+    minuteBucketsByDay: [],
     eventElements: new Map(),
     hoveredEventIndices: new Set(),
     selectedEventIndex: null,
     hoverSource: null,
     lastPointerInfo: null,
     weekStartDate: null,
+    pendingHighlightFrame: null,
+    renderedHoveredIndices: new Set(),
+    renderedSelectedIndex: null,
   };
 }
 
@@ -612,6 +616,7 @@ function renderReplayInspector(events, meta) {
   replayState.weekStartDate = weekStartDate;
   replayState.layout = prepared.layout;
   replayState.segmentsByDay = prepared.segmentsByDay;
+  replayState.minuteBucketsByDay = prepared.minuteBucketsByDay;
 
   replayInspector.classList.remove("hidden");
   replayMinuteLabel.textContent = REPLAY_DEFAULT_LABEL;
@@ -621,7 +626,7 @@ function renderReplayInspector(events, meta) {
   buildReplaySvg(prepared);
   buildReplayEventList(prepared);
 
-  updateReplayHighlights();
+  updateReplayHighlights(true);
   updateMinuteLabelForSelection();
 }
 
@@ -660,6 +665,7 @@ function prepareReplayEvents(events, weekStartDate) {
   const dayCount = maxDayIndex >= 0 ? maxDayIndex + 1 : 0;
   const layout = dayCount > 0 ? computeReplayLayout(dayCount) : null;
   const segmentsByDay = layout ? Array.from({ length: layout.dayCount }, () => []) : [];
+  let minuteBucketsByDay = [];
 
   if (layout) {
     for (const info of preparedEvents) {
@@ -670,9 +676,10 @@ function prepareReplayEvents(events, weekStartDate) {
         segmentsByDay[segment.dayIndex].push(segment);
       }
     }
+    minuteBucketsByDay = buildMinuteBuckets(segmentsByDay, layout.dayCount);
   }
 
-  return { events: preparedEvents, layout, segmentsByDay };
+  return { events: preparedEvents, layout, segmentsByDay, minuteBucketsByDay };
 }
 
 function computeReplayEventInfo(event, eventIndex, weekStartDate) {
@@ -889,6 +896,22 @@ function computeReplayLayout(dayCount) {
   const outerRadius = MIN_RADIUS + effectiveDayCount * step;
   const viewBoxSize = outerRadius * 2 + 40;
   const center = viewBoxSize / 2;
+  const minuteAngles = new Float32Array(1440);
+  const minuteSin = new Float32Array(1440);
+  const minuteCos = new Float32Array(1440);
+  const innerRadii = new Float32Array(effectiveDayCount);
+  const outerRadii = new Float32Array(effectiveDayCount);
+  for (let minute = 0; minute < 1440; minute += 1) {
+    const angle = (minute / 1440) * Math.PI * 2;
+    minuteAngles[minute] = angle;
+    minuteSin[minute] = Math.sin(angle);
+    minuteCos[minute] = Math.cos(angle);
+  }
+  for (let day = 0; day < effectiveDayCount; day += 1) {
+    const inner = MIN_RADIUS + day * step;
+    innerRadii[day] = inner;
+    outerRadii[day] = inner + RING_WIDTH;
+  }
   return {
     minRadius: MIN_RADIUS,
     ringWidth: RING_WIDTH,
@@ -898,7 +921,49 @@ function computeReplayLayout(dayCount) {
     outerRadius,
     viewBoxSize,
     center,
+    minuteAngles,
+    minuteSin,
+    minuteCos,
+    innerRadii,
+    outerRadii,
+    minuteFractionCache: new Map(),
   };
+}
+
+function buildMinuteBuckets(segmentsByDay, dayCount) {
+  if (!Array.isArray(segmentsByDay) || dayCount <= 0) {
+    return [];
+  }
+  const buckets = Array.from({ length: dayCount }, () =>
+    Array.from({ length: 1440 }, () => null)
+  );
+  for (let dayIndex = 0; dayIndex < dayCount; dayIndex += 1) {
+    const segments = segmentsByDay[dayIndex];
+    if (!Array.isArray(segments) || segments.length === 0) {
+      continue;
+    }
+    for (const segment of segments) {
+      const startIndex = Math.max(0, Math.floor(segment.startMinute));
+      const endIndex = Math.min(1440, Math.ceil(segment.endMinute));
+      for (let minuteIndex = startIndex; minuteIndex < endIndex; minuteIndex += 1) {
+        let bucket = buckets[dayIndex][minuteIndex];
+        if (!bucket) {
+          bucket = [];
+          buckets[dayIndex][minuteIndex] = bucket;
+        }
+        bucket.push(segment.eventIndex);
+      }
+    }
+    for (let minuteIndex = 0; minuteIndex < 1440; minuteIndex += 1) {
+      const bucket = buckets[dayIndex][minuteIndex];
+      if (!bucket) {
+        buckets[dayIndex][minuteIndex] = [];
+      } else if (bucket.length > 1) {
+        buckets[dayIndex][minuteIndex] = Array.from(new Set(bucket));
+      }
+    }
+  }
+  return buckets;
 }
 
 function buildReplaySvg(prepared) {
@@ -942,8 +1007,9 @@ function buildReplaySvg(prepared) {
   }
 
   for (let dayIndex = 0; dayIndex < layout.dayCount; dayIndex += 1) {
-    const radius =
-      layout.minRadius + dayIndex * layout.step + layout.ringWidth / 2;
+    const inner = layout.innerRadii?.[dayIndex] ?? layout.minRadius + dayIndex * layout.step;
+    const outer = layout.outerRadii?.[dayIndex] ?? inner + layout.ringWidth;
+    const radius = inner + (outer - inner) / 2;
     const circle = document.createElementNS(SVG_NS, "circle");
     circle.setAttribute("cx", layout.center);
     circle.setAttribute("cy", layout.center);
@@ -959,8 +1025,11 @@ function buildReplaySvg(prepared) {
 
   for (const info of prepared.events) {
     for (const segment of info.segments) {
-      const innerRadius = layout.minRadius + segment.dayIndex * layout.step;
-      const outerRadius = innerRadius + layout.ringWidth;
+      const innerRadius =
+        layout.innerRadii?.[segment.dayIndex] ??
+        layout.minRadius + segment.dayIndex * layout.step;
+      const outerRadius =
+        layout.outerRadii?.[segment.dayIndex] ?? innerRadius + layout.ringWidth;
       const pathData = describeMinuteArc(
         layout,
         innerRadius,
@@ -985,10 +1054,34 @@ function buildReplaySvg(prepared) {
 }
 
 function minuteToPoint(layout, minute, radius) {
-  const angle = (minute / 1440) * Math.PI * 2;
-  const x = layout.center + radius * Math.sin(angle);
-  const y = layout.center - radius * Math.cos(angle);
+  const polar = getMinutePolar(layout, minute);
+  const x = layout.center + radius * polar.sin;
+  const y = layout.center - radius * polar.cos;
   return { x, y };
+}
+
+function getMinutePolar(layout, minute) {
+  if (!layout || !Number.isFinite(minute)) {
+    return { angle: 0, sin: 0, cos: 1 };
+  }
+  const normalized = ((minute % 1440) + 1440) % 1440;
+  const baseIndex = Math.floor(normalized);
+  if (normalized === baseIndex) {
+    return {
+      angle: layout.minuteAngles[baseIndex],
+      sin: layout.minuteSin[baseIndex],
+      cos: layout.minuteCos[baseIndex],
+    };
+  }
+  if (!layout.minuteFractionCache.has(normalized)) {
+    const angle = (normalized / 1440) * Math.PI * 2;
+    layout.minuteFractionCache.set(normalized, {
+      angle,
+      sin: Math.sin(angle),
+      cos: Math.cos(angle),
+    });
+  }
+  return layout.minuteFractionCache.get(normalized);
 }
 
 function describeMinuteArc(layout, innerRadius, outerRadius, startMinute, endMinute) {
@@ -1274,10 +1367,51 @@ function buildSelectedEventLabel(info) {
   return name;
 }
 
-function updateReplayHighlights() {
-  for (const [eventIndex, elements] of replayState.eventElements.entries()) {
-    const isSelected = replayState.selectedEventIndex === eventIndex;
-    const isHovered = replayState.hoveredEventIndices.has(eventIndex);
+function updateReplayHighlights(forceImmediate = false) {
+  if (!replayState) {
+    return;
+  }
+  if (forceImmediate) {
+    if (replayState.pendingHighlightFrame != null) {
+      cancelAnimationFrame(replayState.pendingHighlightFrame);
+      replayState.pendingHighlightFrame = null;
+    }
+    flushReplayHighlightUpdate();
+    return;
+  }
+  if (replayState.pendingHighlightFrame != null) {
+    return;
+  }
+  replayState.pendingHighlightFrame = requestAnimationFrame(() => {
+    replayState.pendingHighlightFrame = null;
+    flushReplayHighlightUpdate();
+  });
+}
+
+function flushReplayHighlightUpdate() {
+  if (!replayState) {
+    return;
+  }
+  const nextHovered = replayState.hoveredEventIndices;
+  const nextSelected = replayState.selectedEventIndex;
+  const previousHovered = replayState.renderedHoveredIndices;
+  const previousSelected = replayState.renderedSelectedIndex;
+  const indicesToUpdate = new Set();
+  nextHovered.forEach((value) => indicesToUpdate.add(value));
+  previousHovered.forEach((value) => indicesToUpdate.add(value));
+  if (typeof nextSelected === "number") {
+    indicesToUpdate.add(nextSelected);
+  }
+  if (typeof previousSelected === "number") {
+    indicesToUpdate.add(previousSelected);
+  }
+  for (const eventIndex of indicesToUpdate) {
+    const elements = replayState.eventElements.get(eventIndex);
+    if (!elements) {
+      continue;
+    }
+    const isSelected = nextSelected === eventIndex;
+    const isHovered = nextHovered.has(eventIndex);
     for (const path of elements.paths) {
       path.classList.toggle("is-selected", isSelected);
       path.classList.toggle("is-hovered", isHovered && !isSelected);
@@ -1288,6 +1422,9 @@ function updateReplayHighlights() {
       elements.listItem.setAttribute("aria-pressed", isSelected ? "true" : "false");
     }
   }
+  replayState.renderedHoveredIndices = new Set(nextHovered);
+  replayState.renderedSelectedIndex =
+    typeof nextSelected === "number" ? nextSelected : null;
 }
 
 function updateMinuteLabelForSelection() {
@@ -1308,7 +1445,7 @@ function updateMinuteLabelForSelection() {
   replayMinuteLabel.textContent = REPLAY_DEFAULT_LABEL;
 }
 
-function updateMinuteLabelFromPointer(info, segments) {
+function updateMinuteLabelFromPointer(info, eventIndices) {
   if (!replayMinuteLabel) {
     return;
   }
@@ -1316,31 +1453,21 @@ function updateMinuteLabelFromPointer(info, segments) {
   const minuteLabel = formatMinutesOfDay(info.minute);
   const minuteIndex = info.dayIndex * 1440 + info.minute;
   let suffix = " — no events";
-  if (segments.length === 1) {
-    suffix = ` — ${capitalize(formatReplayEventName(replayState.events[segments[0].eventIndex]?.event))}`;
-  } else if (segments.length > 1) {
-    suffix = ` — ${segments.length} events`;
+  if (eventIndices.length === 1) {
+    suffix = ` — ${capitalize(formatReplayEventName(replayState.events[eventIndices[0]]?.event))}`;
+  } else if (eventIndices.length > 1) {
+    suffix = ` — ${eventIndices.length} events`;
   }
   replayMinuteLabel.textContent = `${dayLabel} · ${minuteLabel} (minute ${minuteIndex})${suffix}`;
-}
-
-function getSegmentsForPointer(info) {
-  if (!Array.isArray(replayState.segmentsByDay)) {
-    return [];
-  }
-  const bucket = replayState.segmentsByDay[info.dayIndex] || [];
-  return bucket.filter(
-    (segment) => info.minute >= segment.startMinute && info.minute < segment.endMinute
-  );
 }
 
 function applyPointerHighlight(info) {
   if (!info.withinRing) {
     return;
   }
-  const matches = getSegmentsForPointer(info);
-  replayState.hoveredEventIndices = new Set(matches.map((segment) => segment.eventIndex));
-  updateMinuteLabelFromPointer(info, matches);
+  const indices = getEventIndicesForMinute(info.dayIndex, info.minute);
+  replayState.hoveredEventIndices = new Set(indices);
+  updateMinuteLabelFromPointer(info, indices);
   updateReplayHighlights();
 }
 
@@ -1391,6 +1518,36 @@ function getReplayPointerInfo(event) {
   };
 }
 
+function getEventIndicesForMinute(dayIndex, minuteOfDay) {
+  if (
+    !Array.isArray(replayState.minuteBucketsByDay) ||
+    replayState.minuteBucketsByDay.length === 0 ||
+    dayIndex < 0 ||
+    dayIndex >= replayState.minuteBucketsByDay.length
+  ) {
+    return deriveEventIndicesFromSegments(dayIndex, minuteOfDay);
+  }
+  const safeMinute = Math.max(0, Math.min(1439, Math.floor(minuteOfDay)));
+  const dayBucket = replayState.minuteBucketsByDay[dayIndex];
+  if (dayBucket && Array.isArray(dayBucket[safeMinute])) {
+    return dayBucket[safeMinute];
+  }
+  return deriveEventIndicesFromSegments(dayIndex, minuteOfDay);
+}
+
+function deriveEventIndicesFromSegments(dayIndex, minuteOfDay) {
+  if (!Array.isArray(replayState.segmentsByDay) || dayIndex < 0) {
+    return [];
+  }
+  const bucket = replayState.segmentsByDay[dayIndex] || [];
+  return bucket
+    .filter(
+      (segment) =>
+        minuteOfDay >= segment.startMinute && minuteOfDay < segment.endMinute
+    )
+    .map((segment) => segment.eventIndex);
+}
+
 function handleReplayPointerMove(event) {
   if (!replayState.layout) {
     return;
@@ -1430,15 +1587,15 @@ function handleReplayPointerClick(event) {
     clearReplaySelection();
     return;
   }
-  const matches = getSegmentsForPointer(info);
-  if (matches.length) {
-    selectReplayEvent(matches[0].eventIndex, { scrollIntoView: true });
+  const indices = getEventIndicesForMinute(info.dayIndex, info.minute);
+  if (indices.length) {
+    selectReplayEvent(indices[0], { scrollIntoView: true });
   } else {
     replayState.hoverSource = "svg";
     replayState.lastPointerInfo = info;
     clearReplaySelection();
     replayState.hoveredEventIndices = new Set();
-    updateMinuteLabelFromPointer(info, matches);
+    updateMinuteLabelFromPointer(info, indices);
     updateReplayHighlights();
   }
 }
@@ -1894,25 +2051,72 @@ async function runReplayAnimation(options = {}) {
     throw new Error("Replay animation is unavailable for this schedule.");
   }
   const frameCount = Math.max(1, Math.round((durationMs / 1000) * frameRate));
-  const frameInterval = durationMs / frameCount;
   const snapshot = captureReplaySnapshot();
   replayState.hoverSource = "animation";
   const totalMinutes = timeline.end - timeline.start;
-  for (let frame = 0; frame < frameCount; frame += 1) {
-    const progress = frameCount === 1 ? 1 : frame / (frameCount - 1);
-    const minute = timeline.start + totalMinutes * progress;
-    const indices = setReplayMinuteHighlight(minute, timeline);
-    if (!realTime) {
+  if (realTime) {
+    await runRealTimeReplayAnimation({
+      durationMs,
+      frameCount,
+      frameRate,
+      totalMinutes,
+      timeline,
+    });
+  } else {
+    for (let frame = 0; frame < frameCount; frame += 1) {
+      const progress = frameCount === 1 ? 1 : frame / (frameCount - 1);
+      const minute = timeline.start + totalMinutes * progress;
+      const indices = setReplayMinuteHighlight(minute, timeline);
       await nextAnimationFrame();
-    }
-    if (typeof onFrame === "function") {
-      await onFrame({ frame, frameCount, progress, minute, indices });
-    }
-    if (realTime) {
-      await delay(frameInterval);
+      if (typeof onFrame === "function") {
+        await onFrame({ frame, frameCount, progress, minute, indices });
+      }
     }
   }
   restoreReplaySnapshot(snapshot);
+}
+
+async function runRealTimeReplayAnimation(config) {
+  const { durationMs, frameCount, frameRate, totalMinutes, timeline } = config;
+  const initialInterval = 1000 / Math.max(frameRate, 1);
+  const maxInterval = Math.max(initialInterval, 1000 / 30);
+  let effectiveInterval = initialInterval;
+  const start = performance.now();
+  let lastRenderTime = start - effectiveInterval;
+  let lastFrameIndex = -1;
+  await new Promise((resolve) => {
+    function step(now) {
+      if (now - lastRenderTime < effectiveInterval) {
+        requestAnimationFrame(step);
+        return;
+      }
+      const elapsed = now - start;
+      const progress = Math.min(1, elapsed / durationMs);
+      const targetFrame = Math.min(
+        frameCount - 1,
+        Math.floor(progress * frameCount)
+      );
+      if (targetFrame === lastFrameIndex && progress < 1) {
+        requestAnimationFrame(step);
+        return;
+      }
+      const renderStart = performance.now();
+      const minute = timeline.start + totalMinutes * progress;
+      setReplayMinuteHighlight(minute, timeline);
+      lastRenderTime = now;
+      lastFrameIndex = targetFrame;
+      const renderDuration = performance.now() - renderStart;
+      if (renderDuration > effectiveInterval * 1.2 && effectiveInterval < maxInterval) {
+        effectiveInterval = Math.min(maxInterval, effectiveInterval * 2);
+      }
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      } else {
+        resolve();
+      }
+    }
+    requestAnimationFrame(step);
+  });
 }
 
 function getReplayTimelineRange() {
@@ -1960,6 +2164,14 @@ function restoreReplaySnapshot(snapshot) {
 }
 
 function getReplayEventIndicesAtMinute(minute) {
+  if (!Number.isFinite(minute)) {
+    return [];
+  }
+  if (Array.isArray(replayState.minuteBucketsByDay) && replayState.minuteBucketsByDay.length) {
+    const dayIndex = Math.floor(minute / 1440);
+    const minuteOfDay = minute - dayIndex * 1440;
+    return getEventIndicesForMinute(dayIndex, minuteOfDay);
+  }
   const indices = [];
   replayState.events.forEach((info) => {
     if (!Number.isFinite(info?.absoluteStart) || !Number.isFinite(info?.absoluteEnd)) {
@@ -1982,7 +2194,10 @@ function setReplayMinuteHighlight(minute, timeline) {
     const label = formatAbsoluteMinuteLabel(clamped, replayState.weekStartDate);
     let suffix = " — idle";
     if (indices.length === 1) {
-      const info = replayState.events.find((entry) => entry.eventIndex === indices[0]);
+      let info = replayState.events[indices[0]];
+      if (!info || info.eventIndex !== indices[0]) {
+        info = replayState.events.find((entry) => entry.eventIndex === indices[0]);
+      }
       const name = capitalize(formatReplayEventName(info?.event));
       suffix = ` — ${name}`;
     } else if (indices.length > 1) {
