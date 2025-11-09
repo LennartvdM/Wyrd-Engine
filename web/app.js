@@ -57,6 +57,11 @@ const formError = document.querySelector("#form-error");
 const startDateInput = document.querySelector("#start-date");
 const engineSelect = document.querySelector("#engine-select");
 const mk2OptionsFieldset = document.querySelector("#mk2-options");
+const mk2ArchetypeInput = document.querySelector("#mk2-archetype");
+const mk2RigInput = document.querySelector("#mk2-rig");
+const mk2SeedInput = document.querySelector("#mk2-seed");
+const mk2WeekStartInput = document.querySelector("#mk2-week-start");
+const mk2YearlyBudgetInput = document.querySelector("#mk2-yearly-budget");
 const resultsSection = document.querySelector("#results");
 const resultsTitle = document.querySelector("#results-title");
 const resultsSubtitle = document.querySelector("#results-subtitle");
@@ -3034,9 +3039,7 @@ async function generateScheduleForEngine(engineId, config, startDate) {
       totals: result.totals,
       meta: { ...result.meta, engine: normalizedId, engineLabel },
     };
-  }
-
-  if (normalizedId === "mk2") {
+  } else if (normalizedId === "mk2") {
     return generateScheduleWithMk2(config, {
       startDate,
       engineId: normalizedId,
@@ -3084,7 +3087,22 @@ async function generateScheduleWithMk2(config, { startDate, engineId, engineLabe
     configName: typeof config?.name === "string" ? config.name : "",
   });
 
-  return { events, totals, meta };
+  const person = typeof result.person === "string" ? result.person : meta?.person || "";
+  const weekStart =
+    typeof result.week_start === "string"
+      ? result.week_start
+      : typeof result.weekStart === "string"
+        ? result.weekStart
+        : options.startDateIso || "";
+  const issues = Array.isArray(result.issues)
+    ? result.issues
+    : Array.isArray(result.metadata?.issues)
+      ? result.metadata.issues
+      : [];
+  const metadata =
+    result.metadata && typeof result.metadata === "object" ? result.metadata : { engine: engineId };
+
+  return { events, totals, meta, person, week_start: weekStart, issues, metadata };
 }
 
 function getMk2Options(fallbackStartDate) {
