@@ -253,145 +253,213 @@
         </div>
         <div class="test-console-body">
           <aside class="test-console-sidebar">
-            <section class="repo-browser" id="repo-file-panel">
-              <div class="repo-browser__header">
-                <h3 class="repo-browser__title">Repo files</h3>
-                <p class="repo-browser__subtitle">
-                  Browse curated project scripts and fixtures hosted on GitHub.
-                </p>
-              </div>
-              <div class="form-row repo-browser__row">
-                <label for="repo-file-select">File</label>
-                <div class="repo-browser__controls">
-                  <select id="repo-file-select" name="repo-file-select"></select>
-                  <button type="button" id="repo-file-fetch">Preview</button>
-                </div>
-              </div>
-              <div class="repo-browser__preview" aria-live="polite">
-                <pre id="repo-file-preview">Select a file to preview its contents.</pre>
-              </div>
-              <div class="repo-browser__actions">
-                <button type="button" id="repo-file-load" disabled>Load into editor</button>
-                <p class="repo-browser__status" id="repo-file-status" role="status"></p>
-              </div>
-            </section>
-            <div class="form-row">
-              <span class="form-label">Editor presets</span>
-              <div
-                class="test-console-presets"
-                role="group"
-                aria-label="Python editor presets"
-              >
+            <div class="test-console-tabs" data-tab-group="test-console">
+              <div class="test-console-tablist" role="tablist" aria-label="Test console sections">
                 <button
                   type="button"
-                  class="preset-button"
-                  data-script-preset="mk1_quick"
+                  class="test-console-tab is-active"
+                  id="test-console-tab-resources"
+                  role="tab"
+                  aria-selected="true"
+                  aria-controls="test-console-panel-resources"
+                  data-tab-target="resources"
                 >
-                  Run MK1 quick test
+                  Resources
                 </button>
                 <button
                   type="button"
-                  class="preset-button"
-                  data-script-preset="mk2_quick"
+                  class="test-console-tab"
+                  id="test-console-tab-script"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="test-console-panel-script"
+                  data-tab-target="script"
                 >
-                  Run MK2 quick test
+                  Script
                 </button>
                 <button
                   type="button"
-                  class="preset-button"
-                  data-script-preset="compare_minimal"
+                  class="test-console-tab"
+                  id="test-console-tab-inputs"
+                  role="tab"
+                  aria-selected="false"
+                  aria-controls="test-console-panel-inputs"
+                  data-tab-target="inputs"
                 >
-                  Compare MK1 vs MK2 (minimal)
-                </button>
-                <button
-                  type="button"
-                  class="preset-button"
-                  data-script-preset="scratch"
-                >
-                  Scratch Pad
+                  Input &amp; Params
                 </button>
               </div>
-              <p class="help-text">
-                Load a ready-to-run script or start with an empty scratch pad.
-              </p>
-            </div>
-            <div class="form-row">
-              <label for="test-console-code">Python code</label>
-              <textarea
-                id="test-console-code"
-                name="test-console-code"
-                rows="14"
-                spellcheck="false"
-              ></textarea>
-              <p class="help-text">
-                The selected script runs inside an isolated Pyodide runtime. Access the
-                parsed input via the <code>payload</code> variable.
-              </p>
-            </div>
-            <div class="form-row">
-              <label for="test-console-input">Input JSON</label>
-              <textarea
-                id="test-console-input"
-                name="test-console-input"
-                rows="12"
-                spellcheck="false"
-                placeholder='{"events": []}'
-              ></textarea>
-              <p class="help-text">
-                Provide JSON parameters that will be passed to the selected script.
-              </p>
-            </div>
-            <div class="form-row">
-              <label for="runner-config-json">Runner config JSON</label>
-              <textarea
-                id="runner-config-json"
-                name="runner-config-json"
-                rows="10"
-                spellcheck="false"
-                placeholder="{\n  \"name\": \"Alice\"\n}"
-              ></textarea>
-              <p class="help-text">
-                Parsed and injected into <code>__runner_input__['config']</code> before execution.
-              </p>
-            </div>
-            <div class="form-row">
-              <span class="form-label">Execution parameters</span>
-              <div class="runner-inputs">
-                <label class="runner-inputs__item" for="runner-seed">
-                  <span class="runner-inputs__label">Seed</span>
-                  <input
-                    id="runner-seed"
-                    name="runner-seed"
-                    type="number"
-                    inputmode="numeric"
-                    placeholder="Optional"
-                  />
-                </label>
-                <label class="runner-inputs__item" for="runner-start-date">
-                  <span class="runner-inputs__label">Start date</span>
-                  <input
-                    id="runner-start-date"
-                    name="runner-start-date"
-                    type="text"
-                    inputmode="numeric"
-                    placeholder="YYYY-MM-DD"
-                  />
-                </label>
-                <label class="runner-inputs__item" for="runner-days">
-                  <span class="runner-inputs__label">Days</span>
-                  <input
-                    id="runner-days"
-                    name="runner-days"
-                    type="number"
-                    inputmode="numeric"
-                    placeholder="Optional"
-                    min="1"
-                  />
-                </label>
+              <div class="test-console-tabpanels">
+                <section
+                  id="test-console-panel-resources"
+                  class="test-console-panel is-active"
+                  role="tabpanel"
+                  tabindex="0"
+                  aria-labelledby="test-console-tab-resources"
+                  data-tab-panel="resources"
+                >
+                  <section class="repo-browser" id="repo-file-panel">
+                    <div class="repo-browser__header">
+                      <h3 class="repo-browser__title">Repo files</h3>
+                      <p class="repo-browser__subtitle">
+                        Browse curated project scripts and fixtures hosted on GitHub.
+                      </p>
+                    </div>
+                    <div class="form-row repo-browser__row">
+                      <label for="repo-file-select">File</label>
+                      <div class="repo-browser__controls">
+                        <select id="repo-file-select" name="repo-file-select"></select>
+                        <button type="button" id="repo-file-fetch">Preview</button>
+                      </div>
+                    </div>
+                    <div class="repo-browser__preview" aria-live="polite">
+                      <pre id="repo-file-preview">Select a file to preview its contents.</pre>
+                    </div>
+                    <div class="repo-browser__actions">
+                      <button type="button" id="repo-file-load" disabled>Load into editor</button>
+                      <p class="repo-browser__status" id="repo-file-status" role="status"></p>
+                    </div>
+                  </section>
+                  <div class="form-row">
+                    <span class="form-label">Editor presets</span>
+                    <div
+                      class="test-console-presets"
+                      role="group"
+                      aria-label="Python editor presets"
+                    >
+                      <button
+                        type="button"
+                        class="preset-button"
+                        data-script-preset="mk1_quick"
+                      >
+                        Run MK1 quick test
+                      </button>
+                      <button
+                        type="button"
+                        class="preset-button"
+                        data-script-preset="mk2_quick"
+                      >
+                        Run MK2 quick test
+                      </button>
+                      <button
+                        type="button"
+                        class="preset-button"
+                        data-script-preset="compare_minimal"
+                      >
+                        Compare MK1 vs MK2 (minimal)
+                      </button>
+                      <button
+                        type="button"
+                        class="preset-button"
+                        data-script-preset="scratch"
+                      >
+                        Scratch Pad
+                      </button>
+                    </div>
+                    <p class="help-text">
+                      Load a ready-to-run script or start with an empty scratch pad.
+                    </p>
+                  </div>
+                </section>
+                <section
+                  id="test-console-panel-script"
+                  class="test-console-panel"
+                  role="tabpanel"
+                  tabindex="0"
+                  aria-labelledby="test-console-tab-script"
+                  data-tab-panel="script"
+                  hidden
+                >
+                  <div class="form-row">
+                    <label for="test-console-code">Python code</label>
+                    <textarea
+                      id="test-console-code"
+                      name="test-console-code"
+                      rows="14"
+                      spellcheck="false"
+                    ></textarea>
+                    <p class="help-text">
+                      The selected script runs inside an isolated Pyodide runtime. Access the
+                      parsed input via the <code>payload</code> variable.
+                    </p>
+                  </div>
+                </section>
+                <section
+                  id="test-console-panel-inputs"
+                  class="test-console-panel"
+                  role="tabpanel"
+                  tabindex="0"
+                  aria-labelledby="test-console-tab-inputs"
+                  data-tab-panel="inputs"
+                  hidden
+                >
+                  <div class="form-row">
+                    <label for="test-console-input">Input JSON</label>
+                    <textarea
+                      id="test-console-input"
+                      name="test-console-input"
+                      rows="12"
+                      spellcheck="false"
+                      placeholder='{"events": []}'
+                    ></textarea>
+                    <p class="help-text">
+                      Provide JSON parameters that will be passed to the selected script.
+                    </p>
+                  </div>
+                  <div class="form-row">
+                    <label for="runner-config-json">Runner config JSON</label>
+                    <textarea
+                      id="runner-config-json"
+                      name="runner-config-json"
+                      rows="10"
+                      spellcheck="false"
+                      placeholder="{\n  \"name\": \"Alice\"\n}"
+                    ></textarea>
+                    <p class="help-text">
+                      Parsed and injected into <code>__runner_input__['config']</code> before execution.
+                    </p>
+                  </div>
+                  <div class="form-row">
+                    <span class="form-label">Execution parameters</span>
+                    <div class="runner-inputs">
+                      <label class="runner-inputs__item" for="runner-seed">
+                        <span class="runner-inputs__label">Seed</span>
+                        <input
+                          id="runner-seed"
+                          name="runner-seed"
+                          type="number"
+                          inputmode="numeric"
+                          placeholder="Optional"
+                        />
+                      </label>
+                      <label class="runner-inputs__item" for="runner-start-date">
+                        <span class="runner-inputs__label">Start date</span>
+                        <input
+                          id="runner-start-date"
+                          name="runner-start-date"
+                          type="text"
+                          inputmode="numeric"
+                          placeholder="YYYY-MM-DD"
+                        />
+                      </label>
+                      <label class="runner-inputs__item" for="runner-days">
+                        <span class="runner-inputs__label">Days</span>
+                        <input
+                          id="runner-days"
+                          name="runner-days"
+                          type="number"
+                          inputmode="numeric"
+                          placeholder="Optional"
+                          min="1"
+                        />
+                      </label>
+                    </div>
+                    <p class="help-text">
+                      All values are available to scripts via the <code>__runner_input__</code> global.
+                    </p>
+                  </div>
+                </section>
               </div>
-              <p class="help-text">
-                All values are available to scripts via the <code>__runner_input__</code> global.
-              </p>
             </div>
           </aside>
           <div class="test-console-outputs">
