@@ -1,4 +1,7 @@
-const DEFAULT_REPO_SLUG = process.env.GITHUB_REPOSITORY || parseRepositorySlug(process.env.REPOSITORY_URL) || "openai/Wyrd-Engine";
+const DEFAULT_REPO_SLUG =
+  process.env.GITHUB_REPOSITORY ||
+  parseRepositorySlug(process.env.REPOSITORY_URL) ||
+  "LennartvdM/Wyrd-Engine";
 const DEFAULT_BRANCH = process.env.COMMIT_REF || "main";
 
 export async function handler(event) {

@@ -309,7 +309,8 @@ comparison`,
 };
 
 let refreshTestConsoleEditor = () => {};
-const DEFAULT_REPO_SLUG = document.documentElement?.dataset?.repoSlug || "openai/Wyrd-Engine";
+const DEFAULT_REPO_SLUG =
+  document.documentElement?.dataset?.repoSlug || "LennartvdM/Wyrd-Engine";
 const DEFAULT_REPO_BRANCH = document.documentElement?.dataset?.repoBranch || "main";
 const REPO_FILE_MANIFEST = [
   {
