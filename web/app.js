@@ -56,6 +56,12 @@ const form = document.querySelector("#config-form");
 const formError = document.querySelector("#form-error");
 const startDateInput = document.querySelector("#start-date");
 const engineSelect = document.querySelector("#engine-select");
+const mk2OptionsFieldset = document.querySelector("#mk2-options");
+const mk2ArchetypeInput = document.querySelector("#mk2-archetype");
+const mk2RigInput = document.querySelector("#mk2-rig");
+const mk2SeedInput = document.querySelector("#mk2-seed");
+const mk2WeekStartInput = document.querySelector("#mk2-week-start");
+const mk2YearlyBudgetInput = document.querySelector("#mk2-yearly-budget");
 const resultsSection = document.querySelector("#results");
 const resultsTitle = document.querySelector("#results-title");
 const resultsSubtitle = document.querySelector("#results-subtitle");
@@ -309,6 +315,73 @@ comparison`,
   },
 };
 
+const MK2_DEFAULT_SEED = 42;
+const MK2_PYTHON_RUNNER_SOURCE = `
+from __future__ import annotations
+
+import json
+from datetime import date
+
+from calendar_gen_v2 import _select_profile, generate_complete_week
+from modules.unique_events import UniqueDay
+from yearly_budget import YearlyBudget
+
+payload = payload or {}
+options = payload.get("options") or {}
+
+archetype = (options.get("archetype") or "office").lower()
+seed_value = options.get("seed")
+start_date_value = options.get("start_date")
+yearly_budget_payload = options.get("yearly_budget")
+
+profile, templates = _select_profile(archetype)
+
+if start_date_value:
+    start = date.fromisoformat(start_date_value)
+else:
+    start = date.today()
+
+
+def build_yearly_budget(data):
+    if not data:
+        return None
+    if isinstance(data, str):
+        data = json.loads(data)
+    budget = YearlyBudget(
+        person_id=data["person_id"],
+        year=int(data["year"]),
+        vacation_days=int(data.get("vacation_days", 20)),
+        sick_days_taken=int(data.get("sick_days_taken", 0)),
+    )
+    for entry in data.get("unique_days", []):
+        budget.add_unique_day(
+            UniqueDay(
+                date=date.fromisoformat(entry["date"]),
+                day_type=entry["day_type"],
+                rules=entry.get("rules", {}),
+                priority=int(entry.get("priority", 5)),
+            )
+        )
+    return budget
+
+
+yearly_budget = build_yearly_budget(yearly_budget_payload)
+
+seed = int(seed_value) if seed_value is not None else ${MK2_DEFAULT_SEED}
+
+result = generate_complete_week(
+    profile,
+    start,
+    week_seed=seed,
+    templates=templates,
+    yearly_budget=yearly_budget,
+)
+
+result
+`;
+
+const mk2RuntimeController = createPyRuntimeController();
+
 let refreshTestConsoleEditor = () => {};
 const DEFAULT_REPO_SLUG =
   document.documentElement?.dataset?.repoSlug || "LennartvdM/Wyrd-Engine";
@@ -428,9 +501,22 @@ if (configInput) {
 }
 
 if (engineSelect) {
-  // TODO: Remove MK2 filter once generateScheduleForEngine supports the MK2 branch.
-  const selectableEngineOptions = ENGINE_OPTIONS.filter((option) => option.id !== "mk2");
-  populateEngineSelect(engineSelect, selectableEngineOptions, DEFAULT_ENGINE_ID);
+  populateEngineSelect(engineSelect, ENGINE_OPTIONS, DEFAULT_ENGINE_ID);
+
+  const toggleMk2OptionsVisibility = () => {
+    if (!mk2OptionsFieldset) {
+      return;
+    }
+
+    if (engineSelect.value === "mk2") {
+      mk2OptionsFieldset.classList.remove("hidden");
+    } else {
+      mk2OptionsFieldset.classList.add("hidden");
+    }
+  };
+
+  toggleMk2OptionsVisibility();
+  engineSelect.addEventListener("change", toggleMk2OptionsVisibility);
 }
 
 initViews();
@@ -439,7 +525,7 @@ initTestConsole();
 initTooltips();
 initReplayInfoPopover();
 
-form?.addEventListener("submit", (event) => {
+form?.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!configInput) {
     return;
@@ -466,7 +552,11 @@ form?.addEventListener("submit", (event) => {
 
   try {
     const engineId = engineSelect?.value || DEFAULT_ENGINE_ID;
-    const { events, totals, meta } = generateScheduleForEngine(engineId, config, startDate);
+    const { events, totals, meta } = await generateScheduleForEngine(
+      engineId,
+      config,
+      startDate,
+    );
     currentState = {
       events,
       totals,
@@ -2935,7 +3025,7 @@ function parseIsoDate(value) {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
-function generateScheduleForEngine(engineId, config, startDate) {
+async function generateScheduleForEngine(engineId, config, startDate) {
   const normalizedId = typeof engineId === "string" ? engineId.toLowerCase() : "";
   const engineLabel = ENGINE_LABEL_LOOKUP.get(normalizedId) ||
     (normalizedId ? `Engine ${normalizedId.toUpperCase()}` : "");
@@ -2949,6 +3039,14 @@ function generateScheduleForEngine(engineId, config, startDate) {
     };
   }
 
+  if (normalizedId === "mk2") {
+    return generateScheduleWithMk2(config, {
+      startDate,
+      engineId: normalizedId,
+      engineLabel,
+    });
+  }
+
   if (!normalizedId) {
     throw new Error("Select an engine before generating a schedule.");
   }
@@ -2956,6 +3054,236 @@ function generateScheduleForEngine(engineId, config, startDate) {
   throw new Error(
     `${engineLabel || `Engine ${normalizedId.toUpperCase()}`} is not supported in this generator yet.`
   );
+}
+
+async function generateScheduleWithMk2(config, { startDate, engineId, engineLabel }) {
+  const options = getMk2Options(startDate);
+  const payload = {
+    config: typeof config === "object" && config !== null ? config : {},
+    options: {
+      archetype: options.archetype,
+      rig: options.rig,
+      seed: typeof options.seed === "number" ? options.seed : null,
+      start_date: options.startDateIso || null,
+      yearly_budget: options.yearlyBudget || null,
+    },
+  };
+
+  const response = await mk2RuntimeController.run(MK2_PYTHON_RUNNER_SOURCE, {
+    context: { payload },
+  });
+
+  const result = parseRunnerResultJSON(response.resultJSON);
+  if (!result || typeof result !== "object") {
+    throw new Error("MK2 runtime returned an unexpected result payload.");
+  }
+
+  const events = normalizeMk2Events(result.events);
+  const totals = normalizeMk2Totals(result.metadata?.summary_hours);
+  const meta = normalizeMk2Meta(result, {
+    engineId,
+    engineLabel,
+    options,
+    configName: typeof config?.name === "string" ? config.name : "",
+  });
+
+  return { events, totals, meta };
+}
+
+function getMk2Options(fallbackStartDate) {
+  const archetypeValue = mk2ArchetypeInput?.value || "office";
+  const archetype = typeof archetypeValue === "string" ? archetypeValue.toLowerCase() : "office";
+
+  const rigValue = mk2RigInput?.value || "calendar";
+  const normalizedRig = typeof rigValue === "string" ? rigValue.toLowerCase() : "calendar";
+  const rig = normalizedRig === "workforce" ? "workforce" : "calendar";
+
+  const seedRaw = mk2SeedInput?.value?.trim();
+  let seed;
+  if (seedRaw) {
+    const parsedSeed = Number.parseInt(seedRaw, 10);
+    if (!Number.isFinite(parsedSeed)) {
+      throw new Error("MK2 seed must be a valid number.");
+    }
+    seed = parsedSeed;
+  }
+
+  const mk2StartRaw = mk2WeekStartInput?.value?.trim();
+  let startDateIso;
+  if (mk2StartRaw) {
+    try {
+      const parsed = parseDateInput(mk2StartRaw);
+      startDateIso = toIsoDate(parsed);
+    } catch (error) {
+      throw new Error("MK2 week start must be a valid date.");
+    }
+  } else if (fallbackStartDate instanceof Date && !Number.isNaN(fallbackStartDate.valueOf())) {
+    startDateIso = toIsoDate(fallbackStartDate);
+  }
+
+  const budgetRaw = mk2YearlyBudgetInput?.value?.trim();
+  let yearlyBudget;
+  if (budgetRaw) {
+    try {
+      yearlyBudget = JSON.parse(budgetRaw);
+    } catch (error) {
+      throw new Error("Yearly budget must be valid JSON.");
+    }
+  }
+
+  return {
+    archetype,
+    rig,
+    seed,
+    startDateIso,
+    yearlyBudget,
+  };
+}
+
+function parseRunnerResultJSON(resultJSON) {
+  if (typeof resultJSON !== "string") {
+    throw new Error("MK2 runtime did not return JSON output.");
+  }
+  const trimmed = resultJSON.trim();
+  if (!trimmed) {
+    throw new Error("MK2 runtime returned an empty result.");
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch (error) {
+    const reason = error?.message || error;
+    throw new Error(`Failed to parse MK2 result: ${reason}`);
+  }
+}
+
+function normalizeMk2Events(rawEvents) {
+  if (!Array.isArray(rawEvents)) {
+    throw new Error("MK2 runtime returned an invalid events list.");
+  }
+
+  const events = rawEvents
+    .map((event) => {
+      if (!event || typeof event !== "object") {
+        return null;
+      }
+
+      const dateValue = typeof event.date === "string" ? event.date : "";
+      const dayValue = typeof event.day === "string" ? event.day : "";
+      const startValue = typeof event.start === "string" ? event.start : "00:00";
+      const endValue = typeof event.end === "string" ? event.end : startValue;
+      const activityValue = typeof event.activity === "string" ? event.activity : "";
+
+      let duration = Number(
+        event.duration_minutes ?? event.duration ?? event.minutes ?? event.length_minutes,
+      );
+      if (!Number.isFinite(duration) || duration <= 0) {
+        const computed = computeDurationFromTimes(startValue, endValue);
+        if (Number.isFinite(computed) && computed > 0) {
+          duration = computed;
+        } else {
+          duration = 0;
+        }
+      }
+
+      const normalized = {
+        date: dateValue,
+        day: dayValue,
+        start: startValue,
+        end: endValue,
+        activity: activityValue,
+        duration_minutes: duration,
+      };
+
+      const minuteRange = event.minute_range ?? event.minuteRange;
+      if (minuteRange !== undefined) {
+        normalized.minute_range = minuteRange;
+      }
+
+      return normalized;
+    })
+    .filter(Boolean);
+
+  events.sort((a, b) => {
+    if (a.date === b.date) {
+      return a.start.localeCompare(b.start);
+    }
+    return a.date.localeCompare(b.date);
+  });
+
+  return events;
+}
+
+function normalizeMk2Totals(summary) {
+  if (!summary || typeof summary !== "object") {
+    return {};
+  }
+
+  const totals = {};
+  Object.entries(summary).forEach(([activity, value]) => {
+    const hours = Number(value);
+    if (Number.isFinite(hours)) {
+      totals[activity] = hours;
+    }
+  });
+  return totals;
+}
+
+function normalizeMk2Meta(result, { engineId, engineLabel, options, configName }) {
+  const issues = Array.isArray(result?.issues) ? result.issues : [];
+  const metadata = result?.metadata && typeof result.metadata === "object" ? result.metadata : {};
+  const rawWeekStart = typeof result?.week_start === "string" ? result.week_start : null;
+  const weekStartIso = rawWeekStart || options.startDateIso || undefined;
+
+  let weekEndIso;
+  if (weekStartIso) {
+    try {
+      const start = parseIsoDate(weekStartIso);
+      weekEndIso = toIsoDate(addDays(start, 6));
+    } catch (error) {
+      weekEndIso = undefined;
+    }
+  }
+
+  const rawIssueCount = Number(metadata?.issue_count);
+  const issueCount = Number.isFinite(rawIssueCount) ? rawIssueCount : issues.length;
+  const resolvedSeed = typeof options.seed === "number" ? options.seed : MK2_DEFAULT_SEED;
+  const name = typeof result?.person === "string" && result.person ? result.person : configName || "";
+
+  const meta = {
+    engine: engineId,
+    engineLabel,
+    name,
+    weekStart: weekStartIso,
+    weekEnd: weekEndIso,
+    issueCount,
+    issues,
+    rig: options.rig,
+    archetype: options.archetype,
+    seed: resolvedSeed,
+  };
+
+  if (options.yearlyBudget) {
+    meta.yearlyBudgetProvided = true;
+  }
+
+  return meta;
+}
+
+function computeDurationFromTimes(start, end) {
+  if (typeof start !== "string" || typeof end !== "string") {
+    return NaN;
+  }
+  try {
+    const startMinutes = parseTimeToMinutes(start);
+    const endMinutes = parseTimeToMinutes(end);
+    let duration = endMinutes - startMinutes;
+    if (duration <= 0) {
+      duration += 24 * 60;
+    }
+    return duration;
+  } catch (error) {
+    return NaN;
+  }
 }
 
 function generateScheduleWithMk1(config, startDate) {
