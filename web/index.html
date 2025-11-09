@@ -156,7 +156,43 @@
         >
           <div class="replay-inspector__visual">
             <div class="replay-inspector__header">
-              <h3>Minute picker</h3>
+              <div class="replay-heading">
+                <h3>Minute picker</h3>
+                <button
+                  type="button"
+                  class="replay-info-button"
+                  id="replay-info-button"
+                  aria-expanded="false"
+                  aria-controls="replay-info-popover"
+                  aria-label="About the MK2 engine"
+                >
+                  ?
+                </button>
+                <div
+                  class="replay-info-popover hidden"
+                  id="replay-info-popover"
+                  role="dialog"
+                  aria-label="MK2 engine narrative"
+                  tabindex="-1"
+                >
+                  <p>
+                    MK2 simulates behavioural drift across the week by layering fatigue and
+                    morale on top of baseline routines.
+                  </p>
+                  <p>
+                    It samples friction curves to stretch or compress activities without
+                    breaking the 24-hour ledger.
+                  </p>
+                  <p>
+                    Calendar, validation, and unique-event modules plug in as overrides so
+                    regional or policy rules can swap freely.
+                  </p>
+                  <p>
+                    Each frame logs diagnostics so operators can audit why minutes moved and
+                    who absorbed the slack.
+                  </p>
+                </div>
+              </div>
               <p class="replay-minute" id="replay-minute-label">
                 Hover or tap the wheel to inspect minute ranges.
               </p>
@@ -167,6 +203,24 @@
               viewBox="0 0 420 420"
               role="presentation"
             ></svg>
+            <div class="replay-legend" aria-label="Replay legend">
+              <div class="replay-legend__item">
+                <span class="replay-legend__term">Friction</span>
+                <span class="replay-legend__definition">dents from fatigue/inefficiency</span>
+              </div>
+              <div class="replay-legend__item">
+                <span class="replay-legend__term">Day-type</span>
+                <span class="replay-legend__definition">weekend/holiday masks</span>
+              </div>
+              <div class="replay-legend__item">
+                <span class="replay-legend__term">Unique events</span>
+                <span class="replay-legend__definition">vacations/sick overrides</span>
+              </div>
+              <div class="replay-legend__item">
+                <span class="replay-legend__term">Compression</span>
+                <span class="replay-legend__definition">overflow resolution</span>
+              </div>
+            </div>
           </div>
           <div class="replay-inspector__data">
             <div class="replay-inspector__header">
