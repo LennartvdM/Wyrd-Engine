@@ -53,7 +53,8 @@ const LOCKED_ACTIVITIES = new Set(["sleep", "work", "commute_in", "commute_out"]
 
 const configInput = document.querySelector("#config-input");
 const form = document.querySelector("#config-form");
-const formError = document.querySelector("#form-error");
+const formStatus = document.querySelector("#form-status");
+const generateButton = document.querySelector("#generate-button");
 const startDateInput = document.querySelector("#start-date");
 const engineSelect = document.querySelector("#engine-select");
 const mk2OptionsFieldset = document.querySelector("#mk2-options");
@@ -545,27 +546,19 @@ form?.addEventListener("submit", async (event) => {
     return;
   }
 
-  formError.textContent = "";
+  const submitButton = getSubmitButton(event) || generateButton;
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.setAttribute("aria-busy", "true");
+  }
+
+  setFormStatusMessage({});
   disableDownload();
   resetDiagnosticsPanel();
 
-  let config;
   try {
-    config = JSON.parse(configInput.value);
-  } catch (error) {
-    formError.textContent = "Configuration is not valid JSON.";
-    return;
-  }
-
-  let startDate;
-  try {
-    startDate = parseDateInput(startDateInput?.value);
-  } catch (error) {
-    formError.textContent = error.message || "Invalid start date.";
-    return;
-  }
-
-  try {
+    const config = parseConfigInputValue(configInput.value);
+    const startDate = parseStartDateValue(startDateInput?.value);
     const engineId = engineSelect?.value || DEFAULT_ENGINE_ID;
     const { events, totals, meta, issues, metadata } = await generateScheduleForEngine(
       engineId,
@@ -587,11 +580,131 @@ form?.addEventListener("submit", async (event) => {
     renderDiagnostics({ issues, metadata, meta });
     enableDownload(events, config.name);
     resultsSection?.classList.remove("hidden");
+    setFormStatusMessage({ message: "Schedule generated.", tone: "success" });
   } catch (error) {
     console.error(error);
-    formError.textContent = error.message || "Failed to generate schedule.";
+    const message = getFriendlyErrorMessage(error);
+    setFormStatusMessage({ message, tone: "error" });
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.removeAttribute("aria-busy");
+    }
   }
 });
+
+function getSubmitButton(event) {
+  const submitter = event?.submitter;
+  if (submitter) {
+    const isButtonInstance =
+      typeof HTMLButtonElement !== "undefined" && submitter instanceof HTMLButtonElement;
+    if (isButtonInstance || submitter.tagName === "BUTTON") {
+      return submitter;
+    }
+  }
+
+  if (typeof HTMLButtonElement !== "undefined" && generateButton instanceof HTMLButtonElement) {
+    return generateButton;
+  }
+
+  const fallback = form?.querySelector('button[type="submit"]');
+  if (!fallback) {
+    return null;
+  }
+
+  if (typeof HTMLButtonElement === "undefined" || fallback instanceof HTMLButtonElement) {
+    return fallback;
+  }
+
+  if (fallback.tagName === "BUTTON") {
+    return fallback;
+  }
+
+  return null;
+}
+
+function setFormStatusMessage({ message = "", tone = "neutral" } = {}) {
+  if (!formStatus) {
+    return;
+  }
+
+  const trimmedMessage = typeof message === "string" ? message.trim() : "";
+  const isError = trimmedMessage && tone === "error";
+  const isSuccess = trimmedMessage && tone === "success";
+
+  formStatus.textContent = trimmedMessage;
+  formStatus.classList.remove("form-status--error", "form-status--success");
+  formStatus.setAttribute("role", isError ? "alert" : "status");
+  formStatus.setAttribute("aria-live", isError ? "assertive" : "polite");
+
+  if (isError) {
+    formStatus.classList.add("form-status--error");
+  } else if (isSuccess) {
+    formStatus.classList.add("form-status--success");
+  }
+}
+
+function parseConfigInputValue(rawValue) {
+  const value = typeof rawValue === "string" ? rawValue.trim() : "";
+  if (!value) {
+    throw new Error("Provide configuration JSON before generating a schedule.");
+  }
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    throw new Error("Configuration must be valid JSON.");
+  }
+}
+
+function parseStartDateValue(rawValue) {
+  try {
+    return parseDateInput(rawValue);
+  } catch (error) {
+    throw new Error("Start date must be formatted as YYYY-MM-DD.");
+  }
+}
+
+function getFriendlyErrorMessage(error) {
+  if (!error) {
+    return "Failed to generate schedule.";
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  const candidates = [];
+
+  if (typeof error.message === "string") {
+    candidates.push(error.message);
+  }
+
+  if (error.details && typeof error.details === "object") {
+    const detailMessage = typeof error.details.error === "string" ? error.details.error : "";
+    const detailStderr = typeof error.details.stderr === "string" ? error.details.stderr : "";
+    candidates.push(detailMessage, detailStderr);
+  }
+
+  if (typeof error.stderr === "string") {
+    candidates.push(error.stderr);
+  }
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") {
+      continue;
+    }
+    const trimmed = candidate.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const firstLine = trimmed.split(/\r?\n/)[0].trim();
+    if (firstLine) {
+      return firstLine;
+    }
+  }
+
+  return "Failed to generate schedule.";
+}
 
 function initCalendar() {
   if (!calendarContainer) {
