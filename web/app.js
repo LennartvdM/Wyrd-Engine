@@ -102,6 +102,9 @@ const repoFileFetchButton = document.querySelector("#repo-file-fetch");
 const repoFileLoadButton = document.querySelector("#repo-file-load");
 const repoFilePreview = document.querySelector("#repo-file-preview");
 const repoFileStatus = document.querySelector("#repo-file-status");
+const tabGroups = document.querySelectorAll("[data-tab-group]");
+
+initializeTabGroups(tabGroups);
 
 const replayExportButtons = [
   exportFramePngButton,
@@ -442,6 +445,63 @@ function initCalendar() {
 
   calendar.render();
   calendarWarning?.classList.add("hidden");
+}
+
+function initializeTabGroups(groups) {
+  groups.forEach((group) => {
+    const tabs = Array.from(group.querySelectorAll('[role="tab"]'));
+    const panels = Array.from(group.querySelectorAll('[role="tabpanel"]'));
+
+    if (!tabs.length || !panels.length) {
+      return;
+    }
+
+    const activateTab = (tab) => {
+      tabs.forEach((button) => {
+        const isActive = button === tab;
+        button.classList.toggle("is-active", isActive);
+        button.setAttribute("aria-selected", isActive ? "true" : "false");
+        button.tabIndex = isActive ? 0 : -1;
+      });
+
+      panels.forEach((panel) => {
+        const isActive = panel.dataset.tabPanel === tab.dataset.tabTarget;
+        panel.classList.toggle("is-active", isActive);
+        panel.hidden = !isActive;
+      });
+    };
+
+    tabs.forEach((tab) => {
+      tab.tabIndex = tab.getAttribute("aria-selected") === "true" ? 0 : -1;
+
+      tab.addEventListener("click", () => {
+        activateTab(tab);
+      });
+
+      tab.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+          return;
+        }
+
+        event.preventDefault();
+
+        const currentIndex = tabs.indexOf(tab);
+        const direction = event.key === "ArrowRight" ? 1 : -1;
+        const nextIndex = (currentIndex + direction + tabs.length) % tabs.length;
+        const nextTab = tabs[nextIndex];
+
+        activateTab(nextTab);
+        nextTab.focus();
+      });
+    });
+
+    const initiallySelectedTab =
+      tabs.find((tab) => tab.getAttribute("aria-selected") === "true") || tabs[0];
+
+    if (initiallySelectedTab) {
+      activateTab(initiallySelectedTab);
+    }
+  });
 }
 
 function initViews() {
