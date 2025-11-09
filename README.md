@@ -41,6 +41,16 @@ Wyrd Engine provides deterministic and probabilistic generators that create minu
    ```
 3. Check the diagnostics for friction effects, unique days, and validation results.
 
+## MK2 Visualisation (Forensic Replay)
+
+- **Live site:** https://wyrrdmaek.netlify.app/
+
+1. **Generate a run in the Test Console.** Switch to the **Test Console** tab, click **Load Runtime**, and pick **Run MK2 quick test** (or your own script). Update the **Runner config JSON** and execution inputs as needed, then hit **Run**. The Stdout/Stderr/Result panels capture the MK2 engine output.
+2. **Load it in Visualisation.** Return to the **Calendar** tab. Paste the same config you used in the Test Console into **Configuration JSON**, optionally set the start date, and press **Generate schedule**. The calendar, weekly totals, and MK2 replay wheel unlock once the run is recreated in the browser.
+3. **Play the 5s recap.** With a schedule loaded, press **Replay GIF** or **Replay MP4**. The radial visualisation animates a five second MK2 recap while the export renders.
+4. **Inspect JSON ↔ arcs.** Hover or tap arcs in the minute picker to highlight matching entries in the **Event JSON** list (and vice versa). The label above the wheel reports the current minute span, day, and activity.
+5. **Export/share.** Use **Download JSON** for the schedule, **Frame PNG/SVG** for stills, and the replay exports (GIF/MP4) to share the animated forensic view. Status messages confirm when each export is ready.
+
 ## Project Structure
 
 ```
