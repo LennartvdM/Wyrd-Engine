@@ -347,7 +347,7 @@ const REPO_FILE_MANIFEST = [
   },
 ];
 
-const FIXTURE_DIRECTORY_PATH = "../tests/fixtures";
+const FIXTURE_DIRECTORY_PATH = "tests/fixtures";
 const FIXTURE_MANIFEST_NAME = "manifest.json";
 const FIXTURE_SUMMARY_LIMIT = 8;
 const DIFF_VALUE_PREVIEW_LIMIT = 80;
