@@ -82,7 +82,7 @@ a:hover {
   overflow: hidden;
 }
 
-.view-tabs {
+.view-switcher {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -146,6 +146,22 @@ a:hover {
   padding: var(--layout-card-padding);
   box-shadow: var(--shadow-elevated);
   backdrop-filter: blur(18px);
+}
+
+.card-heading {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.card-heading h2 {
+  margin: 0;
+}
+
+.card-heading .view-switcher {
+  margin-left: auto;
+  justify-content: flex-end;
 }
 
 .form-card {
@@ -850,8 +866,14 @@ button.preset-button:not(:disabled):hover {
 .test-console-header {
   display: flex;
   flex-wrap: wrap;
-  gap: 1.5rem;
-  align-items: flex-start;
+  gap: 1rem;
+  align-items: center;
+}
+
+.test-console-header .view-switcher {
+  margin-left: auto;
+  justify-content: flex-end;
+  align-self: center;
 }
 
 .test-console-actions {
@@ -864,25 +886,6 @@ button.preset-button:not(:disabled):hover {
   padding: 0.55rem 1.1rem;
   border-radius: 0.65rem;
   font-size: 0.95rem;
-}
-
-.test-console-heading {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  flex: 1 1 260px;
-  min-width: 0;
-}
-
-.test-console-header h2 {
-  margin: 0 0 0.25rem;
-  font-size: 1.5rem;
-}
-
-.test-console-subtitle {
-  margin: 0;
-  color: #cbd5f5;
-  max-width: 52ch;
 }
 
 .test-console-body {
