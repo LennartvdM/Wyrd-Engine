@@ -55,6 +55,7 @@ const configInput = document.querySelector("#config-input");
 const form = document.querySelector("#config-form");
 const formError = document.querySelector("#form-error");
 const startDateInput = document.querySelector("#start-date");
+const engineSelect = document.querySelector("#engine-select");
 const resultsSection = document.querySelector("#results");
 const resultsTitle = document.querySelector("#results-title");
 const resultsSubtitle = document.querySelector("#results-subtitle");
@@ -333,6 +334,14 @@ const PYTHON_RUNTIME_FILE_PATHS = [
   "modules/unique_events.py",
   "modules/validation.py",
 ];
+
+const ENGINE_FILE_PATTERN = /^engines\/engine_(mk\d+)\.py$/i;
+const ENGINE_OPTIONS = deriveEngineOptions(PYTHON_RUNTIME_FILE_PATHS);
+const ENGINE_LABEL_LOOKUP = new Map(ENGINE_OPTIONS.map((option) => [option.id, option.label]));
+const DEFAULT_ENGINE_ID =
+  ENGINE_OPTIONS.find((option) => option.id === "mk1")?.id ||
+  ENGINE_OPTIONS[0]?.id ||
+  "mk1";
 const REPO_FILE_MANIFEST = [
   {
     id: "engine-mk1",
@@ -372,6 +381,40 @@ const REPO_FILE_MANIFEST = [
   },
 ];
 
+function deriveEngineOptions(paths) {
+  if (!Array.isArray(paths)) {
+    return [];
+  }
+
+  const options = [];
+  const seen = new Set();
+
+  paths.forEach((path) => {
+    const match = ENGINE_FILE_PATTERN.exec(path);
+    if (!match) {
+      return;
+    }
+
+    const id = match[1].toLowerCase();
+    if (seen.has(id)) {
+      return;
+    }
+
+    const versionNumber = Number.parseInt(id.replace("mk", ""), 10);
+    const label = `Engine ${id.toUpperCase()}`;
+
+    options.push({
+      id,
+      label,
+      version: Number.isFinite(versionNumber) ? versionNumber : -Infinity,
+    });
+    seen.add(id);
+  });
+
+  options.sort((a, b) => a.version - b.version);
+  return options;
+}
+
 const FIXTURE_DIRECTORY_PATH = "tests/fixtures";
 const FIXTURE_MANIFEST_NAME = "manifest.json";
 const FIXTURE_SUMMARY_LIMIT = 8;
@@ -382,6 +425,10 @@ let calendar;
 
 if (configInput) {
   configInput.value = JSON.stringify(DEFAULT_CONFIG, null, 2);
+}
+
+if (engineSelect) {
+  populateEngineSelect(engineSelect, ENGINE_OPTIONS, DEFAULT_ENGINE_ID);
 }
 
 initViews();
@@ -416,7 +463,8 @@ form?.addEventListener("submit", (event) => {
   }
 
   try {
-    const { events, totals, meta } = generateSchedule(config, startDate);
+    const engineId = engineSelect?.value || DEFAULT_ENGINE_ID;
+    const { events, totals, meta } = generateScheduleForEngine(engineId, config, startDate);
     currentState = {
       events,
       totals,
@@ -526,6 +574,41 @@ function initializeTabGroups(groups) {
   });
 }
 
+function populateEngineSelect(selectElement, options, defaultValue) {
+  if (!selectElement) {
+    return;
+  }
+
+  selectElement.innerHTML = "";
+
+  if (!Array.isArray(options) || options.length === 0) {
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "No engines available";
+    selectElement.appendChild(placeholder);
+    selectElement.disabled = true;
+    return;
+  }
+
+  selectElement.disabled = false;
+
+  options.forEach((option) => {
+    const element = document.createElement("option");
+    element.value = option.id;
+    element.textContent = option.label;
+    selectElement.appendChild(element);
+  });
+
+  const fallback = options[0]?.id;
+  const targetValue = options.some((option) => option.id === defaultValue)
+    ? defaultValue
+    : fallback;
+
+  if (targetValue) {
+    selectElement.value = targetValue;
+  }
+}
+
 function initViews() {
   if (!viewButtons.length || !views.length) {
     return;
@@ -618,11 +701,15 @@ function updateResultsHeader(meta) {
   if (!resultsSubtitle) {
     return;
   }
-  if (meta?.weekStart && meta?.weekEnd) {
-    resultsSubtitle.textContent = formatWeekRange(meta.weekStart, meta.weekEnd);
-  } else {
-    resultsSubtitle.textContent = "";
+  const subtitleParts = [];
+  const engineLabel = meta?.engineLabel || (meta?.engine ? `Engine ${String(meta.engine).toUpperCase()}` : "");
+  if (engineLabel) {
+    subtitleParts.push(engineLabel);
   }
+  if (meta?.weekStart && meta?.weekEnd) {
+    subtitleParts.push(formatWeekRange(meta.weekStart, meta.weekEnd));
+  }
+  resultsSubtitle.textContent = subtitleParts.join(" · ");
 }
 
 function renderTotals(totals) {
@@ -2846,7 +2933,30 @@ function parseIsoDate(value) {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
-function generateSchedule(config, startDate) {
+function generateScheduleForEngine(engineId, config, startDate) {
+  const normalizedId = typeof engineId === "string" ? engineId.toLowerCase() : "";
+  const engineLabel = ENGINE_LABEL_LOOKUP.get(normalizedId) ||
+    (normalizedId ? `Engine ${normalizedId.toUpperCase()}` : "");
+
+  if (normalizedId === "mk1") {
+    const result = generateScheduleWithMk1(config, startDate);
+    return {
+      events: result.events,
+      totals: result.totals,
+      meta: { ...result.meta, engine: normalizedId, engineLabel },
+    };
+  }
+
+  if (!normalizedId) {
+    throw new Error("Select an engine before generating a schedule.");
+  }
+
+  throw new Error(
+    `${engineLabel || `Engine ${normalizedId.toUpperCase()}`} is not supported in this generator yet.`
+  );
+}
+
+function generateScheduleWithMk1(config, startDate) {
   validateConfig(config);
   const reference = startDate || new Date();
   const weekStart = getWeekStart(reference);
