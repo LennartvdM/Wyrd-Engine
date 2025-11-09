@@ -18,36 +18,42 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="page-header">
-      <h1>Synthetic Calendar Generator</h1>
-      <p>
-        Generate weekly schedules from configuration JSON and explore the results in
-        a familiar calendar interface powered by FullCalendar.
-      </p>
+    <header class="command-bar">
+      <nav class="page-nav" aria-label="Primary view navigation">
+        <button
+          type="button"
+          class="page-nav__link is-active"
+          data-view-target="calendar"
+          aria-controls="calendar-view"
+          aria-label="Show calendar view"
+          data-tooltip="Show the generated calendar"
+        >
+          Calendar
+        </button>
+        <button
+          type="button"
+          class="page-nav__link"
+          data-view-target="test-console"
+          aria-controls="test-console-view"
+          aria-label="Show test console"
+          data-tooltip="Switch to the test console"
+        >
+          Test Console
+        </button>
+      </nav>
+      <div
+        class="test-console-status command-bar__status"
+        role="status"
+        aria-live="polite"
+      >
+        <span
+          class="status-indicator is-idle"
+          id="test-console-status-indicator"
+          aria-hidden="true"
+        ></span>
+        <span id="test-console-status-text">Runtime not loaded yet.</span>
+      </div>
     </header>
-
-    <nav class="page-nav" aria-label="Primary view navigation">
-      <button
-        type="button"
-        class="page-nav__link is-active"
-        data-view-target="calendar"
-        aria-controls="calendar-view"
-        aria-label="Show calendar view"
-        data-tooltip="Show the generated calendar"
-      >
-        Calendar
-      </button>
-      <button
-        type="button"
-        class="page-nav__link"
-        data-view-target="test-console"
-        aria-controls="test-console-view"
-        aria-label="Show test console"
-        data-tooltip="Switch to the test console"
-      >
-        Test Console
-      </button>
-    </nav>
 
     <main class="page-layout view" data-view="calendar" id="calendar-view">
       <section class="card form-card">
@@ -64,7 +70,7 @@
               id="config-input"
               name="config-input"
               spellcheck="false"
-              rows="20"
+              rows="16"
             ></textarea>
             <p class="help-text">
               Provide the same JSON structure used by <code>calendar_gen.py</code>.
@@ -455,23 +461,8 @@
             </div>
           </div>
         </div>
-        <div class="test-console-status" role="status" aria-live="polite">
-          <span
-            class="status-indicator is-idle"
-            id="test-console-status-indicator"
-            aria-hidden="true"
-          ></span>
-          <span id="test-console-status-text">Runtime not loaded yet.</span>
-        </div>
       </section>
     </main>
-
-    <footer class="page-footer">
-      <p>
-        Built for the Synthetic Calendar Generator MVP. View the
-        <a href="../calendar_gen.py">Python implementation</a> for CLI usage.
-      </p>
-    </footer>
 
     <template id="event-row-template">
       <div class="event-row">
