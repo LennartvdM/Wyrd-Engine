@@ -172,6 +172,32 @@
           </div>
         </div>
         <p class="export-status" id="export-status" role="status" aria-live="polite"></p>
+        <section class="diagnostics-panel hidden" id="diagnostics-panel">
+          <details class="diagnostics-details" id="diagnostics-details">
+            <summary class="diagnostics-summary" id="diagnostics-summary">
+              <span class="diagnostics-summary__label">Diagnostics</span>
+              <span class="diagnostics-summary__badge hidden" id="diagnostics-issue-count"></span>
+            </summary>
+            <div class="diagnostics-content">
+              <div class="diagnostics-section hidden" id="diagnostics-issues-section">
+                <h3>Issues</h3>
+                <ul class="diagnostics-issues" id="diagnostics-issues" role="list"></ul>
+              </div>
+              <div class="diagnostics-section hidden" id="diagnostics-metadata-section">
+                <h3>Metadata</h3>
+                <dl class="diagnostics-stats" id="diagnostics-stats"></dl>
+                <div class="diagnostics-subsection hidden" id="diagnostics-day-types-section">
+                  <h4>Day types</h4>
+                  <ul class="diagnostics-day-types" id="diagnostics-day-types" role="list"></ul>
+                </div>
+                <div class="diagnostics-subsection hidden" id="diagnostics-compression-section">
+                  <h4>Compression logs</h4>
+                  <div class="diagnostics-compression" id="diagnostics-compression"></div>
+                </div>
+              </div>
+            </div>
+          </details>
+        </section>
         <div class="results-body">
           <aside class="summary">
             <h3>Weekly totals</h3>
