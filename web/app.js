@@ -65,6 +65,11 @@ const replaySvg = document.querySelector("#replay-radial");
 const replayEventList = document.querySelector("#replay-event-list");
 const replayMinuteLabel = document.querySelector("#replay-minute-label");
 const downloadButton = document.querySelector("#download-json");
+const exportFramePngButton = document.querySelector("#export-frame-png");
+const exportFrameSvgButton = document.querySelector("#export-frame-svg");
+const exportReplayGifButton = document.querySelector("#export-replay-gif");
+const exportReplayMp4Button = document.querySelector("#export-replay-mp4");
+const exportStatus = document.querySelector("#export-status");
 const calendarContainer = document.querySelector("#calendar");
 const calendarWarning = document.querySelector("#calendar-warning");
 const viewButtons = document.querySelectorAll("[data-view-target]");
@@ -96,10 +101,24 @@ const repoFileLoadButton = document.querySelector("#repo-file-load");
 const repoFilePreview = document.querySelector("#repo-file-preview");
 const repoFileStatus = document.querySelector("#repo-file-status");
 
+const replayExportButtons = [
+  exportFramePngButton,
+  exportFrameSvgButton,
+  exportReplayGifButton,
+  exportReplayMp4Button,
+];
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 const REPLAY_DEFAULT_LABEL = "Hover or tap the wheel to inspect minute ranges.";
+const REPLAY_EXPORT_DURATION_MS = 5_000;
+const REPLAY_EXPORT_FRAME_RATE = 30;
+const REPLAY_EXPORT_GIF_FRAME_RATE = 12;
 
 let replayState = createEmptyReplayState();
+let gifshotLoader = null;
+let tooltipInitialized = false;
+
+setReplayExportAvailability(false);
 
 if (replaySvg) {
   replaySvg.addEventListener("pointermove", handleReplayPointerMove);
@@ -340,6 +359,7 @@ if (configInput) {
 initViews();
 initCalendar();
 initTestConsole();
+initTooltips();
 
 form?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -368,7 +388,12 @@ form?.addEventListener("submit", (event) => {
 
   try {
     const { events, totals, meta } = generateSchedule(config, startDate);
-    currentState = { events, totals, meta };
+    currentState = {
+      events,
+      totals,
+      meta,
+      configName: typeof config?.name === "string" ? config.name : "",
+    };
     updateResultsHeader(meta);
     renderTotals(totals);
     renderCalendar(events, meta);
@@ -446,8 +471,12 @@ function showView(target) {
   viewButtons.forEach((button) => {
     if (button.dataset.viewTarget === target) {
       button.classList.add("is-active");
+      button.setAttribute("aria-pressed", "true");
+      button.setAttribute("aria-current", "page");
     } else {
       button.classList.remove("is-active");
+      button.setAttribute("aria-pressed", "false");
+      button.removeAttribute("aria-current");
     }
   });
 
@@ -569,6 +598,7 @@ function renderReplayInspector(events, meta) {
     replayEventList.innerHTML = "";
     replayInspector.classList.add("hidden");
     replayMinuteLabel.textContent = REPLAY_DEFAULT_LABEL;
+    setReplayExportAvailability(false);
     return;
   }
 
@@ -585,6 +615,8 @@ function renderReplayInspector(events, meta) {
 
   replayInspector.classList.remove("hidden");
   replayMinuteLabel.textContent = REPLAY_DEFAULT_LABEL;
+  setReplayExportAvailability(true);
+  updateExportStatus("Select an export option to share your replay.");
 
   buildReplaySvg(prepared);
   buildReplayEventList(prepared);
@@ -1470,7 +1502,7 @@ function enableDownload(events, name) {
   }
   const payload = JSON.stringify(events, null, 2);
   downloadButton.dataset.payload = payload;
-  downloadButton.dataset.filename = `${slugify(name || "schedule")}-schedule.json`;
+  downloadButton.dataset.filename = `${getExportBaseName(name || "schedule")}-schedule.json`;
   downloadButton.disabled = false;
 }
 
@@ -1487,6 +1519,22 @@ downloadButton?.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
+exportFramePngButton?.addEventListener("click", () => {
+  runExportTask(exportReplayFrameAsPng, { pendingMessage: "Rendering PNG frame…" });
+});
+
+exportFrameSvgButton?.addEventListener("click", () => {
+  runExportTask(exportReplayFrameAsSvg, { pendingMessage: "Preparing SVG frame…" });
+});
+
+exportReplayGifButton?.addEventListener("click", () => {
+  runExportTask(exportReplayGif, { pendingMessage: "Building 5 second GIF…" });
+});
+
+exportReplayMp4Button?.addEventListener("click", () => {
+  runExportTask(exportReplayMp4, { pendingMessage: "Recording 5 second replay…" });
+});
+
 function disableDownload() {
   if (!downloadButton) {
     return;
@@ -1494,6 +1542,548 @@ function disableDownload() {
   downloadButton.disabled = true;
   delete downloadButton.dataset.payload;
   delete downloadButton.dataset.filename;
+}
+
+async function runExportTask(task, options = {}) {
+  if (typeof task !== "function") {
+    return;
+  }
+  const { pendingMessage = "" } = options;
+  if (pendingMessage) {
+    updateExportStatus(pendingMessage);
+  }
+  try {
+    setExportWorking(true);
+    const result = await task();
+    if (result && typeof result === "object") {
+      if (result.message) {
+        updateExportStatus(result.message, result.tone || "success");
+      }
+    } else if (typeof result === "string") {
+      updateExportStatus(result, "success");
+    } else if (pendingMessage) {
+      updateExportStatus("Export complete.", "success");
+    }
+  } catch (error) {
+    console.error(error);
+    updateExportStatus(error.message || "Export failed.", "error");
+  } finally {
+    setExportWorking(false);
+  }
+}
+
+function setExportWorking(isBusy) {
+  for (const button of replayExportButtons) {
+    if (!button) {
+      continue;
+    }
+    if (isBusy) {
+      button.dataset.wasDisabled = button.disabled ? "true" : "false";
+      button.classList.add("is-busy");
+      button.disabled = true;
+    } else {
+      const wasDisabled = button.dataset.wasDisabled === "true";
+      button.classList.remove("is-busy");
+      delete button.dataset.wasDisabled;
+      if (button.dataset.disabledReason) {
+        button.disabled = true;
+      } else if (wasDisabled) {
+        button.disabled = true;
+      } else {
+        button.disabled = false;
+      }
+    }
+  }
+}
+
+function setReplayExportAvailability(isAvailable) {
+  for (const button of replayExportButtons) {
+    if (!button) {
+      continue;
+    }
+    if (isAvailable) {
+      if (!button.classList.contains("is-busy")) {
+        button.disabled = false;
+      }
+      delete button.dataset.disabledReason;
+    } else {
+      button.disabled = true;
+      button.dataset.disabledReason = "no-data";
+      button.classList.remove("is-busy");
+      delete button.dataset.wasDisabled;
+    }
+  }
+  if (!isAvailable) {
+    updateExportStatus("Generate a schedule to unlock export tools.");
+  } else if (exportStatus && !exportStatus.textContent) {
+    updateExportStatus("Select an export option to share your replay.");
+  }
+}
+
+function updateExportStatus(message, tone = "info") {
+  if (!exportStatus) {
+    return;
+  }
+  exportStatus.textContent = message || "";
+  if (!message || tone === "info") {
+    exportStatus.removeAttribute("data-tone");
+  } else {
+    exportStatus.dataset.tone = tone;
+  }
+}
+
+function initTooltips() {
+  if (tooltipInitialized || typeof document === "undefined") {
+    return;
+  }
+  tooltipInitialized = true;
+  const tooltip = document.createElement("div");
+  tooltip.id = "app-tooltip";
+  tooltip.setAttribute("role", "tooltip");
+  tooltip.setAttribute("aria-hidden", "true");
+  document.body.appendChild(tooltip);
+
+  let activeTarget = null;
+
+  function showTooltip(target) {
+    if (!target || !target.hasAttribute("data-tooltip")) {
+      return;
+    }
+    const content = target.getAttribute("data-tooltip");
+    if (!content) {
+      return;
+    }
+    tooltip.textContent = content;
+    tooltip.style.visibility = "hidden";
+    tooltip.classList.add("is-visible");
+    tooltip.setAttribute("aria-hidden", "false");
+    const rect = target.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const offset = 12;
+    let top = rect.top - tooltipRect.height - offset;
+    if (top < 8) {
+      top = rect.bottom + offset;
+    }
+    let left = rect.left + rect.width / 2 - tooltipRect.width / 2;
+    top = Math.min(top, window.innerHeight - tooltipRect.height - 8);
+    top = Math.max(8, top);
+    left = Math.min(Math.max(8, left), Math.max(8, window.innerWidth - tooltipRect.width - 8));
+    tooltip.style.top = `${Math.round(top)}px`;
+    tooltip.style.left = `${Math.round(left)}px`;
+    tooltip.style.visibility = "visible";
+    activeTarget = target;
+    target.setAttribute("aria-describedby", tooltip.id);
+  }
+
+  function hideTooltip(target) {
+    if (target && target !== activeTarget) {
+      return;
+    }
+    activeTarget?.removeAttribute("aria-describedby");
+    activeTarget = null;
+    tooltip.classList.remove("is-visible");
+    tooltip.setAttribute("aria-hidden", "true");
+  }
+
+  document.addEventListener("pointerenter", (event) => {
+    const target = event.target?.closest?.("[data-tooltip]");
+    if (target) {
+      showTooltip(target);
+    }
+  });
+
+  document.addEventListener("pointerleave", (event) => {
+    const target = event.target?.closest?.("[data-tooltip]");
+    if (target) {
+      hideTooltip(target);
+    }
+  });
+
+  document.addEventListener("focusin", (event) => {
+    const target = event.target?.closest?.("[data-tooltip]");
+    if (target) {
+      showTooltip(target);
+    }
+  });
+
+  document.addEventListener("focusout", (event) => {
+    const target = event.target?.closest?.("[data-tooltip]");
+    if (target) {
+      hideTooltip(target);
+    }
+  });
+}
+
+function ensureReplayAvailable() {
+  if (!replaySvg || !Array.isArray(replayState?.events) || replayState.events.length === 0) {
+    throw new Error("Generate a schedule to export the replay.");
+  }
+}
+
+function getExportBaseName(fallback = "schedule") {
+  const candidate =
+    (currentState?.meta && typeof currentState.meta.name === "string" && currentState.meta.name) ||
+    (typeof currentState?.configName === "string" && currentState.configName) ||
+    fallback;
+  const safe = slugify(candidate || fallback);
+  return safe || slugify(fallback) || "schedule";
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadDataUrl(dataUrl, filename) {
+  const link = document.createElement("a");
+  link.href = dataUrl;
+  link.download = filename;
+  link.click();
+}
+
+async function exportReplayFrameAsPng() {
+  ensureReplayAvailable();
+  const canvas = document.createElement("canvas");
+  await drawSvgToCanvas(replaySvg, canvas);
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob((result) => {
+      if (result) {
+        resolve(result);
+      } else {
+        reject(new Error("Unable to create PNG export."));
+      }
+    }, "image/png");
+  });
+  downloadBlob(blob, `${getExportBaseName()}-frame.png`);
+  return "Frame exported as PNG.";
+}
+
+async function exportReplayFrameAsSvg() {
+  ensureReplayAvailable();
+  const clone = replaySvg.cloneNode(true);
+  clone.setAttribute("xmlns", SVG_NS);
+  if (!clone.getAttribute("viewBox") && replaySvg.getAttribute("viewBox")) {
+    clone.setAttribute("viewBox", replaySvg.getAttribute("viewBox"));
+  }
+  const layoutSize = replayState.layout?.viewBoxSize;
+  if (!clone.getAttribute("width") && layoutSize) {
+    clone.setAttribute("width", String(layoutSize));
+  }
+  if (!clone.getAttribute("height") && layoutSize) {
+    clone.setAttribute("height", String(layoutSize));
+  }
+  const serializer = new XMLSerializer();
+  const svgString = serializer.serializeToString(clone);
+  const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+  downloadBlob(blob, `${getExportBaseName()}-frame.svg`);
+  return "Frame exported as SVG.";
+}
+
+async function exportReplayGif() {
+  ensureReplayAvailable();
+  const timeline = getReplayTimelineRange();
+  if (!timeline) {
+    throw new Error("Replay animation is unavailable for this schedule.");
+  }
+  const gifshot = await loadGifshot();
+  const frameRate = REPLAY_EXPORT_GIF_FRAME_RATE;
+  const frameCount = Math.max(1, Math.round((REPLAY_EXPORT_DURATION_MS / 1000) * frameRate));
+  const frameInterval = REPLAY_EXPORT_DURATION_MS / frameCount;
+  const canvas = document.createElement("canvas");
+  const frames = [];
+  await runReplayAnimation({
+    durationMs: REPLAY_EXPORT_DURATION_MS,
+    frameRate,
+    realTime: false,
+    onFrame: async () => {
+      await drawSvgToCanvas(replaySvg, canvas);
+      frames.push(canvas.toDataURL("image/png"));
+    },
+  });
+  if (!frames.length) {
+    throw new Error("Unable to capture replay frames.");
+  }
+  const gifDataUrl = await new Promise((resolve, reject) => {
+    gifshot.createGIF(
+      {
+        images: frames,
+        interval: frameInterval / 1000,
+        gifWidth: canvas.width,
+        gifHeight: canvas.height,
+        numFrames: frames.length,
+        sampleInterval: 5,
+      },
+      (result) => {
+        if (result.error) {
+          reject(new Error(result.error));
+        } else {
+          resolve(result.image);
+        }
+      }
+    );
+  });
+  downloadDataUrl(gifDataUrl, `${getExportBaseName()}-replay.gif`);
+  return "Replay exported as GIF.";
+}
+
+async function exportReplayMp4() {
+  ensureReplayAvailable();
+  if (typeof MediaRecorder === "undefined" || typeof replaySvg.captureStream !== "function") {
+    throw new Error("Video export is not supported in this browser.");
+  }
+  const mimeCandidates = ["video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8"];
+  let mimeType = null;
+  for (const candidate of mimeCandidates) {
+    if (MediaRecorder.isTypeSupported(candidate)) {
+      mimeType = candidate;
+      break;
+    }
+  }
+  if (!mimeType) {
+    throw new Error("Video encoding is not supported in this browser.");
+  }
+  const stream = replaySvg.captureStream(REPLAY_EXPORT_FRAME_RATE);
+  const recorder = new MediaRecorder(stream, {
+    mimeType,
+    videoBitsPerSecond: 6_000_000,
+  });
+  const chunks = [];
+  recorder.addEventListener("dataavailable", (event) => {
+    if (event.data && event.data.size) {
+      chunks.push(event.data);
+    }
+  });
+  const recordingPromise = new Promise((resolve) => {
+    recorder.addEventListener("stop", () => {
+      resolve(new Blob(chunks, { type: mimeType }));
+    });
+  });
+  recorder.start();
+  await runReplayAnimation({
+    durationMs: REPLAY_EXPORT_DURATION_MS,
+    frameRate: REPLAY_EXPORT_FRAME_RATE,
+    realTime: true,
+  });
+  await delay(150);
+  recorder.stop();
+  const blob = await recordingPromise;
+  const extension = mimeType.includes("mp4") ? "mp4" : "webm";
+  downloadBlob(blob, `${getExportBaseName()}-replay.${extension}`);
+  if (extension === "mp4") {
+    return "Replay exported as MP4.";
+  }
+  return {
+    message: "Replay exported as WebM (MP4 unavailable).",
+    tone: "success",
+  };
+}
+
+async function runReplayAnimation(options = {}) {
+  const {
+    durationMs = REPLAY_EXPORT_DURATION_MS,
+    frameRate = REPLAY_EXPORT_FRAME_RATE,
+    realTime = true,
+    onFrame,
+  } = options;
+  const timeline = getReplayTimelineRange();
+  if (!timeline) {
+    throw new Error("Replay animation is unavailable for this schedule.");
+  }
+  const frameCount = Math.max(1, Math.round((durationMs / 1000) * frameRate));
+  const frameInterval = durationMs / frameCount;
+  const snapshot = captureReplaySnapshot();
+  replayState.hoverSource = "animation";
+  const totalMinutes = timeline.end - timeline.start;
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    const progress = frameCount === 1 ? 1 : frame / (frameCount - 1);
+    const minute = timeline.start + totalMinutes * progress;
+    const indices = setReplayMinuteHighlight(minute, timeline);
+    if (!realTime) {
+      await nextAnimationFrame();
+    }
+    if (typeof onFrame === "function") {
+      await onFrame({ frame, frameCount, progress, minute, indices });
+    }
+    if (realTime) {
+      await delay(frameInterval);
+    }
+  }
+  restoreReplaySnapshot(snapshot);
+}
+
+function getReplayTimelineRange() {
+  let start = Infinity;
+  let end = -Infinity;
+  for (const info of replayState.events) {
+    if (Number.isFinite(info?.absoluteStart) && Number.isFinite(info?.absoluteEnd)) {
+      start = Math.min(start, info.absoluteStart);
+      end = Math.max(end, info.absoluteEnd);
+    }
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return null;
+  }
+  if (end <= start) {
+    end = start + 1;
+  }
+  return { start, end };
+}
+
+function captureReplaySnapshot() {
+  return {
+    hoveredEventIndices: Array.from(replayState.hoveredEventIndices || []),
+    selectedEventIndex: replayState.selectedEventIndex,
+    hoverSource: replayState.hoverSource,
+    minuteLabel: replayMinuteLabel ? replayMinuteLabel.textContent : REPLAY_DEFAULT_LABEL,
+    lastPointerInfo: replayState.lastPointerInfo ? { ...replayState.lastPointerInfo } : null,
+  };
+}
+
+function restoreReplaySnapshot(snapshot) {
+  if (!snapshot) {
+    return;
+  }
+  replayState.hoveredEventIndices = new Set(snapshot.hoveredEventIndices || []);
+  replayState.selectedEventIndex = snapshot.selectedEventIndex ?? null;
+  replayState.hoverSource = snapshot.hoverSource ?? null;
+  replayState.lastPointerInfo = snapshot.lastPointerInfo ?? null;
+  updateReplayHighlights();
+  if (typeof snapshot.selectedEventIndex === "number" && snapshot.selectedEventIndex >= 0) {
+    updateMinuteLabelForSelection();
+  } else if (replayMinuteLabel) {
+    replayMinuteLabel.textContent = snapshot.minuteLabel || REPLAY_DEFAULT_LABEL;
+  }
+}
+
+function getReplayEventIndicesAtMinute(minute) {
+  const indices = [];
+  replayState.events.forEach((info) => {
+    if (!Number.isFinite(info?.absoluteStart) || !Number.isFinite(info?.absoluteEnd)) {
+      return;
+    }
+    if (minute >= info.absoluteStart && minute <= info.absoluteEnd) {
+      indices.push(info.eventIndex);
+    }
+  });
+  return indices;
+}
+
+function setReplayMinuteHighlight(minute, timeline) {
+  const clamped = Math.min(Math.max(minute, timeline.start), timeline.end);
+  const indices = getReplayEventIndicesAtMinute(clamped);
+  replayState.hoveredEventIndices = new Set(indices);
+  replayState.selectedEventIndex = null;
+  updateReplayHighlights();
+  if (replayMinuteLabel) {
+    const label = formatAbsoluteMinuteLabel(clamped, replayState.weekStartDate);
+    let suffix = " — idle";
+    if (indices.length === 1) {
+      const info = replayState.events.find((entry) => entry.eventIndex === indices[0]);
+      const name = capitalize(formatReplayEventName(info?.event));
+      suffix = ` — ${name}`;
+    } else if (indices.length > 1) {
+      suffix = ` — ${indices.length} events`;
+    }
+    replayMinuteLabel.textContent = `Replay · ${label}${suffix}`;
+  }
+  return indices;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function nextAnimationFrame() {
+  return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+async function drawSvgToCanvas(svgElement, canvas) {
+  if (!svgElement || !canvas) {
+    throw new Error("Canvas rendering is unavailable.");
+  }
+  const clone = svgElement.cloneNode(true);
+  clone.setAttribute("xmlns", SVG_NS);
+  const viewBox = clone.getAttribute("viewBox") || svgElement.getAttribute("viewBox");
+  let width = replayState.layout?.viewBoxSize || 512;
+  let height = width;
+  if (viewBox) {
+    const parts = viewBox.trim().split(/[ ,]+/).map(Number);
+    if (parts.length >= 4 && Number.isFinite(parts[2]) && Number.isFinite(parts[3])) {
+      width = parts[2];
+      height = parts[3];
+    }
+    clone.setAttribute("viewBox", viewBox);
+  }
+  if (!clone.getAttribute("width")) {
+    clone.setAttribute("width", String(width));
+  }
+  if (!clone.getAttribute("height")) {
+    clone.setAttribute("height", String(height));
+  }
+  canvas.width = Math.max(1, Math.round(width));
+  canvas.height = Math.max(1, Math.round(height));
+  const serializer = new XMLSerializer();
+  const svgString = serializer.serializeToString(clone);
+  const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = url;
+    await image.decode();
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Canvas context is unavailable.");
+    }
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = getCanvasBackgroundColor();
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function getCanvasBackgroundColor() {
+  try {
+    const styles = getComputedStyle(document.documentElement);
+    const value = styles.getPropertyValue("--color-canvas-base");
+    return value && value.trim().length ? value.trim() : "#030b1c";
+  } catch (error) {
+    return "#030b1c";
+  }
+}
+
+async function loadGifshot() {
+  if (window.gifshot) {
+    return window.gifshot;
+  }
+  if (!gifshotLoader) {
+    gifshotLoader = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdn.jsdelivr.net/npm/gifshot@0.4.5/build/gifshot.min.js";
+      script.async = true;
+      script.onload = () => {
+        if (window.gifshot) {
+          resolve(window.gifshot);
+        } else {
+          reject(new Error("Failed to load GIF encoder."));
+        }
+      };
+      script.onerror = () => reject(new Error("Failed to load GIF encoder."));
+      document.head.appendChild(script);
+    });
+  }
+  try {
+    return await gifshotLoader;
+  } catch (error) {
+    gifshotLoader = null;
+    throw error;
+  }
 }
 
 function slugify(value) {
