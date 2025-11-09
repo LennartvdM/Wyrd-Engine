@@ -64,6 +64,8 @@ const replayInspector = document.querySelector("#replay-inspector");
 const replaySvg = document.querySelector("#replay-radial");
 const replayEventList = document.querySelector("#replay-event-list");
 const replayMinuteLabel = document.querySelector("#replay-minute-label");
+const replayInfoButton = document.querySelector("#replay-info-button");
+const replayInfoPopover = document.querySelector("#replay-info-popover");
 const downloadButton = document.querySelector("#download-json");
 const exportFramePngButton = document.querySelector("#export-frame-png");
 const exportFrameSvgButton = document.querySelector("#export-frame-svg");
@@ -117,6 +119,7 @@ const REPLAY_EXPORT_GIF_FRAME_RATE = 12;
 let replayState = createEmptyReplayState();
 let gifshotLoader = null;
 let tooltipInitialized = false;
+let replayTooltipElement = null;
 
 setReplayExportAvailability(false);
 
@@ -360,6 +363,7 @@ initViews();
 initCalendar();
 initTestConsole();
 initTooltips();
+initReplayInfoPopover();
 
 form?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -603,6 +607,7 @@ function renderReplayInspector(events, meta) {
     replayInspector.classList.add("hidden");
     replayMinuteLabel.textContent = REPLAY_DEFAULT_LABEL;
     setReplayExportAvailability(false);
+    hideReplayTooltip();
     return;
   }
 
@@ -622,6 +627,7 @@ function renderReplayInspector(events, meta) {
   replayMinuteLabel.textContent = REPLAY_DEFAULT_LABEL;
   setReplayExportAvailability(true);
   updateExportStatus("Select an export option to share your replay.");
+  hideReplayTooltip();
 
   buildReplaySvg(prepared);
   buildReplayEventList(prepared);
@@ -1461,14 +1467,17 @@ function updateMinuteLabelFromPointer(info, eventIndices) {
   replayMinuteLabel.textContent = `${dayLabel} · ${minuteLabel} (minute ${minuteIndex})${suffix}`;
 }
 
-function applyPointerHighlight(info) {
-  if (!info.withinRing) {
-    return;
+function applyPointerHighlight(info, options = {}) {
+  if (!info || !info.withinRing) {
+    hideReplayTooltip();
+    return [];
   }
   const indices = getEventIndicesForMinute(info.dayIndex, info.minute);
   replayState.hoveredEventIndices = new Set(indices);
   updateMinuteLabelFromPointer(info, indices);
   updateReplayHighlights();
+  updateReplayPointerTooltip(options.pointerEvent, info, indices);
+  return indices;
 }
 
 function getReplayPointerInfo(event) {
@@ -1488,18 +1497,19 @@ function getReplayPointerInfo(event) {
   const dy = y - center;
   const distance = Math.sqrt(dx * dx + dy * dy);
   if (distance === 0) {
-    return { withinRing: false };
+    return { withinRing: false, clientX: event.clientX, clientY: event.clientY };
   }
-  const step = replayState.layout.step;
-  const relativeDistance = distance - replayState.layout.minRadius;
+  const layout = replayState.layout;
+  const step = layout.step;
+  const relativeDistance = distance - layout.minRadius;
   const dayIndex = Math.floor(relativeDistance / step);
-  const withinBounds =
-    relativeDistance >= 0 && dayIndex >= 0 && dayIndex < replayState.layout.dayCount;
-  if (!withinBounds) {
-    return { withinRing: false };
+  if (dayIndex < 0 || dayIndex >= layout.dayCount) {
+    return { withinRing: false, clientX: event.clientX, clientY: event.clientY };
   }
-  const distanceWithinRing = relativeDistance - dayIndex * step;
-  const withinRing = distanceWithinRing <= replayState.layout.ringWidth;
+  const innerRadius =
+    layout.innerRadii?.[dayIndex] ?? layout.minRadius + dayIndex * step;
+  const outerRadius = layout.outerRadii?.[dayIndex] ?? innerRadius + layout.ringWidth;
+  const tolerance = 0.75;
   const sinAngle = (x - center) / distance;
   const cosAngle = (center - y) / distance;
   let angle = Math.atan2(sinAngle, cosAngle);
@@ -1508,6 +1518,10 @@ function getReplayPointerInfo(event) {
   }
   const minuteFloat = (angle / (Math.PI * 2)) * 1440;
   const minute = Math.floor(((minuteFloat % 1440) + 1440) % 1440);
+  const withinRing =
+    distance >= innerRadius - tolerance && distance <= outerRadius + tolerance;
+  const radiusSpan = Math.max(outerRadius - innerRadius, 1);
+  const ringFraction = clamp((distance - innerRadius) / radiusSpan, 0, 1);
   return {
     x,
     y,
@@ -1515,7 +1529,329 @@ function getReplayPointerInfo(event) {
     dayIndex,
     minute,
     withinRing,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    innerRadius,
+    outerRadius,
+    ringFraction,
+    minuteAbsolute: dayIndex * 1440 + minute,
   };
+}
+
+function updateReplayPointerTooltip(pointerEvent, info, indices = []) {
+  if (typeof document === "undefined") {
+    return;
+  }
+  if (!info || !info.withinRing) {
+    hideReplayTooltip();
+    return;
+  }
+  const anchorX = Number.isFinite(pointerEvent?.clientX)
+    ? pointerEvent.clientX
+    : info.clientX;
+  const anchorY = Number.isFinite(pointerEvent?.clientY)
+    ? pointerEvent.clientY
+    : info.clientY;
+  if (!Number.isFinite(anchorX) || !Number.isFinite(anchorY)) {
+    hideReplayTooltip();
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  const title = document.createElement("div");
+  title.className = "replay-tooltip__title";
+  title.textContent = describeReplayActivity(indices);
+  fragment.appendChild(title);
+
+  const list = document.createElement("dl");
+  list.className = "replay-tooltip__list";
+  list.appendChild(
+    createReplayTooltipItem("Minute", buildReplayTooltipMinuteLabel(info))
+  );
+  list.appendChild(
+    createReplayTooltipItem("Radius", buildReplayTooltipRadiusLabel(info))
+  );
+  list.appendChild(
+    createReplayTooltipItem("Friction", describeFrictionForEvents(indices))
+  );
+  list.appendChild(
+    createReplayTooltipItem("Frame", describeFrameForEvents(indices))
+  );
+  fragment.appendChild(list);
+
+  showReplayTooltip(fragment, anchorX, anchorY);
+}
+
+function buildReplayTooltipMinuteLabel(info) {
+  const dayLabel = formatDayName(info.dayIndex, replayState.weekStartDate);
+  const minuteLabel = formatMinutesOfDay(info.minute);
+  const minuteIndex = Number.isFinite(info.minuteAbsolute)
+    ? Math.max(0, Math.round(info.minuteAbsolute))
+    : null;
+  if (Number.isFinite(minuteIndex)) {
+    return `${dayLabel} · ${minuteLabel} · #${minuteIndex}`;
+  }
+  return `${dayLabel} · ${minuteLabel}`;
+}
+
+function buildReplayTooltipRadiusLabel(info) {
+  if (!info) {
+    return "—";
+  }
+  if (!Number.isFinite(info.distance)) {
+    const intensityOnly = Math.round(clamp(info.ringFraction ?? 0, 0, 1) * 100);
+    return `${intensityOnly}% intensity`;
+  }
+  const radius = Math.round(info.distance);
+  const intensity = Math.round(clamp(info.ringFraction ?? 0, 0, 1) * 100);
+  return `r${radius} · ${intensity}% intensity`;
+}
+
+function describeReplayActivity(indices = []) {
+  if (!Array.isArray(indices) || indices.length === 0) {
+    return "Idle";
+  }
+  if (indices.length === 1) {
+    const info = findReplayEventInfo(indices[0]);
+    if (info) {
+      return capitalize(formatReplayEventName(info.event));
+    }
+    return "Activity";
+  }
+  const names = new Set();
+  for (const index of indices) {
+    const info = findReplayEventInfo(index);
+    if (!info) {
+      continue;
+    }
+    const label = capitalize(formatReplayEventName(info.event));
+    if (label) {
+      names.add(label);
+    }
+  }
+  if (names.size === 1) {
+    return Array.from(names)[0];
+  }
+  if (names.size > 1) {
+    return `${names.size} activities`;
+  }
+  return `${indices.length} activities`;
+}
+
+function describeFrictionForEvents(indices = []) {
+  if (!Array.isArray(indices) || indices.length === 0) {
+    return "—";
+  }
+  const values = [];
+  for (const index of indices) {
+    const info = findReplayEventInfo(index);
+    if (!info) {
+      continue;
+    }
+    const metric = extractFrictionMetric(info.event);
+    if (Number.isFinite(metric)) {
+      values.push(metric);
+    }
+  }
+  if (!values.length) {
+    return "—";
+  }
+  if (values.length === 1) {
+    return formatFrictionMetric(values[0]);
+  }
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  if (Math.abs(minValue - maxValue) < 0.005) {
+    return formatFrictionMetric(minValue);
+  }
+  return `${formatFrictionMetric(minValue)}–${formatFrictionMetric(maxValue)}`;
+}
+
+function formatFrictionMetric(value) {
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+  if (Math.abs(value) >= 10) {
+    return value.toFixed(1);
+  }
+  return value.toFixed(2);
+}
+
+function extractFrictionMetric(event) {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  const candidates = [
+    event.friction,
+    event.friction_value,
+    event.frictionValue,
+    event.daily_friction,
+    event.dailyFriction,
+    event.friction_multiplier,
+    event.frictionMultiplier,
+    event.efficiency,
+    event.efficiency_multiplier,
+    event.efficiencyMultiplier,
+    event.waste_multiplier,
+    event.wasteMultiplier,
+    event.metrics?.friction,
+    event.metrics?.efficiency,
+    event.diagnostics?.friction,
+  ];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function describeFrameForEvents(indices = []) {
+  if (!Array.isArray(indices) || indices.length === 0) {
+    return getDefaultFrameName();
+  }
+  const names = new Set();
+  for (const index of indices) {
+    const info = findReplayEventInfo(index);
+    if (!info) {
+      continue;
+    }
+    const name = extractFrameName(info);
+    if (name) {
+      names.add(name);
+    }
+  }
+  if (names.size === 0) {
+    return getDefaultFrameName();
+  }
+  if (names.size === 1) {
+    return Array.from(names)[0];
+  }
+  return `Multiple (${names.size})`;
+}
+
+function extractFrameName(info) {
+  const event = info?.event;
+  if (!event || typeof event !== "object") {
+    return getDefaultFrameName();
+  }
+  const candidates = [
+    event.frame_name,
+    event.frameName,
+    event.frame_label,
+    event.frameLabel,
+    event.frame,
+    event.snapshot_name,
+    event.snapshotName,
+    event.snapshot,
+    event.phase,
+    event.phase_name,
+    event.phaseName,
+    event.stage,
+    event.state,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return String(candidate);
+    }
+  }
+  return getDefaultFrameName();
+}
+
+function getDefaultFrameName() {
+  const candidates = [
+    replayState.meta?.frameName,
+    replayState.meta?.frame_name,
+    replayState.meta?.frame,
+    replayState.meta?.name,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return "Frame";
+}
+
+function findReplayEventInfo(eventIndex) {
+  const index = Number(eventIndex);
+  if (!Number.isFinite(index) || index < 0) {
+    return null;
+  }
+  const direct = Array.isArray(replayState.events) ? replayState.events[index] : null;
+  if (direct && direct.eventIndex === index) {
+    return direct;
+  }
+  if (!Array.isArray(replayState.events)) {
+    return null;
+  }
+  return replayState.events.find((entry) => entry?.eventIndex === index) || null;
+}
+
+function ensureReplayTooltip() {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  if (!replayTooltipElement) {
+    const tooltip = document.createElement("div");
+    tooltip.id = "replay-tooltip";
+    tooltip.setAttribute("role", "tooltip");
+    tooltip.setAttribute("aria-hidden", "true");
+    document.body.appendChild(tooltip);
+    replayTooltipElement = tooltip;
+  }
+  return replayTooltipElement;
+}
+
+function showReplayTooltip(content, anchorX, anchorY) {
+  const tooltip = ensureReplayTooltip();
+  if (!tooltip || typeof window === "undefined") {
+    return;
+  }
+  tooltip.replaceChildren(content);
+  tooltip.style.visibility = "hidden";
+  tooltip.classList.add("is-visible");
+  tooltip.setAttribute("aria-hidden", "false");
+  const rect = tooltip.getBoundingClientRect();
+  let top = anchorY - rect.height - 16;
+  if (top < 8) {
+    top = anchorY + 16;
+  }
+  let left = anchorX + 16;
+  if (left + rect.width + 8 > window.innerWidth) {
+    left = anchorX - rect.width - 16;
+  }
+  if (left < 8) {
+    left = 8;
+  }
+  if (top + rect.height > window.innerHeight - 8) {
+    top = Math.max(8, window.innerHeight - rect.height - 8);
+  }
+  tooltip.style.top = `${Math.round(top)}px`;
+  tooltip.style.left = `${Math.round(left)}px`;
+  tooltip.style.visibility = "visible";
+}
+
+function hideReplayTooltip() {
+  if (!replayTooltipElement) {
+    return;
+  }
+  replayTooltipElement.classList.remove("is-visible");
+  replayTooltipElement.setAttribute("aria-hidden", "true");
+}
+
+function createReplayTooltipItem(term, value) {
+  const wrapper = document.createElement("div");
+  const dt = document.createElement("dt");
+  dt.textContent = term;
+  const dd = document.createElement("dd");
+  dd.textContent = value != null ? String(value) : "—";
+  wrapper.append(dt, dd);
+  return wrapper;
 }
 
 function getEventIndicesForMinute(dayIndex, minuteOfDay) {
@@ -1560,12 +1896,13 @@ function handleReplayPointerMove(event) {
       replayState.lastPointerInfo = null;
       updateReplayHighlights();
       updateMinuteLabelForSelection();
+      hideReplayTooltip();
     }
     return;
   }
   replayState.hoverSource = "svg";
   replayState.lastPointerInfo = info;
-  applyPointerHighlight(info);
+  applyPointerHighlight(info, { pointerEvent: event });
 }
 
 function handleReplayPointerLeave() {
@@ -1575,6 +1912,7 @@ function handleReplayPointerLeave() {
     replayState.lastPointerInfo = null;
     updateReplayHighlights();
     updateMinuteLabelForSelection();
+    hideReplayTooltip();
   }
 }
 
@@ -1585,8 +1923,10 @@ function handleReplayPointerClick(event) {
   const info = getReplayPointerInfo(event);
   if (!info || !info.withinRing) {
     clearReplaySelection();
+    hideReplayTooltip();
     return;
   }
+  replayState.lastPointerInfo = info;
   const indices = getEventIndicesForMinute(info.dayIndex, info.minute);
   if (indices.length) {
     selectReplayEvent(indices[0], { scrollIntoView: true });
@@ -1601,6 +1941,7 @@ function handleReplayPointerClick(event) {
 }
 
 function handleReplayListHover(eventIndex) {
+  hideReplayTooltip();
   replayState.hoverSource = "list";
   replayState.hoveredEventIndices = new Set([eventIndex]);
   const info = replayState.events[eventIndex];
@@ -1623,6 +1964,7 @@ function handleReplayListLeave() {
   replayState.hoveredEventIndices = new Set();
   updateReplayHighlights();
   updateMinuteLabelForSelection();
+  hideReplayTooltip();
 }
 
 function selectReplayEvent(eventIndex, options = {}) {
@@ -1867,6 +2209,69 @@ function initTooltips() {
     const target = event.target?.closest?.("[data-tooltip]");
     if (target) {
       hideTooltip(target);
+    }
+  });
+}
+
+function initReplayInfoPopover() {
+  if (!replayInfoButton || !replayInfoPopover) {
+    return;
+  }
+
+  let isOpen = false;
+
+  function closePopover({ returnFocus = false } = {}) {
+    if (!isOpen) {
+      return;
+    }
+    isOpen = false;
+    replayInfoButton.setAttribute("aria-expanded", "false");
+    replayInfoPopover.classList.add("hidden");
+    if (returnFocus) {
+      replayInfoButton.focus({ preventScroll: true });
+    }
+  }
+
+  function openPopover() {
+    if (isOpen) {
+      return;
+    }
+    isOpen = true;
+    replayInfoButton.setAttribute("aria-expanded", "true");
+    replayInfoPopover.classList.remove("hidden");
+    replayInfoPopover.focus({ preventScroll: true });
+  }
+
+  replayInfoButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (isOpen) {
+      closePopover();
+    } else {
+      openPopover();
+    }
+  });
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!isOpen) {
+      return;
+    }
+    const target = event.target;
+    if (
+      target === replayInfoButton ||
+      replayInfoPopover.contains(target instanceof Node ? target : null)
+    ) {
+      return;
+    }
+    closePopover();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (!isOpen) {
+      return;
+    }
+    if (event.key === "Escape" || event.key === "Esc") {
+      event.preventDefault();
+      closePopover({ returnFocus: true });
     }
   });
 }
