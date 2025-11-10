@@ -44,6 +44,7 @@ Wyrd Engine provides deterministic and probabilistic generators that create minu
 ## MK2 Visualisation (Forensic Replay)
 
 - **Live site:** https://wyrrdmaek.netlify.app/
+- **Browser UI supports MK2 directly.** Run a script in the **Test Console** and switch back to the **Calendar** tab to regenerate the MK2 schedule with the engine dropdown.
 
 1. **Generate a run in the Test Console.** Switch to the **Test Console** tab, click **Load Runtime**, and pick **Run MK2 quick test** (or your own script). Update the **Runner config JSON** and execution inputs as needed, then hit **Run**. The Stdout/Stderr/Result panels capture the MK2 engine output.
 2. **Load it in Visualisation.** Return to the **Calendar** tab. Paste the same config you used in the Test Console into **Configuration JSON**, optionally set the start date, and press **Generate schedule**. The calendar, weekly totals, and MK2 replay wheel unlock once the run is recreated in the browser.
