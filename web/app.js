@@ -549,9 +549,7 @@ if (configInput) {
 }
 
 if (engineSelect) {
-  // TODO: Remove MK2 filter once generateScheduleForEngine supports the MK2 branch.
-  const selectableEngineOptions = ENGINE_OPTIONS.filter((option) => option.id !== "mk2");
-  populateEngineSelect(engineSelect, selectableEngineOptions, DEFAULT_ENGINE_ID);
+  populateEngineSelect(engineSelect, ENGINE_OPTIONS, DEFAULT_ENGINE_ID);
 
   const toggleMk2OptionsVisibility = () => {
     if (!mk2OptionsFieldset) {
