@@ -664,10 +664,12 @@ function setFormStatusMessage({ message = "", tone = "neutral" } = {}) {
   }
 
   const trimmedMessage = typeof message === "string" ? message.trim() : "";
+  const firstLine = trimmedMessage ? trimmedMessage.split(/\r?\n/)[0].trim() : "";
+  const displayMessage = firstLine;
   const isError = trimmedMessage && tone === "error";
   const isSuccess = trimmedMessage && tone === "success";
 
-  formStatus.textContent = trimmedMessage;
+  formStatus.textContent = displayMessage;
   formStatus.classList.remove("form-status--error", "form-status--success");
   formStatus.setAttribute("role", isError ? "alert" : "status");
   formStatus.setAttribute("aria-live", isError ? "assertive" : "polite");
@@ -3704,9 +3706,13 @@ function getMk2Options(fallbackStartDate) {
   const seedRaw = mk2SeedInput?.value?.trim();
   let seed;
   if (seedRaw) {
-    const parsedSeed = Number.parseInt(seedRaw, 10);
-    if (!Number.isFinite(parsedSeed)) {
-      throw new Error("MK2 seed must be a valid number.");
+    const seedPattern = /^[-+]?\d+$/;
+    if (!seedPattern.test(seedRaw)) {
+      throw new Error("MK2 seed must be a whole number.");
+    }
+    const parsedSeed = Number(seedRaw);
+    if (!Number.isSafeInteger(parsedSeed)) {
+      throw new Error("MK2 seed must be a whole number.");
     }
     seed = parsedSeed;
   }
