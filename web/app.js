@@ -418,6 +418,10 @@ const PYTHON_RUNTIME_FILE_PATHS = [
   "modules/friction_model.py",
   "modules/unique_events.py",
   "modules/validation.py",
+  "rigs/__init__.py",
+  "rigs/calendar_rig.py",
+  "rigs/simple_rig.py",
+  "rigs/workforce_rig.py",
 ];
 
 const ENGINE_FILE_PATTERN = /^engines\/engine_(mk\d+)\.py$/i;
