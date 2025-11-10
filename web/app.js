@@ -4057,7 +4057,30 @@ async function generateScheduleForEngine(engineId, config, startDate) {
       throw new Error("MK2 runtime returned an unexpected result payload.");
     }
 
-    const events = normalizeMk2Events(result.events);
+    let events = result?.events ?? result?.schedule ?? result?.items ?? null;
+
+    if (events && !Array.isArray(events) && typeof events === "object") {
+      const flat = [];
+      for (const [key, arr] of Object.entries(events)) {
+        if (Array.isArray(arr)) {
+          for (const event of arr) {
+            const clone = { ...event };
+            if (clone.date == null && clone.day == null) {
+              clone.date = key;
+            }
+            flat.push(clone);
+          }
+        }
+      }
+      events = flat;
+    }
+
+    if (!Array.isArray(events)) {
+      events = [];
+    }
+    result.events = events;
+
+    events = normalizeMk2Events(result.events);
     const totals = normalizeMk2Totals(result.metadata?.summary_hours);
     const meta = normalizeMk2Meta(result, {
       engineId: normalizedId,
