@@ -63,6 +63,8 @@ const mk2RigInput = document.querySelector("#mk2-rig");
 const mk2SeedInput = document.querySelector("#mk2-seed");
 const mk2WeekStartInput = document.querySelector("#mk2-start");
 const mk2YearlyBudgetInput = document.querySelector("#mk2-budget");
+const mk2SurpriseMeInput = document.querySelector("#mk2-surprise");
+const mk2ResetDefaultsButton = document.querySelector("#mk2-reset-defaults");
 const resultsSection = document.querySelector("#results");
 const resultsTitle = document.querySelector("#results-title");
 const resultsSubtitle = document.querySelector("#results-subtitle");
@@ -122,6 +124,7 @@ const repoFileLoadButton = document.querySelector("#repo-file-load");
 const repoFilePreview = document.querySelector("#repo-file-preview");
 const repoFileStatus = document.querySelector("#repo-file-status");
 const tabGroups = document.querySelectorAll("[data-tab-group]");
+const toastContainer = document.querySelector("#toast-container");
 
 initializeTabGroups(tabGroups);
 
@@ -327,12 +330,24 @@ comparison`,
   },
 };
 
+const MK2_DEFAULT_ARCHETYPE = "office";
+const MK2_DEFAULT_RIG = "calendar";
 const MK2_DEFAULT_SEED = 42;
+const WORKFORCE_DEFAULT_YEARLY_BUDGET = {
+  hours: {
+    work: 1800,
+    sleep: 2800,
+    caregiving: 250,
+    vacation: 120,
+    sick: 40,
+  },
+};
 const MK2_PYTHON_RUNNER_SOURCE = `
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
 from calendar_gen_v2 import _select_profile, generate_complete_week
 from modules.unique_events import UniqueDay
@@ -342,44 +357,89 @@ payload = payload or {}
 options = payload.get("options") or {}
 
 archetype = (options.get("archetype") or "office").lower()
+rig_name = (options.get("rig") or "calendar").lower()
 seed_value = options.get("seed")
 start_date_value = options.get("start_date")
 yearly_budget_payload = options.get("yearly_budget")
+used_defaults_option = options.get("used_defaults") or []
+seed_source_option = options.get("seed_source")
+week_start_source_option = options.get("week_start_source")
 
 profile, templates = _select_profile(archetype)
 
-if start_date_value:
-    start = date.fromisoformat(start_date_value)
-else:
-    start = date.today()
+
+def current_week_monday(today: Optional[date] = None) -> date:
+    reference = today or date.today()
+    return reference - timedelta(days=reference.weekday())
+
+
+def resolve_start(value: Optional[str]) -> Tuple[date, bool]:
+    if isinstance(value, str) and value:
+        try:
+            return date.fromisoformat(value), False
+        except ValueError:
+            pass
+    return current_week_monday(), True
 
 
 def build_yearly_budget(data):
     if not data:
-        return None
+        return None, None
     if isinstance(data, str):
-        data = json.loads(data)
-    budget = YearlyBudget(
-        person_id=data["person_id"],
-        year=int(data["year"]),
-        vacation_days=int(data.get("vacation_days", 20)),
-        sick_days_taken=int(data.get("sick_days_taken", 0)),
-    )
-    for entry in data.get("unique_days", []):
-        budget.add_unique_day(
-            UniqueDay(
-                date=date.fromisoformat(entry["date"]),
-                day_type=entry["day_type"],
-                rules=entry.get("rules", {}),
-                priority=int(entry.get("priority", 5)),
-            )
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return None, None
+    if not isinstance(data, dict):
+        return None, None
+    if {"person_id", "year"} <= set(data.keys()):
+        budget = YearlyBudget(
+            person_id=data["person_id"],
+            year=int(data["year"]),
+            vacation_days=int(data.get("vacation_days", 20)),
+            sick_days_taken=int(data.get("sick_days_taken", 0)),
         )
-    return budget
+        for entry in data.get("unique_days", []):
+            budget.add_unique_day(
+                UniqueDay(
+                    date=date.fromisoformat(entry["date"]),
+                    day_type=entry["day_type"],
+                    rules=entry.get("rules", {}),
+                    priority=int(entry.get("priority", 5)),
+                )
+            )
+        return budget, None
+    hours_payload = data.get("hours") if isinstance(data, dict) else None
+    if isinstance(hours_payload, dict):
+        return None, hours_payload
+    return None, None
 
 
-yearly_budget = build_yearly_budget(yearly_budget_payload)
+def resolve_seed(value, defaults):
+    if value is None:
+        if "seed" not in defaults:
+            defaults.append("seed")
+        return ${MK2_DEFAULT_SEED}, "default"
+    try:
+        return int(value), seed_source_option or "user"
+    except (TypeError, ValueError):
+        if "seed" not in defaults:
+            defaults.append("seed")
+        return ${MK2_DEFAULT_SEED}, "default"
 
-seed = int(seed_value) if seed_value is not None else ${MK2_DEFAULT_SEED}
+
+used_defaults: List[str] = list(used_defaults_option) if isinstance(used_defaults_option, list) else []
+start, start_defaulted = resolve_start(start_date_value)
+if start_defaulted and "week_start" not in used_defaults:
+    used_defaults.append("week_start")
+
+yearly_budget, budget_hours = build_yearly_budget(yearly_budget_payload)
+
+seed, seed_source = resolve_seed(seed_value, used_defaults)
+if seed_source_option:
+    seed_source = seed_source_option
+
+week_start_source = week_start_source_option or ("default" if start_defaulted else "input")
 
 result = generate_complete_week(
     profile,
@@ -389,10 +449,302 @@ result = generate_complete_week(
     yearly_budget=yearly_budget,
 )
 
+
+def serialise_event(raw: Dict[str, Any]):
+    if not isinstance(raw, dict):
+        return None
+    event = dict(raw)
+    date_value = event.get("date")
+    if isinstance(date_value, date):
+        event["date"] = date_value.isoformat()
+    elif date_value is None:
+        event["date"] = ""
+    else:
+        event["date"] = str(date_value)
+    for key in ("start", "end"):
+        value = event.get(key)
+        if isinstance(value, (int, float)):
+            hours, minutes = divmod(int(value), 60)
+            event[key] = f"{hours:02d}:{minutes:02d}"
+        elif value is None:
+            event[key] = ""
+        else:
+            event[key] = str(value)
+    label_value = event.get("label") or event.get("activity")
+    event["label"] = str(label_value) if label_value is not None else ""
+    return event
+
+
+events: List[Dict[str, Any]] = []
+for raw_event in result.get("events", []):
+    serialised = serialise_event(raw_event)
+    if serialised is not None:
+        events.append(serialised)
+result["events"] = events
+
+metadata: Dict[str, Any] = result.setdefault("metadata", {})
+metadata["rig"] = rig_name
+metadata["seed"] = seed
+metadata["seed_source"] = seed_source
+metadata["week_start_source"] = week_start_source
+if used_defaults:
+    metadata["used_defaults"] = sorted(set(used_defaults))
+if budget_hours:
+    metadata["yearly_budget_hours"] = budget_hours
+
+if not result.get("week_start"):
+    result["week_start"] = start.isoformat()
+
 result
 `;
 
 const mk2RuntimeController = createPyRuntimeController();
+
+function showToast(message, { tone = "info", duration = 4000 } = {}) {
+  if (!toastContainer || typeof message !== "string" || !message.trim()) {
+    return;
+  }
+
+  const toast = document.createElement("div");
+  toast.classList.add("toast", `toast--${tone}`);
+  toast.textContent = message.trim();
+
+  while (toastContainer.childElementCount >= 4) {
+    toastContainer.removeChild(toastContainer.firstElementChild);
+  }
+
+  toastContainer.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.add("is-visible");
+  });
+
+  window.setTimeout(() => {
+    toast.classList.remove("is-visible");
+    window.setTimeout(() => {
+      if (toast.parentElement === toastContainer) {
+        toastContainer.removeChild(toast);
+      }
+    }, 220);
+  }, Math.max(1500, duration));
+}
+
+function getCurrentWeekMondayIso(referenceDate) {
+  const candidate =
+    referenceDate instanceof Date && !Number.isNaN(referenceDate.valueOf())
+      ? referenceDate
+      : new Date();
+  const utcReference = new Date(
+    Date.UTC(candidate.getUTCFullYear(), candidate.getUTCMonth(), candidate.getUTCDate()),
+  );
+  const weekday = utcReference.getUTCDay();
+  const offset = weekday === 0 ? -6 : 1 - weekday;
+  const monday = new Date(utcReference);
+  monday.setUTCDate(utcReference.getUTCDate() + offset);
+  return toIsoDate(monday);
+}
+
+function hashStringToSeed(value) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(index);
+    hash |= 0; // force 32-bit
+  }
+  const normalized = Math.abs(hash);
+  const modulo = normalized % 1_000_000_000;
+  return modulo === 0 ? 1 : modulo;
+}
+
+function generateDeterministicSeed(archetype, weekStartIso) {
+  const reference = `${archetype || ""}:${weekStartIso || ""}`;
+  return hashStringToSeed(reference);
+}
+
+function generateRandomSeed() {
+  const randomValue = Math.floor(Math.random() * 1_000_000_000);
+  return randomValue === 0 ? MK2_DEFAULT_SEED : randomValue;
+}
+
+function isValidWholeNumber(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    return false;
+  }
+  const pattern = /^[-+]?\d+$/;
+  if (!pattern.test(value)) {
+    return false;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed);
+}
+
+function cloneWorkforceDefaultBudget() {
+  return JSON.parse(JSON.stringify(WORKFORCE_DEFAULT_YEARLY_BUDGET));
+}
+
+function resolveMk2Defaults(input = {}) {
+  const usedDefaults = new Set();
+  const surpriseMe = Boolean(input.surpriseMe);
+  const forceRandomSeed = Boolean(input.forceRandomSeed);
+  const fallbackStartDateIso =
+    typeof input.fallbackStartDateIso === "string" ? input.fallbackStartDateIso.trim() : "";
+
+  let archetype =
+    typeof input.archetype === "string" && input.archetype.trim().length
+      ? input.archetype.trim().toLowerCase()
+      : "";
+  if (!archetype) {
+    archetype = MK2_DEFAULT_ARCHETYPE;
+    usedDefaults.add("archetype");
+  }
+
+  const rigCandidate =
+    typeof input.rig === "string" && input.rig.trim().length
+      ? input.rig.trim().toLowerCase()
+      : "";
+  let rig = MK2_DEFAULT_RIG;
+  if (rigCandidate === "workforce") {
+    rig = "workforce";
+  } else if (rigCandidate === "calendar") {
+    rig = "calendar";
+  } else if (rigCandidate) {
+    usedDefaults.add("rig");
+  }
+
+  const trimmedWeekStart =
+    typeof input.weekStart === "string" && input.weekStart.trim().length
+      ? input.weekStart.trim()
+      : "";
+  let weekStartIso = "";
+  let weekStartSource = "input";
+  if (trimmedWeekStart) {
+    try {
+      weekStartIso = toIsoDate(parseDateInput(trimmedWeekStart));
+    } catch (error) {
+      weekStartIso = "";
+      weekStartSource = "invalid";
+    }
+  } else {
+    weekStartSource = "blank";
+  }
+
+  if (!weekStartIso) {
+    if (fallbackStartDateIso) {
+      weekStartIso = fallbackStartDateIso;
+      if (weekStartSource === "invalid") {
+        usedDefaults.add("week_start");
+      }
+      weekStartSource = "fallback";
+    } else {
+      weekStartIso = getCurrentWeekMondayIso();
+      weekStartSource = "default";
+      usedDefaults.add("week_start");
+    }
+  }
+
+  const seedRawCandidate =
+    typeof input.seed === "number" && Number.isFinite(input.seed)
+      ? String(input.seed)
+      : typeof input.seed === "string"
+        ? input.seed.trim()
+        : "";
+
+  let seedSource = "user";
+  let seedValue;
+
+  if (surpriseMe) {
+    const shouldGenerate = forceRandomSeed || !isValidWholeNumber(seedRawCandidate);
+    if (shouldGenerate) {
+      seedValue = generateRandomSeed();
+      seedSource = "random";
+    } else {
+      seedValue = Number(seedRawCandidate);
+    }
+  } else if (seedRawCandidate) {
+    if (!isValidWholeNumber(seedRawCandidate)) {
+      throw new Error("MK2 seed must be a whole number.");
+    }
+    seedValue = Number(seedRawCandidate);
+  } else {
+    seedValue = generateDeterministicSeed(archetype, weekStartIso);
+    seedSource = "default";
+    usedDefaults.add("seed");
+  }
+
+  const rawBudget =
+    typeof input.yearlyBudget === "string" && input.yearlyBudget.trim().length
+      ? input.yearlyBudget.trim()
+      : "";
+
+  let yearlyBudget = null;
+  let yearlyBudgetJson = "";
+  if (rig === "workforce") {
+    let budgetSource = "input";
+    if (rawBudget) {
+      try {
+        yearlyBudget = JSON.parse(rawBudget);
+      } catch (error) {
+        yearlyBudget = cloneWorkforceDefaultBudget();
+        budgetSource = "default";
+        if (typeof input.onInvalidBudget === "function") {
+          input.onInvalidBudget();
+        }
+      }
+    } else {
+      yearlyBudget = cloneWorkforceDefaultBudget();
+      budgetSource = "default";
+    }
+
+    if (budgetSource === "default") {
+      usedDefaults.add("yearly_budget");
+    }
+
+    if (yearlyBudget && typeof yearlyBudget === "object") {
+      yearlyBudgetJson = JSON.stringify(yearlyBudget, null, 2);
+    }
+  }
+
+  return {
+    archetype,
+    rig,
+    seed: seedValue,
+    seedSource,
+    weekStart: weekStartIso,
+    weekStartSource,
+    yearlyBudget,
+    yearlyBudgetJson,
+    usedDefaults: Array.from(usedDefaults),
+    surpriseMe,
+  };
+}
+
+function applyMk2ResolvedValues(resolved) {
+  if (!resolved || typeof resolved !== "object") {
+    return;
+  }
+
+  if (mk2ArchetypeInput) {
+    mk2ArchetypeInput.value = resolved.archetype || MK2_DEFAULT_ARCHETYPE;
+  }
+  if (mk2RigInput) {
+    mk2RigInput.value = resolved.rig || MK2_DEFAULT_RIG;
+  }
+  if (mk2SeedInput) {
+    mk2SeedInput.value = Number.isFinite(resolved.seed) ? String(resolved.seed) : "";
+  }
+  if (mk2WeekStartInput) {
+    mk2WeekStartInput.value = resolved.weekStart || "";
+  }
+  if (mk2YearlyBudgetInput) {
+    if (resolved.rig === "workforce" && resolved.yearlyBudgetJson) {
+      mk2YearlyBudgetInput.value = resolved.yearlyBudgetJson;
+    } else if (resolved.rig !== "workforce") {
+      mk2YearlyBudgetInput.value = "";
+    }
+  }
+  if (mk2SurpriseMeInput) {
+    mk2SurpriseMeInput.checked = Boolean(resolved.surpriseMe);
+  }
+}
 
 let refreshTestConsoleEditor = () => {};
 const DEFAULT_REPO_SLUG =
@@ -551,6 +903,11 @@ if (configInput) {
 if (engineSelect) {
   populateEngineSelect(engineSelect, ENGINE_OPTIONS, DEFAULT_ENGINE_ID);
 
+  const refreshMk2Defaults = ({ forceRandomSeed = false, silentInvalidBudget = true } = {}) => {
+    const fallbackStartDate = parseStartDateValue(startDateInput?.value);
+    getMk2Options(fallbackStartDate, { forceRandomSeed, silentInvalidBudget });
+  };
+
   const toggleMk2OptionsVisibility = () => {
     if (!mk2OptionsFieldset) {
       return;
@@ -558,6 +915,7 @@ if (engineSelect) {
 
     if (engineSelect.value === "mk2") {
       mk2OptionsFieldset.classList.remove("hidden");
+      refreshMk2Defaults({ forceRandomSeed: Boolean(mk2SurpriseMeInput?.checked) });
     } else {
       mk2OptionsFieldset.classList.add("hidden");
     }
@@ -565,6 +923,45 @@ if (engineSelect) {
 
   toggleMk2OptionsVisibility();
   engineSelect.addEventListener("change", toggleMk2OptionsVisibility);
+
+  if (mk2RigInput) {
+    mk2RigInput.addEventListener("change", () => {
+      refreshMk2Defaults({ forceRandomSeed: Boolean(mk2SurpriseMeInput?.checked) });
+    });
+  }
+
+  if (mk2SurpriseMeInput) {
+    mk2SurpriseMeInput.addEventListener("change", () => {
+      if (!mk2SurpriseMeInput.checked && mk2SeedInput) {
+        mk2SeedInput.value = "";
+      }
+      refreshMk2Defaults({ forceRandomSeed: Boolean(mk2SurpriseMeInput.checked) });
+    });
+  }
+
+  if (mk2ResetDefaultsButton) {
+    mk2ResetDefaultsButton.addEventListener("click", () => {
+      if (mk2ArchetypeInput) {
+        mk2ArchetypeInput.value = MK2_DEFAULT_ARCHETYPE;
+      }
+      if (mk2RigInput) {
+        mk2RigInput.value = MK2_DEFAULT_RIG;
+      }
+      if (mk2SeedInput) {
+        mk2SeedInput.value = "";
+      }
+      if (mk2WeekStartInput) {
+        mk2WeekStartInput.value = "";
+      }
+      if (mk2YearlyBudgetInput) {
+        mk2YearlyBudgetInput.value = "";
+      }
+      if (mk2SurpriseMeInput) {
+        mk2SurpriseMeInput.checked = false;
+      }
+      refreshMk2Defaults({ forceRandomSeed: false });
+    });
+  }
 }
 
 initViews();
@@ -3636,15 +4033,18 @@ async function generateScheduleForEngine(engineId, config, startDate) {
     // - collect MK2 options from the DOM (including validation for seed/start/budget)
     // - execute calendar_gen_v2.generate_complete_week via the Pyodide runtime
     // - normalize the MK2 result payload for the UI (events, totals, metadata, diagnostics)
-    const options = getMk2Options(startDate);
+    const options = getMk2Options(startDate, { forceRandomSeed: true, silentInvalidBudget: false });
     const payload = {
       config: typeof config === "object" && config !== null ? config : {},
       options: {
         archetype: options.archetype,
         rig: options.rig,
         seed: typeof options.seed === "number" ? options.seed : null,
-        start_date: options.startDateIso || null,
+        start_date: options.weekStartIso || null,
         yearly_budget: options.yearlyBudget || null,
+        used_defaults: Array.isArray(options.usedDefaults) ? options.usedDefaults : [],
+        seed_source: options.seedSource || undefined,
+        week_start_source: options.weekStartSource || undefined,
       },
     };
 
@@ -3672,7 +4072,7 @@ async function generateScheduleForEngine(engineId, config, startDate) {
         ? result.week_start
         : typeof result.weekStart === "string"
           ? result.weekStart
-          : options.startDateIso || "";
+          : options.weekStartIso || "";
     const issues = Array.isArray(result.issues)
       ? result.issues
       : Array.isArray(result.metadata?.issues)
@@ -3680,6 +4080,18 @@ async function generateScheduleForEngine(engineId, config, startDate) {
         : [];
     const metadata =
       result.metadata && typeof result.metadata === "object" ? result.metadata : { engine: normalizedId };
+
+    if (Array.isArray(options.usedDefaults) && options.usedDefaults.length) {
+      const existing = Array.isArray(metadata.used_defaults) ? metadata.used_defaults : [];
+      const combined = new Set([...existing, ...options.usedDefaults]);
+      metadata.used_defaults = Array.from(combined);
+    }
+    if (options.seedSource) {
+      metadata.seed_source = options.seedSource;
+    }
+    if (options.weekStartSource) {
+      metadata.week_start_source = options.weekStartSource;
+    }
 
     return { events, totals, meta, person, week_start: weekStart, issues, metadata };
   }
@@ -3693,57 +4105,42 @@ async function generateScheduleForEngine(engineId, config, startDate) {
   );
 }
 
-function getMk2Options(fallbackStartDate) {
-  const archetypeValue = mk2ArchetypeInput?.value || "office";
-  const archetype = typeof archetypeValue === "string" ? archetypeValue.toLowerCase() : "office";
+function getMk2Options(
+  fallbackStartDate,
+  { forceRandomSeed = false, silentInvalidBudget = true } = {},
+) {
+  const fallbackStartDateIso =
+    fallbackStartDate instanceof Date && !Number.isNaN(fallbackStartDate.valueOf())
+      ? toIsoDate(fallbackStartDate)
+      : "";
 
-  const rigValue = mk2RigInput?.value || "calendar";
-  const normalizedRig = typeof rigValue === "string" ? rigValue.toLowerCase() : "calendar";
-  const rig = normalizedRig === "workforce" ? "workforce" : "calendar";
+  const resolved = resolveMk2Defaults({
+    archetype: mk2ArchetypeInput?.value,
+    rig: mk2RigInput?.value,
+    seed: mk2SeedInput?.value,
+    weekStart: mk2WeekStartInput?.value,
+    yearlyBudget: mk2YearlyBudgetInput?.value,
+    fallbackStartDateIso,
+    surpriseMe: mk2SurpriseMeInput?.checked,
+    forceRandomSeed,
+    onInvalidBudget: silentInvalidBudget
+      ? undefined
+      : () => showToast("Invalid budget, using defaults.", { tone: "warning" }),
+  });
 
-  const seedRaw = mk2SeedInput?.value?.trim();
-  let seed;
-  if (seedRaw) {
-    const seedPattern = /^[-+]?\d+$/;
-    if (!seedPattern.test(seedRaw)) {
-      throw new Error("MK2 seed must be a whole number.");
-    }
-    const parsedSeed = Number(seedRaw);
-    if (!Number.isSafeInteger(parsedSeed)) {
-      throw new Error("MK2 seed must be a whole number.");
-    }
-    seed = parsedSeed;
-  }
-
-  const mk2StartRaw = mk2WeekStartInput?.value?.trim();
-  let startDateIso;
-  if (mk2StartRaw) {
-    try {
-      const parsed = parseDateInput(mk2StartRaw);
-      startDateIso = toIsoDate(parsed);
-    } catch (error) {
-      throw new Error("MK2 week start must be a valid date.");
-    }
-  } else if (fallbackStartDate instanceof Date && !Number.isNaN(fallbackStartDate.valueOf())) {
-    startDateIso = toIsoDate(fallbackStartDate);
-  }
-
-  const budgetRaw = mk2YearlyBudgetInput?.value?.trim();
-  let yearlyBudget;
-  if (budgetRaw) {
-    try {
-      yearlyBudget = JSON.parse(budgetRaw);
-    } catch (error) {
-      throw new Error("Yearly budget must be valid JSON.");
-    }
-  }
+  applyMk2ResolvedValues(resolved);
 
   return {
-    archetype,
-    rig,
-    seed,
-    startDateIso,
-    yearlyBudget,
+    archetype: resolved.archetype,
+    rig: resolved.rig,
+    seed: resolved.seed,
+    weekStartIso: resolved.weekStart,
+    yearlyBudget: resolved.rig === "workforce" ? resolved.yearlyBudget : null,
+    yearlyBudgetJson: resolved.yearlyBudgetJson,
+    usedDefaults: resolved.usedDefaults,
+    surpriseMe: resolved.surpriseMe,
+    seedSource: resolved.seedSource,
+    weekStartSource: resolved.weekStartSource,
   };
 }
 
@@ -4019,7 +4416,7 @@ function normalizeMk2Meta(result, { engineId, engineLabel, options, configName }
   const issues = Array.isArray(result?.issues) ? result.issues : [];
   const metadata = result?.metadata && typeof result.metadata === "object" ? result.metadata : {};
   const rawWeekStart = typeof result?.week_start === "string" ? result.week_start : null;
-  const weekStartIso = rawWeekStart || options.startDateIso || undefined;
+  const weekStartIso = rawWeekStart || options.weekStartIso || undefined;
 
   let weekEndIso;
   if (weekStartIso) {
@@ -4033,7 +4430,13 @@ function normalizeMk2Meta(result, { engineId, engineLabel, options, configName }
 
   const rawIssueCount = Number(metadata?.issue_count);
   const issueCount = Number.isFinite(rawIssueCount) ? rawIssueCount : issues.length;
-  const resolvedSeed = typeof options.seed === "number" ? options.seed : MK2_DEFAULT_SEED;
+  const resultSeedCandidate = Number(result?.metadata?.seed);
+  const resolvedSeed =
+    typeof options.seed === "number"
+      ? options.seed
+      : Number.isFinite(resultSeedCandidate)
+        ? resultSeedCandidate
+        : undefined;
   const name = typeof result?.person === "string" && result.person ? result.person : configName || "";
 
   const meta = {
@@ -4051,6 +4454,10 @@ function normalizeMk2Meta(result, { engineId, engineLabel, options, configName }
 
   if (options.yearlyBudget) {
     meta.yearlyBudgetProvided = true;
+  }
+
+  if (Array.isArray(options.usedDefaults) && options.usedDefaults.length) {
+    meta.usedDefaults = [...options.usedDefaults];
   }
 
   return meta;
