@@ -346,8 +346,8 @@ const MK2_PYTHON_RUNNER_SOURCE = `
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import date, datetime, time, timedelta
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from calendar_gen_v2 import _select_profile, generate_complete_week
 from modules.unique_events import UniqueDay
@@ -450,34 +450,75 @@ result = generate_complete_week(
 )
 
 
-def serialise_event(raw: Dict[str, Any]):
+def normalise_datetime_like(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, time):
+        return value.replace(microsecond=0).isoformat(timespec="minutes")
+    if isinstance(value, timedelta):
+        total_minutes = int(value.total_seconds() // 60)
+        hours, minutes = divmod(total_minutes, 60)
+        return f"{hours:02d}:{minutes:02d}"
+    return str(value)
+
+
+def coerce_time_string(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        hours, minutes = divmod(int(value), 60)
+        return f"{hours:02d}:{minutes:02d}"
+    if isinstance(value, timedelta):
+        total_minutes = int(value.total_seconds() // 60)
+        hours, minutes = divmod(total_minutes, 60)
+        return f"{hours:02d}:{minutes:02d}"
+    if isinstance(value, (datetime, time)):
+        return normalise_datetime_like(value).split("T")[-1]
+    text = str(value)
+    return text
+
+
+def serialise_event(raw: Dict[str, Any], fallback_date: str = ""):
     if not isinstance(raw, dict):
         return None
     event = dict(raw)
-    date_value = event.get("date")
-    if isinstance(date_value, date):
-        event["date"] = date_value.isoformat()
-    elif date_value is None:
-        event["date"] = ""
-    else:
-        event["date"] = str(date_value)
+    for key, value in list(event.items()):
+        if isinstance(value, (date, datetime, time, timedelta)):
+            event[key] = normalise_datetime_like(value)
+    date_value = event.get("date") or event.get("day") or fallback_date
+    event["date"] = str(date_value) if date_value is not None else ""
     for key in ("start", "end"):
-        value = event.get(key)
-        if isinstance(value, (int, float)):
-            hours, minutes = divmod(int(value), 60)
-            event[key] = f"{hours:02d}:{minutes:02d}"
-        elif value is None:
-            event[key] = ""
-        else:
-            event[key] = str(value)
-    label_value = event.get("label") or event.get("activity")
+        event[key] = coerce_time_string(event.get(key) or event.get(f"{key}_time")) or ""
+    label_value = (
+        event.get("label")
+        or event.get("activity")
+        or event.get("name")
+        or event.get("description")
+    )
     event["label"] = str(label_value) if label_value is not None else ""
     return event
 
 
+def iter_event_records(payload: Any) -> Iterable[Tuple[Any, str]]:
+    if isinstance(payload, dict):
+        for key, collection in payload.items():
+            if isinstance(collection, list):
+                for item in collection:
+                    yield item, str(key)
+    elif isinstance(payload, list):
+        for item in payload:
+            yield item, ""
+
+
+raw_events_payload: Any = result.get("events")
+if not raw_events_payload:
+    raw_events_payload = result.get("schedule") or result.get("items") or []
+
 events: List[Dict[str, Any]] = []
-for raw_event in result.get("events", []):
-    serialised = serialise_event(raw_event)
+for raw_event, fallback_date in iter_event_records(raw_events_payload):
+    serialised = serialise_event(raw_event, fallback_date)
     if serialised is not None:
         events.append(serialised)
 result["events"] = events
