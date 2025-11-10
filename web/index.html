@@ -76,8 +76,17 @@
               </select>
             </div>
             <div class="form-row">
-              <label for="mk2-seed">Seed</label>
-              <input id="mk2-seed" name="mk2-seed" type="number" inputmode="numeric" />
+              <div class="form-row__label-group">
+                <label for="mk2-seed">Seed</label>
+                <button type="button" id="mk2-reset-defaults" class="link-button">Reset defaults</button>
+              </div>
+              <div class="mk2-seed-controls">
+                <input id="mk2-seed" name="mk2-seed" type="number" inputmode="numeric" />
+                <label class="checkbox-inline" for="mk2-surprise">
+                  <input id="mk2-surprise" name="mk2-surprise" type="checkbox" />
+                  <span>Surprise me</span>
+                </label>
+              </div>
             </div>
             <div class="form-row">
               <label for="mk2-start">Week start</label>
@@ -294,6 +303,7 @@
         </details>
       </section>
     </main>
+    <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
 
     <main class="view view--test-console hidden" data-view="test-console" id="test-console-view">
       <section class="card test-console-card">
