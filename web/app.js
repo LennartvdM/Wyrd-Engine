@@ -610,7 +610,7 @@ form?.addEventListener("submit", async (event) => {
     };
     updateResultsHeader(meta);
     renderTotals(totals);
-    renderCalendar(events, meta);
+    renderSchedule(events, meta);
     renderJson(events, meta);
     renderDiagnostics({ issues, metadata, meta });
     enableDownload(events, config.name);
@@ -914,6 +914,11 @@ function showView(target) {
   }
 }
 
+function renderSchedule(events, meta) {
+  renderCalendar(events, meta);
+  renderReplayInspector(events, meta);
+}
+
 function renderCalendar(events, meta) {
   if (!calendarContainer) {
     return;
@@ -927,19 +932,55 @@ function renderCalendar(events, meta) {
     return;
   }
 
-  const visibleEvents = events.filter((event) => event.activity !== "free time");
-  const calendarEvents = visibleEvents.map((event) => {
-    const backgroundColor = getActivityColor(event.activity);
-    const textColor = event.activity.toLowerCase() === "free time" ? "#0f172a" : "#ffffff";
-    return {
-      title: capitalize(event.activity),
-      start: `${event.date}T${event.start}:00`,
-      end: `${event.date}T${event.end}:00`,
-      backgroundColor,
-      borderColor: backgroundColor,
-      textColor,
-    };
-  });
+  const eventList = Array.isArray(events) ? events : [];
+  const calendarEvents = eventList
+    .map((event) => {
+      if (!event || typeof event !== "object") {
+        return null;
+      }
+
+      const rawDate = typeof event.date === "string" ? event.date.trim() : "";
+      const rawStart = typeof event.start === "string" ? event.start.trim() : "";
+      const rawEnd = typeof event.end === "string" ? event.end.trim() : "";
+      if (!rawDate || !rawStart) {
+        return null;
+      }
+
+      const labelCandidates = [event.label, event.title, event.name, event.activity];
+      const resolvedLabel = labelCandidates.find(
+        (candidate) => typeof candidate === "string" && candidate.trim().length,
+      );
+
+      const activitySource =
+        typeof event.activity === "string" && event.activity.trim().length
+          ? event.activity.trim()
+          : resolvedLabel?.trim() || "";
+
+      const normalizedActivity = activitySource.toLowerCase();
+      if (normalizedActivity === "free time") {
+        return null;
+      }
+
+      const normalizedStart =
+        rawStart.length === 5 ? rawStart : normalizeMk2TimeValue(rawStart) || "00:00";
+      const normalizedEndCandidate =
+        rawEnd.length === 5 ? rawEnd : normalizeMk2TimeValue(rawEnd);
+      const normalizedEnd = normalizedEndCandidate || normalizedStart;
+
+      const displayLabel = resolvedLabel?.trim() || activitySource || "Event";
+      const backgroundColor = getActivityColor(activitySource || displayLabel);
+      const textColor = normalizedActivity === "free time" ? "#0f172a" : "#ffffff";
+
+      return {
+        title: capitalize(displayLabel),
+        start: `${rawDate}T${normalizedStart}:00`,
+        end: `${rawDate}T${normalizedEnd}:00`,
+        backgroundColor,
+        borderColor: backgroundColor,
+        textColor,
+      };
+    })
+    .filter(Boolean);
 
   calendar.removeAllEvents();
   if (calendarEvents.length) {
@@ -1001,7 +1042,6 @@ function renderJson(events, meta) {
     return;
   }
   jsonOutput.textContent = JSON.stringify(events, null, 2);
-  renderReplayInspector(events, meta);
 }
 
 function resetDiagnosticsPanel() {
@@ -3730,36 +3770,90 @@ function normalizeMk2Events(rawEvents) {
         return null;
       }
 
-      const dateValue = typeof event.date === "string" ? event.date : "";
-      const dayValue = typeof event.day === "string" ? event.day : "";
-      const startValue = typeof event.start === "string" ? event.start : "00:00";
-      const endValue = typeof event.end === "string" ? event.end : startValue;
-      const activityValue = typeof event.activity === "string" ? event.activity : "";
+      const normalized = { ...event };
+
+      const dateValue = coerceMk2IsoDate(event.date);
+      if (dateValue) {
+        normalized.date = dateValue;
+      } else {
+        normalized.date = "";
+      }
+
+      const dayValue =
+        typeof event.day === "string" && event.day.trim().length
+          ? event.day.trim().toLowerCase()
+          : "";
+      normalized.day = dayValue;
+
+      const startCandidate = pickMk2EventField(event, [
+        "start",
+        "start_time",
+        "startTime",
+        "time",
+        "start_minutes",
+        "start_minute",
+        "minute_start",
+      ]);
+      const endCandidate = pickMk2EventField(event, [
+        "end",
+        "end_time",
+        "endTime",
+        "end_minutes",
+        "end_minute",
+        "minute_end",
+      ]);
+
+      const startValue = normalizeMk2TimeValue(startCandidate);
+      const endValue = normalizeMk2TimeValue(endCandidate);
+
+      normalized.start = startValue || "00:00";
+      normalized.end = endValue || normalized.start;
 
       let duration = Number(
         event.duration_minutes ?? event.duration ?? event.minutes ?? event.length_minutes,
       );
       if (!Number.isFinite(duration) || duration <= 0) {
-        const computed = computeDurationFromTimes(startValue, endValue);
+        const computed = computeDurationFromTimes(normalized.start, normalized.end);
         if (Number.isFinite(computed) && computed > 0) {
           duration = computed;
         } else {
           duration = 0;
         }
       }
+      normalized.duration_minutes = duration;
 
-      const normalized = {
-        date: dateValue,
-        day: dayValue,
-        start: startValue,
-        end: endValue,
-        activity: activityValue,
-        duration_minutes: duration,
-      };
+      const labelValue = coerceMk2Label([
+        event.label,
+        event.title,
+        event.name,
+        event.activity,
+        event.activity_name,
+        event.activityName,
+      ]);
+      const activityValue = coerceMk2Activity(event);
+      if (activityValue) {
+        normalized.activity = activityValue;
+      } else if (labelValue) {
+        normalized.activity = labelValue.toLowerCase();
+      } else {
+        normalized.activity = "";
+      }
+      if (labelValue) {
+        normalized.label = labelValue;
+      } else if (normalized.activity) {
+        normalized.label = normalized.activity;
+      } else {
+        normalized.label = "";
+      }
 
       const minuteRange = event.minute_range ?? event.minuteRange;
       if (minuteRange !== undefined) {
         normalized.minute_range = minuteRange;
+      } else {
+        const minuteRangeFallback = buildMk2MinuteRange(event, normalized);
+        if (minuteRangeFallback) {
+          normalized.minute_range = minuteRangeFallback;
+        }
       }
 
       return normalized;
@@ -3774,6 +3868,132 @@ function normalizeMk2Events(rawEvents) {
   });
 
   return events;
+}
+
+function pickMk2EventField(event, keys) {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(event, key)) {
+      const value = event[key];
+      if (value !== undefined && value !== null) {
+        return value;
+      }
+    }
+  }
+  return undefined;
+}
+
+function normalizeMk2TimeValue(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return minutesToTime(Math.round(value));
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return "";
+    }
+    if (trimmed.includes("T")) {
+      const [, timePart = ""] = trimmed.split("T");
+      return normalizeMk2TimeValue(timePart);
+    }
+
+    const parts = trimmed.split(":");
+    if (parts.length >= 2) {
+      const hours = Number.parseInt(parts[0], 10);
+      const minutes = Number.parseInt(parts[1], 10);
+      if (Number.isFinite(hours) && Number.isFinite(minutes)) {
+        return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+      }
+    }
+
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return minutesToTime(Math.round(numeric));
+    }
+  }
+
+  return "";
+}
+
+function coerceMk2IsoDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+    return toIsoDate(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const [datePart] = value.trim().split("T");
+    return datePart || "";
+  }
+  return "";
+}
+
+function coerceMk2Label(candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length) {
+      return candidate.trim();
+    }
+  }
+  return "";
+}
+
+function coerceMk2Activity(event) {
+  const candidates = [
+    event.activity,
+    event.activity_name,
+    event.activityName,
+    event.label,
+    event.title,
+    event.name,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length) {
+      return candidate.trim();
+    }
+  }
+  return "";
+}
+
+function buildMk2MinuteRange(event, normalized) {
+  const dayIndex = Number(event.day_index ?? event.dayIndex);
+  const startMinutesCandidate = pickMk2EventField(event, [
+    "start_minutes",
+    "start_minute",
+    "minute_start",
+  ]);
+  const endMinutesCandidate = pickMk2EventField(event, [
+    "end_minutes",
+    "end_minute",
+    "minute_end",
+  ]);
+
+  const startMinutes = Number(startMinutesCandidate);
+  let endMinutes = Number(endMinutesCandidate);
+
+  if (Number.isFinite(startMinutes) && !Number.isFinite(endMinutes)) {
+    const duration = Number(normalized.duration_minutes);
+    if (Number.isFinite(duration) && duration > 0) {
+      endMinutes = startMinutes + duration;
+    }
+  }
+
+  if (
+    Number.isFinite(dayIndex) &&
+    Number.isFinite(startMinutes) &&
+    Number.isFinite(endMinutes)
+  ) {
+    const startAbsolute = dayIndex * 1440 + startMinutes;
+    let endAbsolute = dayIndex * 1440 + endMinutes;
+    if (endAbsolute <= startAbsolute) {
+      const duration = Number(normalized.duration_minutes);
+      if (Number.isFinite(duration) && duration > 0) {
+        endAbsolute = startAbsolute + duration;
+      }
+    }
+    if (endAbsolute > startAbsolute) {
+      return [startAbsolute, endAbsolute];
+    }
+  }
+
+  return null;
 }
 
 function normalizeMk2Totals(summary) {
