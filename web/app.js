@@ -565,6 +565,26 @@ function generateRandomSeed() {
   return randomValue === 0 ? MK2_DEFAULT_SEED : randomValue;
 }
 
+function valOrNull(value) {
+  if (value == null) {
+    return null;
+  }
+  const trimmed = String(value).trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+function isValidJson(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  try {
+    JSON.parse(value);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 function isValidWholeNumber(value) {
   if (typeof value !== "string" || !value.trim()) {
     return false;
@@ -4137,19 +4157,37 @@ function getMk2Options(
       ? toIsoDate(fallbackStartDate)
       : "";
 
+  const archetype = valOrNull(mk2ArchetypeInput?.value);
+  const rig = valOrNull(mk2RigInput?.value);
+  const seedInput = (mk2SeedInput?.value || "").trim();
+  let seed = null;
+  if (seedInput !== "") {
+    seed = isValidWholeNumber(seedInput) ? Number(seedInput) : seedInput;
+  }
+  const weekStart = valOrNull(mk2WeekStartInput?.value);
+  const budgetRaw = (mk2YearlyBudgetInput?.value || "").trim();
+  const budgetIsValidJson = budgetRaw === "" || isValidJson(budgetRaw);
+  const yearlyBudgetJson = budgetRaw === "" ? null : budgetIsValidJson ? budgetRaw : null;
+
+  const invalidBudgetWarning = silentInvalidBudget
+    ? undefined
+    : () => showToast("Invalid budget, using defaults.", { tone: "warning" });
+
   const resolved = resolveMk2Defaults({
-    archetype: mk2ArchetypeInput?.value,
-    rig: mk2RigInput?.value,
-    seed: mk2SeedInput?.value,
-    weekStart: mk2WeekStartInput?.value,
-    yearlyBudget: mk2YearlyBudgetInput?.value,
+    archetype,
+    rig,
+    seed,
+    weekStart,
+    yearlyBudget: yearlyBudgetJson,
     fallbackStartDateIso,
     surpriseMe: mk2SurpriseMeInput?.checked,
     forceRandomSeed,
-    onInvalidBudget: silentInvalidBudget
-      ? undefined
-      : () => showToast("Invalid budget, using defaults.", { tone: "warning" }),
+    onInvalidBudget: invalidBudgetWarning,
   });
+
+  if (!budgetIsValidJson && typeof invalidBudgetWarning === "function") {
+    invalidBudgetWarning();
+  }
 
   applyMk2ResolvedValues(resolved);
 
