@@ -4183,115 +4183,43 @@ function parseRunnerResultJSON(resultJSON) {
   }
 }
 
-function normalizeMk2Events(rawEvents) {
-  if (!Array.isArray(rawEvents)) {
-    throw new Error("MK2 runtime returned an invalid events list.");
+function normalizeMk2Events(list) {
+  if (!Array.isArray(list)) return [];
+
+  const out = [];
+  for (const raw of list) {
+    if (raw == null || typeof raw !== "object") continue;
+
+    const label = raw.label ?? raw.activity ?? raw.name ?? "untitled";
+
+    let date = raw.date ?? raw.day ?? null;
+    if (typeof date === "number") date = String(date);
+
+    const start = coerceTime(raw.start ?? raw.start_time ?? raw.begin);
+    const end = coerceTime(raw.end ?? raw.end_time ?? raw.finish);
+
+    if (!date || !start || !end) continue;
+
+    out.push({ date, start, end, label, ...raw });
   }
+  return out;
+}
 
-  const events = rawEvents
-    .map((event) => {
-      if (!event || typeof event !== "object") {
-        return null;
-      }
-
-      const normalized = { ...event };
-
-      const dateValue = coerceMk2IsoDate(event.date);
-      if (dateValue) {
-        normalized.date = dateValue;
-      } else {
-        normalized.date = "";
-      }
-
-      const dayValue =
-        typeof event.day === "string" && event.day.trim().length
-          ? event.day.trim().toLowerCase()
-          : "";
-      normalized.day = dayValue;
-
-      const startCandidate = pickMk2EventField(event, [
-        "start",
-        "start_time",
-        "startTime",
-        "time",
-        "start_minutes",
-        "start_minute",
-        "minute_start",
-      ]);
-      const endCandidate = pickMk2EventField(event, [
-        "end",
-        "end_time",
-        "endTime",
-        "end_minutes",
-        "end_minute",
-        "minute_end",
-      ]);
-
-      const startValue = normalizeMk2TimeValue(startCandidate);
-      const endValue = normalizeMk2TimeValue(endCandidate);
-
-      normalized.start = startValue || "00:00";
-      normalized.end = endValue || normalized.start;
-
-      let duration = Number(
-        event.duration_minutes ?? event.duration ?? event.minutes ?? event.length_minutes,
-      );
-      if (!Number.isFinite(duration) || duration <= 0) {
-        const computed = computeDurationFromTimes(normalized.start, normalized.end);
-        if (Number.isFinite(computed) && computed > 0) {
-          duration = computed;
-        } else {
-          duration = 0;
-        }
-      }
-      normalized.duration_minutes = duration;
-
-      const labelValue = coerceMk2Label([
-        event.label,
-        event.title,
-        event.name,
-        event.activity,
-        event.activity_name,
-        event.activityName,
-      ]);
-      const activityValue = coerceMk2Activity(event);
-      if (activityValue) {
-        normalized.activity = activityValue;
-      } else if (labelValue) {
-        normalized.activity = labelValue.toLowerCase();
-      } else {
-        normalized.activity = "";
-      }
-      if (labelValue) {
-        normalized.label = labelValue;
-      } else if (normalized.activity) {
-        normalized.label = normalized.activity;
-      } else {
-        normalized.label = "";
-      }
-
-      const minuteRange = event.minute_range ?? event.minuteRange;
-      if (minuteRange !== undefined) {
-        normalized.minute_range = minuteRange;
-      } else {
-        const minuteRangeFallback = buildMk2MinuteRange(event, normalized);
-        if (minuteRangeFallback) {
-          normalized.minute_range = minuteRangeFallback;
-        }
-      }
-
-      return normalized;
-    })
-    .filter(Boolean);
-
-  events.sort((a, b) => {
-    if (a.date === b.date) {
-      return a.start.localeCompare(b.start);
-    }
-    return a.date.localeCompare(b.date);
-  });
-
-  return events;
+function coerceTime(v) {
+  if (v == null) return null;
+  if (typeof v === "string") {
+    const m = v.match(/\b(\d{2}):(\d{2})\b/);
+    if (m) return `${m[1]}:${m[2]}`;
+  }
+  if (typeof v === "number" && Number.isFinite(v)) {
+    const hh = Math.floor(v / 60);
+    const mm = v % 60;
+    return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+  }
+  if (v instanceof Date) {
+    return `${String(v.getHours()).padStart(2, "0")}:${String(v.getMinutes()).padStart(2, "0")}`;
+  }
+  return null;
 }
 
 function pickMk2EventField(event, keys) {
