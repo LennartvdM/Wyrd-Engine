@@ -3592,11 +3592,56 @@ async function generateScheduleForEngine(engineId, config, startDate) {
       },
     };
   } else if (normalizedId === "mk2") {
-    return generateScheduleWithMk2(config, {
-      startDate,
+    // MK2 branch steps:
+    // - collect MK2 options from the DOM (including validation for seed/start/budget)
+    // - execute calendar_gen_v2.generate_complete_week via the Pyodide runtime
+    // - normalize the MK2 result payload for the UI (events, totals, metadata, diagnostics)
+    const options = getMk2Options(startDate);
+    const payload = {
+      config: typeof config === "object" && config !== null ? config : {},
+      options: {
+        archetype: options.archetype,
+        rig: options.rig,
+        seed: typeof options.seed === "number" ? options.seed : null,
+        start_date: options.startDateIso || null,
+        yearly_budget: options.yearlyBudget || null,
+      },
+    };
+
+    const response = await mk2RuntimeController.run(MK2_PYTHON_RUNNER_SOURCE, {
+      context: { payload },
+    });
+
+    const result = parseRunnerResultJSON(response.resultJSON);
+    if (!result || typeof result !== "object") {
+      throw new Error("MK2 runtime returned an unexpected result payload.");
+    }
+
+    const events = normalizeMk2Events(result.events);
+    const totals = normalizeMk2Totals(result.metadata?.summary_hours);
+    const meta = normalizeMk2Meta(result, {
       engineId: normalizedId,
       engineLabel,
+      options,
+      configName: typeof config?.name === "string" ? config.name : "",
     });
+
+    const person = typeof result.person === "string" ? result.person : meta?.person || "";
+    const weekStart =
+      typeof result.week_start === "string"
+        ? result.week_start
+        : typeof result.weekStart === "string"
+          ? result.weekStart
+          : options.startDateIso || "";
+    const issues = Array.isArray(result.issues)
+      ? result.issues
+      : Array.isArray(result.metadata?.issues)
+        ? result.metadata.issues
+        : [];
+    const metadata =
+      result.metadata && typeof result.metadata === "object" ? result.metadata : { engine: normalizedId };
+
+    return { events, totals, meta, person, week_start: weekStart, issues, metadata };
   }
 
   if (!normalizedId) {
@@ -3606,55 +3651,6 @@ async function generateScheduleForEngine(engineId, config, startDate) {
   throw new Error(
     `${engineLabel || `Engine ${normalizedId.toUpperCase()}`} is not supported in this generator yet.`
   );
-}
-
-async function generateScheduleWithMk2(config, { startDate, engineId, engineLabel }) {
-  const options = getMk2Options(startDate);
-  const payload = {
-    config: typeof config === "object" && config !== null ? config : {},
-    options: {
-      archetype: options.archetype,
-      rig: options.rig,
-      seed: typeof options.seed === "number" ? options.seed : null,
-      start_date: options.startDateIso || null,
-      yearly_budget: options.yearlyBudget || null,
-    },
-  };
-
-  const response = await mk2RuntimeController.run(MK2_PYTHON_RUNNER_SOURCE, {
-    context: { payload },
-  });
-
-  const result = parseRunnerResultJSON(response.resultJSON);
-  if (!result || typeof result !== "object") {
-    throw new Error("MK2 runtime returned an unexpected result payload.");
-  }
-
-  const events = normalizeMk2Events(result.events);
-  const totals = normalizeMk2Totals(result.metadata?.summary_hours);
-  const meta = normalizeMk2Meta(result, {
-    engineId,
-    engineLabel,
-    options,
-    configName: typeof config?.name === "string" ? config.name : "",
-  });
-
-  const person = typeof result.person === "string" ? result.person : meta?.person || "";
-  const weekStart =
-    typeof result.week_start === "string"
-      ? result.week_start
-      : typeof result.weekStart === "string"
-        ? result.weekStart
-        : options.startDateIso || "";
-  const issues = Array.isArray(result.issues)
-    ? result.issues
-    : Array.isArray(result.metadata?.issues)
-      ? result.metadata.issues
-      : [];
-  const metadata =
-    result.metadata && typeof result.metadata === "object" ? result.metadata : { engine: engineId };
-
-  return { events, totals, meta, person, week_start: weekStart, issues, metadata };
 }
 
 function getMk2Options(fallbackStartDate) {
