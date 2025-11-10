@@ -398,20 +398,23 @@ let refreshTestConsoleEditor = () => {};
 const DEFAULT_REPO_SLUG =
   document.documentElement?.dataset?.repoSlug || "LennartvdM/Wyrd-Engine";
 const DEFAULT_REPO_BRANCH = document.documentElement?.dataset?.repoBranch || "main";
-const PYTHON_RUNTIME_FILE_PATHS = [
-  "archetypes.py",
+const PYTHON_RUNTIME_CORE_PATHS = [
   "calendar_gen.py",
-  "calendar_gen_v2.py",
-  "calendar_layers.py",
   "cli.py",
   "friction.py",
   "models.py",
   "unique_days.py",
   "validation.py",
-  "yearly_budget.py",
   "engines/__init__.py",
   "engines/base.py",
   "engines/engine_mk1.py",
+  "rigs/simple_rig.py",
+];
+
+const PYTHON_RUNTIME_MK2_PATHS = [
+  "archetypes.py",
+  "calendar_gen_v2.py",
+  "calendar_layers.py",
   "engines/engine_mk2.py",
   "modules/__init__.py",
   "modules/calendar_provider.py",
@@ -420,9 +423,37 @@ const PYTHON_RUNTIME_FILE_PATHS = [
   "modules/validation.py",
   "rigs/__init__.py",
   "rigs/calendar_rig.py",
-  "rigs/simple_rig.py",
   "rigs/workforce_rig.py",
+  "yearly_budget.py",
 ];
+
+const PYTHON_RUNTIME_FILE_PATHS = dedupePaths([
+  ...PYTHON_RUNTIME_CORE_PATHS,
+  ...PYTHON_RUNTIME_MK2_PATHS,
+]);
+
+function dedupePaths(paths) {
+  if (!Array.isArray(paths)) {
+    return [];
+  }
+
+  const seen = new Set();
+  const result = [];
+
+  paths.forEach((path) => {
+    if (typeof path !== "string") {
+      return;
+    }
+    const value = path.trim();
+    if (!value || seen.has(value)) {
+      return;
+    }
+    result.push(value);
+    seen.add(value);
+  });
+
+  return result;
+}
 
 const ENGINE_FILE_PATTERN = /^engines\/engine_(mk\d+)\.py$/i;
 const ENGINE_OPTIONS = deriveEngineOptions(PYTHON_RUNTIME_FILE_PATHS);
