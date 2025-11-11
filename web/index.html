@@ -23,33 +23,52 @@
       <section class="tab-panel" data-tab="config" data-tab-scope="root">
         <div class="config-layout" id="config-panel">
           <div class="tab-group">
-            <div class="tab-bar nested" data-config="engine-tabs">
-              <button class="tab active" type="button" data-variant="mk1">MK1</button>
-              <button class="tab" type="button" data-variant="mk2">MK2</button>
+            <div class="tab-bar nested" data-config="class-tabs">
+              <button class="tab active" type="button" data-class="calendar">Calendar</button>
             </div>
-            <div class="tab-bar nested subtle" data-config="rig-tabs" data-variant="mk1">
-              <button class="tab active" type="button" data-rig="default">Default</button>
-            </div>
-            <div
-              class="tab-bar nested subtle"
-              data-config="rig-tabs"
-              data-variant="mk2"
-              hidden
-            >
-              <button class="tab active" type="button" data-rig="calendar">Calendar</button>
-              <button class="tab" type="button" data-rig="workforce">Workforce</button>
-            </div>
-            <div class="tab-content nested inset config-panels">
-              <div class="config-panel-content active" data-panel="mk1:default">
-                <p class="config-copy">MK1 Default settings placeholder…</p>
+            <div class="tab-content nested inset config-class-panels">
+              <div class="config-class-panel active" data-class-panel="calendar">
+                <section class="config-section" data-calendar="common"></section>
+                <div class="tab-bar nested" data-calendar="variant-tabs">
+                  <button class="tab active" type="button" data-variant="mk1">MK1</button>
+                  <button class="tab" type="button" data-variant="mk2">MK2</button>
+                </div>
+                <div class="config-variant-panels">
+                  <div class="config-variant-panel active" data-variant-panel="mk1">
+                    <div class="tab-bar nested subtle" data-rig-tabs="mk1">
+                      <button class="tab active" type="button" data-rig="default">Default</button>
+                    </div>
+                    <div class="tab-content nested inset config-panels">
+                      <div class="config-panel-content active" data-panel="mk1:default">
+                        <p class="config-copy">MK1 Default settings placeholder…</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="config-variant-panel" data-variant-panel="mk2" hidden>
+                    <div class="tab-bar nested subtle" data-rig-tabs="mk2">
+                      <button class="tab active" type="button" data-rig="calendar">Calendar</button>
+                      <button class="tab" type="button" data-rig="workforce">Workforce</button>
+                    </div>
+                    <div class="tab-content nested inset config-panels">
+                      <div class="config-panel-content active" data-panel="mk2:calendar">
+                        <p class="config-copy">MK2 Calendar settings placeholder…</p>
+                      </div>
+                      <div class="config-panel-content" data-panel="mk2:workforce" hidden>
+                        <p class="config-copy">MK2 Workforce settings placeholder…</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div class="config-panel-content" data-panel="mk2:calendar">
-                <p class="config-copy">MK2 Calendar settings placeholder…</p>
-              </div>
-              <div class="config-panel-content" data-panel="mk2:workforce">
-                <p class="config-copy">MK2 Workforce settings placeholder…</p>
-              </div>
             </div>
+          </div>
+          <div class="config-summary" data-config-summary>
+            <span class="config-chip" data-config-chip="class">Class: Calendar</span>
+            <span class="config-chip" data-config-chip="variant">Variant: MK1</span>
+            <span class="config-chip" data-config-chip="rig">Rig: Default</span>
+            <span class="config-chip" data-config-chip="archetype">Archetype: —</span>
+            <span class="config-chip" data-config-chip="weekStart">Week Start: —</span>
+            <span class="config-chip" data-config-chip="seed">Seed: —</span>
           </div>
           <div class="config-actions">
             <button
@@ -75,6 +94,6 @@
       <section class="tab-panel" data-tab="logs" data-tab-scope="root"></section>
     </main>
   </div>
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
