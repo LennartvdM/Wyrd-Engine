@@ -350,6 +350,8 @@ from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from calendar_gen_v2 import _select_profile, generate_complete_week
+from collections.abc import Mapping
+from dataclasses import asdict, is_dataclass
 from modules.unique_events import UniqueDay
 from yearly_budget import YearlyBudget
 
@@ -450,6 +452,62 @@ result = generate_complete_week(
 )
 
 
+MISSING = object()
+
+
+def extract_value(source: Any, key: str) -> Any:
+    if source is None:
+        return None
+    attr_value = getattr(source, key, MISSING)
+    if attr_value is not MISSING and attr_value is not None:
+        return attr_value
+    if isinstance(source, dict):
+        return source.get(key)
+    if attr_value is not MISSING:
+        return attr_value
+    if hasattr(source, "__dict__"):
+        return vars(source).get(key)
+    return None
+
+
+def ensure_mapping(value: Any) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, Mapping):
+        return dict(value)
+    if is_dataclass(value):
+        return asdict(value)
+    if hasattr(value, "_asdict"):
+        try:
+            mapping = value._asdict()
+            if isinstance(mapping, dict):
+                return mapping
+        except Exception:
+            pass
+    if hasattr(value, "__dict__"):
+        return dict(vars(value))
+    return None
+
+
+def ensure_sequence(value: Any) -> Optional[List[Any]]:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, set):
+        return list(value)
+    if hasattr(value, "__iter__") and not isinstance(value, (str, bytes, bytearray, dict)):
+        try:
+            return list(value)
+        except TypeError:
+            return None
+    return None
+
+
 def normalise_datetime_like(value: Any) -> str:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -530,7 +588,10 @@ def extract_time_candidate(event: Dict[str, Any], key: str) -> Any:
 
 def serialise_event(raw: Dict[str, Any], fallback_date: str = ""):
     if not isinstance(raw, dict):
-        return None
+        candidate = ensure_mapping(raw)
+        if candidate is None:
+            return None
+        raw = candidate
     event = dict(raw)
     for key, value in list(event.items()):
         if isinstance(value, (date, datetime, time, timedelta)):
@@ -555,13 +616,19 @@ def serialise_event(raw: Dict[str, Any], fallback_date: str = ""):
 
 
 def iter_event_records(payload: Any) -> Iterable[Tuple[Any, str]]:
-    if isinstance(payload, dict):
-        for key, collection in payload.items():
-            if isinstance(collection, list):
-                for item in collection:
-                    yield item, str(key)
-    elif isinstance(payload, list):
-        for item in payload:
+    mapping = ensure_mapping(payload)
+    if mapping is not None:
+        for key, collection in mapping.items():
+            sequence = ensure_sequence(collection)
+            if sequence is None:
+                continue
+            for item in sequence:
+                yield item, str(key)
+    else:
+        sequence = ensure_sequence(payload)
+        if sequence is None:
+            return
+        for item in sequence:
             yield item, ""
 
 
@@ -573,40 +640,56 @@ def enqueue_payload(payload: Any, fallback: Optional[str] = None) -> None:
         candidate_payloads.append((payload, fallback))
 
 
-enqueue_payload(result.get("events"))
-enqueue_payload(result.get("schedule"))
-enqueue_payload(result.get("items"))
+raw_events_field = extract_value(result, "events")
+enqueue_payload(raw_events_field)
+enqueue_payload(extract_value(result, "schedule"))
+enqueue_payload(extract_value(result, "items"))
 
-calendar_payload = result.get("calendar")
-if isinstance(calendar_payload, dict):
+calendar_payload = extract_value(result, "calendar")
+calendar_mapping = ensure_mapping(calendar_payload)
+if calendar_mapping is not None:
     calendar_fallback = (
-        calendar_payload.get("date")
-        or calendar_payload.get("day")
-        or calendar_payload.get("day_name")
+        calendar_mapping.get("date")
+        or calendar_mapping.get("day")
+        or calendar_mapping.get("day_name")
     )
-    enqueue_payload(calendar_payload.get("events"), calendar_fallback)
-    enqueue_payload(calendar_payload.get("items"), calendar_fallback)
-    days_payload = calendar_payload.get("days")
-    if isinstance(days_payload, list):
-        for day in days_payload:
-            if not isinstance(day, dict):
-                continue
-            day_fallback = day.get("date") or day.get("day") or day.get("day_name")
-            enqueue_payload(
-                day.get("events") or day.get("items") or day.get("schedule"),
-                day_fallback,
-            )
-
-days_payload = result.get("days")
-if isinstance(days_payload, list):
-    for day in days_payload:
-        if not isinstance(day, dict):
+    enqueue_payload(calendar_mapping.get("events"), calendar_fallback)
+    enqueue_payload(calendar_mapping.get("items"), calendar_fallback)
+    days_payload = calendar_mapping.get("days")
+    days_sequence = ensure_sequence(days_payload) or []
+    for day in days_sequence:
+        day_mapping = ensure_mapping(day)
+        if day_mapping is None:
             continue
-        day_fallback = day.get("date") or day.get("day") or day.get("day_name")
+        day_fallback = (
+            day_mapping.get("date")
+            or day_mapping.get("day")
+            or day_mapping.get("day_name")
+        )
         enqueue_payload(
-            day.get("events") or day.get("items") or day.get("schedule"),
+            day_mapping.get("events")
+            or day_mapping.get("items")
+            or day_mapping.get("schedule"),
             day_fallback,
         )
+
+days_payload = extract_value(result, "days")
+days_sequence = ensure_sequence(days_payload) or []
+for day in days_sequence:
+    day_mapping = ensure_mapping(day)
+    if day_mapping is None:
+        continue
+    day_fallback = (
+        day_mapping.get("date")
+        or day_mapping.get("day")
+        or day_mapping.get("day_name")
+    )
+    enqueue_payload(
+        day_mapping.get("events")
+        or day_mapping.get("items")
+        or day_mapping.get("schedule"),
+        day_fallback,
+    )
 
 events: List[Dict[str, Any]] = []
 raw_event_counter = 0
@@ -623,9 +706,18 @@ print(
     f"[MK2 bridge] serialized {len(events)} events (raw seen {raw_event_counter})"
 )
 
-result["events"] = events
+events_list = events if isinstance(events, list) else ([] if events is None else list(events))
 
-metadata: Dict[str, Any] = result.setdefault("metadata", {})
+issues_value = extract_value(result, "issues")
+if isinstance(issues_value, str):
+    issues_list = [issues_value]
+else:
+    issues_sequence = ensure_sequence(issues_value)
+    issues_list = issues_sequence if issues_sequence is not None else []
+
+metadata_value = extract_value(result, "metadata")
+metadata_mapping = ensure_mapping(metadata_value) or {}
+metadata = dict(metadata_mapping)
 metadata["rig"] = rig_name
 metadata["seed"] = seed
 metadata["seed_source"] = seed_source
@@ -635,10 +727,56 @@ if used_defaults:
 if budget_hours:
     metadata["yearly_budget_hours"] = budget_hours
 
-if not result.get("week_start"):
-    result["week_start"] = start.isoformat()
+person_value = extract_value(result, "person")
+person_mapping = ensure_mapping(person_value)
+if person_mapping is not None:
+    person_payload = person_mapping
+else:
+    person_sequence = ensure_sequence(person_value)
+    if person_sequence is not None:
+        person_payload = person_sequence
+    elif person_value is None:
+        person_payload = None
+    else:
+        person_payload = str(person_value)
 
-result
+week_start_value = (
+    extract_value(result, "week_start")
+    or extract_value(result, "weekStart")
+    or start
+)
+if isinstance(week_start_value, (datetime, date, time, timedelta)):
+    week_start_text = normalise_datetime_like(week_start_value)
+else:
+    week_start_text = str(week_start_value) if week_start_value else start.isoformat()
+
+first_event_sample = events_list[0] if events_list else None
+try:
+    first_event_preview = json.loads(json.dumps(first_event_sample)) if first_event_sample else None
+except TypeError:
+    first_event_preview = str(first_event_sample)
+
+print(
+    "[MK2 bridge] payload diagnostics",
+    {
+        "events_length": len(events_list),
+        "raw_events_type": type(raw_events_field).__name__,
+        "events_list_type": type(events_list).__name__,
+        "first_event": first_event_preview,
+    },
+)
+
+payload = {
+    "person": person_payload,
+    "week_start": week_start_text,
+    "events": events_list,
+    "issues": issues_list,
+    "metadata": metadata,
+}
+
+payload_json = json.dumps(payload)
+
+json.loads(payload_json)
 `;
 
 const mk2RuntimeController = createPyRuntimeController();
