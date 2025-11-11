@@ -52,12 +52,15 @@ const COLOR_MAP = {
 const LOCKED_ACTIVITIES = new Set(["sleep", "work", "commute_in", "commute_out"]);
 
 const configInput = document.querySelector("#config-input");
+const configJsonRow = document.querySelector("#config-json-row");
+const mk2ConfigTarget = document.querySelector("#mk2-config-target");
 const form = document.querySelector("#config-form");
 const formStatus = document.querySelector("#form-status");
 const generateButton = document.querySelector("#generate-button");
 const startDateInput = document.querySelector("#start-date");
 const engineSelect = document.querySelector("#engine-select");
-const mk2OptionsFieldset = document.querySelector("#mk2-options");
+const pageLayout = document.querySelector(".page-layout");
+const mk2Panel = document.querySelector("#mk2-panel");
 const mk2ArchetypeInput = document.querySelector("#mk2-archetype");
 const mk2RigInput = document.querySelector("#mk2-rig");
 const mk2SeedInput = document.querySelector("#mk2-seed");
@@ -145,6 +148,8 @@ let replayState = createEmptyReplayState();
 let gifshotLoader = null;
 let tooltipInitialized = false;
 let replayTooltipElement = null;
+let configJsonOriginalParent = null;
+let configJsonOriginalNextSibling = null;
 
 setReplayExportAvailability(false);
 
@@ -1199,6 +1204,11 @@ if (configInput) {
   configInput.value = JSON.stringify(DEFAULT_CONFIG, null, 2);
 }
 
+if (configJsonRow) {
+  configJsonOriginalParent = configJsonRow.parentElement;
+  configJsonOriginalNextSibling = configJsonRow.nextElementSibling;
+}
+
 if (engineSelect) {
   populateEngineSelect(engineSelect, ENGINE_OPTIONS, DEFAULT_ENGINE_ID);
 
@@ -1208,15 +1218,33 @@ if (engineSelect) {
   };
 
   const toggleMk2OptionsVisibility = () => {
-    if (!mk2OptionsFieldset) {
+    if (!mk2Panel) {
       return;
     }
 
-    if (engineSelect.value === "mk2") {
-      mk2OptionsFieldset.classList.remove("hidden");
+    const isMk2 = engineSelect.value === "mk2";
+
+    mk2Panel.classList.toggle("hidden", !isMk2);
+    if (pageLayout) {
+      pageLayout.classList.toggle("page-layout--mk2", isMk2);
+    }
+
+    if (isMk2) {
+      if (mk2ConfigTarget && configJsonRow) {
+        mk2ConfigTarget.appendChild(configJsonRow);
+      }
       refreshMk2Defaults({ forceRandomSeed: Boolean(mk2SurpriseMeInput?.checked) });
-    } else {
-      mk2OptionsFieldset.classList.add("hidden");
+    } else if (configJsonOriginalParent && configJsonRow) {
+      const referenceNode =
+        configJsonOriginalNextSibling &&
+        configJsonOriginalNextSibling.parentElement === configJsonOriginalParent
+          ? configJsonOriginalNextSibling
+          : null;
+      if (referenceNode) {
+        configJsonOriginalParent.insertBefore(configJsonRow, referenceNode);
+      } else {
+        configJsonOriginalParent.appendChild(configJsonRow);
+      }
     }
   };
 

@@ -58,52 +58,14 @@
               Choose which engine implementation to run when generating a schedule.
             </p>
           </div>
-          <fieldset class="form-row form-row--full hidden" id="mk2-options">
-            <legend class="form-label">MK2 options</legend>
-            <div class="form-row">
-              <label for="mk2-archetype">Archetype</label>
-              <select id="mk2-archetype" name="mk2-archetype">
-                <option value="office">Office</option>
-                <option value="parent">Parent</option>
-                <option value="freelancer">Freelancer</option>
-              </select>
-            </div>
-            <div class="form-row">
-              <label for="mk2-rig">Rig</label>
-              <select id="mk2-rig" name="mk2-rig">
-                <option value="calendar">Calendar</option>
-                <option value="workforce">Workforce</option>
-              </select>
-            </div>
-            <div class="form-row">
-              <div class="form-row__label-group">
-                <label for="mk2-seed">Seed</label>
-                <button type="button" id="mk2-reset-defaults" class="link-button">Reset defaults</button>
-              </div>
-              <div class="mk2-seed-controls">
-                <input id="mk2-seed" name="mk2-seed" type="number" inputmode="numeric" />
-                <label class="checkbox-inline" for="mk2-surprise">
-                  <input id="mk2-surprise" name="mk2-surprise" type="checkbox" />
-                  <span>Surprise me</span>
-                </label>
-              </div>
-            </div>
-            <div class="form-row">
-              <label for="mk2-start">Week start</label>
-              <input id="mk2-start" name="mk2-start" type="date" />
-            </div>
-            <div class="form-row form-row--full">
-              <label for="mk2-budget">Yearly budget (optional)</label>
-              <textarea id="mk2-budget" name="mk2-budget" rows="3" spellcheck="false"></textarea>
-            </div>
-          </fieldset>
-          <div class="form-row form-row--full">
+          <div class="form-row form-row--full" id="config-json-row">
             <label for="config-input">Configuration JSON</label>
             <textarea
               id="config-input"
               name="config-input"
               spellcheck="false"
               rows="12"
+              form="config-form"
             ></textarea>
             <p class="help-text">
               Provide the same JSON structure used by <code>calendar_gen.py</code>.
@@ -114,6 +76,49 @@
           </div>
           <p class="form-status" id="form-status" role="status" aria-live="polite"></p>
         </form>
+      </section>
+
+      <section class="card mk2-panel hidden" id="mk2-panel">
+        <fieldset class="mk2-panel__section" id="mk2-options">
+          <legend class="mk2-panel__heading">MK2 options</legend>
+          <div class="form-row">
+            <label for="mk2-archetype">Archetype</label>
+            <select id="mk2-archetype" name="mk2-archetype" form="config-form">
+              <option value="office">Office</option>
+              <option value="parent">Parent</option>
+              <option value="freelancer">Freelancer</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="mk2-rig">Rig</label>
+            <select id="mk2-rig" name="mk2-rig" form="config-form">
+              <option value="calendar">Calendar</option>
+              <option value="workforce">Workforce</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <div class="form-row__label-group">
+              <label for="mk2-seed">Seed</label>
+              <button type="button" id="mk2-reset-defaults" class="link-button">Reset defaults</button>
+            </div>
+            <div class="mk2-seed-controls">
+              <input id="mk2-seed" name="mk2-seed" type="number" inputmode="numeric" form="config-form" />
+              <label class="checkbox-inline" for="mk2-surprise">
+                <input id="mk2-surprise" name="mk2-surprise" type="checkbox" form="config-form" />
+                <span>Surprise me</span>
+              </label>
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="mk2-start">Week start</label>
+            <input id="mk2-start" name="mk2-start" type="date" form="config-form" />
+          </div>
+          <div class="form-row">
+            <label for="mk2-budget">Yearly budget (optional)</label>
+            <textarea id="mk2-budget" name="mk2-budget" rows="3" spellcheck="false" form="config-form"></textarea>
+          </div>
+        </fieldset>
+        <div class="mk2-panel__section" id="mk2-config-target"></div>
       </section>
 
       <section class="card hidden results-card" id="results">
