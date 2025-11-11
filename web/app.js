@@ -21,6 +21,10 @@ tabButtons.forEach((button) => {
 });
 
 const configPanel = document.querySelector('.tab-panel[data-tab="config"]');
+const consolePanel = document.querySelector('.tab-panel[data-tab="console"]');
+const jsonPanel = document.querySelector('.tab-panel[data-tab="json"]');
+const fixturesPanel = document.querySelector('.tab-panel[data-tab="fixtures"]');
+const logsPanel = document.querySelector('.tab-panel[data-tab="logs"]');
 
 if (configPanel) {
   const accordionSections = [
@@ -118,4 +122,113 @@ if (configPanel) {
 
   configPanel.innerHTML = '';
   configPanel.append(accordion);
+}
+
+if (consolePanel) {
+  const consoleContainer = document.createElement('div');
+  consoleContainer.className = 'console-pane';
+
+  const stdoutSection = document.createElement('section');
+  stdoutSection.className = 'console-stream';
+
+  const stdoutHeader = document.createElement('h3');
+  stdoutHeader.className = 'console-stream-title';
+  stdoutHeader.textContent = 'Stdout';
+
+  const stdoutOutput = document.createElement('div');
+  stdoutOutput.className = 'console-output';
+  stdoutOutput.textContent = 'Program output will appear here.';
+
+  stdoutSection.append(stdoutHeader, stdoutOutput);
+
+  const stderrSection = document.createElement('section');
+  stderrSection.className = 'console-stream';
+
+  const stderrHeader = document.createElement('h3');
+  stderrHeader.className = 'console-stream-title';
+  stderrHeader.textContent = 'Stderr';
+
+  const stderrOutput = document.createElement('div');
+  stderrOutput.className = 'console-output';
+  stderrOutput.textContent = 'Error output will appear here.';
+
+  stderrSection.append(stderrHeader, stderrOutput);
+
+  consoleContainer.append(stdoutSection, stderrSection);
+  consolePanel.append(consoleContainer);
+}
+
+if (jsonPanel) {
+  const jsonContainer = document.createElement('div');
+  jsonContainer.className = 'json-pane';
+
+  const jsonToolbar = document.createElement('div');
+  jsonToolbar.className = 'json-toolbar';
+
+  const copyButton = document.createElement('button');
+  copyButton.type = 'button';
+  copyButton.className = 'json-copy';
+  copyButton.textContent = 'Copy';
+
+  jsonToolbar.append(copyButton);
+
+  const jsonOutput = document.createElement('pre');
+  jsonOutput.className = 'json-output';
+  jsonOutput.textContent = '{\n  "data": "JSON payloads will render here."\n}';
+
+  jsonContainer.append(jsonToolbar, jsonOutput);
+  jsonPanel.append(jsonContainer);
+}
+
+if (fixturesPanel) {
+  const fixturesContainer = document.createElement('div');
+  fixturesContainer.className = 'fixtures-pane';
+
+  const fixturesList = document.createElement('ul');
+  fixturesList.className = 'fixtures-list';
+
+  const placeholderItem = document.createElement('li');
+  placeholderItem.textContent = 'No fixtures loaded. Add fixtures to see them listed here.';
+
+  fixturesList.append(placeholderItem);
+
+  const fixturesActions = document.createElement('div');
+  fixturesActions.className = 'fixtures-actions';
+
+  const loadButton = document.createElement('button');
+  loadButton.type = 'button';
+  loadButton.textContent = 'Load';
+  loadButton.disabled = true;
+
+  const saveButton = document.createElement('button');
+  saveButton.type = 'button';
+  saveButton.textContent = 'Save';
+  saveButton.disabled = true;
+
+  fixturesActions.append(loadButton, saveButton);
+
+  fixturesContainer.append(fixturesList, fixturesActions);
+  fixturesPanel.append(fixturesContainer);
+}
+
+if (logsPanel) {
+  const logsContainer = document.createElement('div');
+  logsContainer.className = 'logs-pane';
+
+  const logsToolbar = document.createElement('div');
+  logsToolbar.className = 'logs-toolbar';
+
+  const clearButton = document.createElement('button');
+  clearButton.type = 'button';
+  clearButton.className = 'logs-clear';
+  clearButton.textContent = 'Clear';
+
+  logsToolbar.append(clearButton);
+
+  const logsOutput = document.createElement('div');
+  logsOutput.className = 'logs-output';
+  logsOutput.textContent = 'Log messages will appear here as they stream in.';
+
+  logsContainer.append(logsToolbar, logsOutput);
+  logsPanel.append(logsContainer);
 }

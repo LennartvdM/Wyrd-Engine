@@ -78,6 +78,43 @@ body {
   background: rgba(58, 63, 79, 0.1);
 }
 
+.console-pane {
+  display: grid;
+  gap: 12px;
+}
+
+.console-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #1f2128;
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.console-stream-title {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #9ba3b6;
+}
+
+.console-output {
+  min-height: 120px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e5e7eb;
+  background: #16171d;
+  border: 1px solid #2a2d35;
+  border-radius: 4px;
+  padding: 10px;
+}
+
 .tab-panel[data-tab="config"] {
   display: none;
 }
@@ -160,4 +197,119 @@ body {
 
 .accordion-content p {
   margin: 12px 0 0;
+}
+
+.json-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.json-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.json-copy {
+  background: #2b2f3b;
+  color: #d0d5e2;
+  border: 1px solid #3a3f4f;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.json-copy:hover {
+  background: #3a3f4f;
+  color: #ffffff;
+}
+
+.json-output {
+  margin: 0;
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  background: #16171d;
+  color: #e5e7eb;
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+  padding: 14px;
+  min-height: 240px;
+  overflow: auto;
+}
+
+.fixtures-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.fixtures-list {
+  list-style: disc;
+  padding-left: 20px;
+  margin: 0;
+  color: #cbd0df;
+  font-size: 13px;
+  align-self: flex-start;
+}
+
+.fixtures-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.fixtures-actions button {
+  background: #2b2f3b;
+  color: #80879b;
+  border: 1px solid #343945;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.fixtures-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.logs-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.logs-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.logs-clear {
+  background: #2b2f3b;
+  color: #d0d5e2;
+  border: 1px solid #3a3f4f;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.logs-clear:hover {
+  background: #3a3f4f;
+  color: #ffffff;
+}
+
+.logs-output {
+  min-height: 260px;
+  background: #16171d;
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+  padding: 14px;
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  color: #b9bfd2;
+  line-height: 1.5;
+  overflow-y: auto;
 }
