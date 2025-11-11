@@ -143,6 +143,12 @@ a:hover {
     grid-template-rows: auto auto minmax(0, 1fr);
   }
 
+  .page-layout--mk2 .form-card,
+  .page-layout--mk2 .mk2-panel,
+  .page-layout--mk2 .results-card {
+    grid-column: 1 / -1;
+  }
+
   .results-card {
     grid-row: 2;
   }
