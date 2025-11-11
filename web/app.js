@@ -782,6 +782,16 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     ? Array.from(engineTabBar.querySelectorAll('button[data-variant]'))
     : [];
 
+  const configActions = configPanel.querySelector('.config-actions');
+  if (configActions) {
+    initializeRuntimeButton =
+      configActions.querySelector('[data-config-action="initialize-runtime"]') ||
+      configActions.querySelector('.secondary-action');
+    generateButton =
+      configActions.querySelector('[data-config-action="generate-runtime"]') ||
+      configActions.querySelector('.primary-action');
+  }
+
   const rigRows = Array.from(
     configPanel.querySelectorAll('[data-config="rig-tabs"][data-variant]')
   );
