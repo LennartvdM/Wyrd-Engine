@@ -1,5 +1,6 @@
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
 const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
+const tabOrder = ['calendar', 'config', 'console', 'json', 'fixtures', 'logs'];
 
 function setActiveTab(targetTab) {
   tabButtons.forEach((button) => {
@@ -18,6 +19,148 @@ tabButtons.forEach((button) => {
     const targetTab = button.dataset.tab;
     setActiveTab(targetTab);
   });
+});
+
+function tabFromShortcutKey(key) {
+  const numericKey = Number.parseInt(key, 10);
+  if (Number.isNaN(numericKey)) {
+    return null;
+  }
+
+  const index = numericKey - 1;
+  if (index >= 0 && index < tabOrder.length) {
+    return tabOrder[index];
+  }
+  return null;
+}
+
+const paletteOverlay = document.createElement('div');
+paletteOverlay.className = 'command-palette-overlay';
+paletteOverlay.setAttribute('aria-hidden', 'true');
+paletteOverlay.hidden = true;
+
+const paletteDialog = document.createElement('div');
+paletteDialog.className = 'command-palette';
+paletteDialog.setAttribute('role', 'dialog');
+paletteDialog.setAttribute('aria-modal', 'true');
+
+const paletteTitle = document.createElement('h2');
+paletteTitle.className = 'command-palette-title';
+paletteTitle.textContent = 'Command Palette';
+
+const paletteList = document.createElement('ul');
+paletteList.className = 'command-palette-actions';
+
+const paletteActions = [
+  { label: 'Go to Calendar', tab: 'calendar' },
+  { label: 'Go to Config', tab: 'config' },
+  { label: 'Go to Console', tab: 'console' },
+  { label: 'Go to JSON', tab: 'json' },
+  { label: 'Go to Fixtures', tab: 'fixtures' },
+  { label: 'Go to Logs', tab: 'logs' },
+  { label: 'Reload Runtime', disabled: true }
+];
+
+paletteActions.forEach((action) => {
+  const item = document.createElement('li');
+  item.className = 'command-palette-item';
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'command-palette-action';
+  button.textContent = action.label;
+
+  if (action.disabled) {
+    button.disabled = true;
+    button.setAttribute('aria-disabled', 'true');
+  } else if (action.tab) {
+    button.addEventListener('click', () => {
+      setActiveTab(action.tab);
+      closePalette();
+    });
+  }
+
+  item.append(button);
+  paletteList.append(item);
+});
+
+paletteDialog.append(paletteTitle, paletteList);
+paletteOverlay.append(paletteDialog);
+document.body.append(paletteOverlay);
+
+let isPaletteOpen = false;
+let lastFocusedElement = null;
+
+function openPalette() {
+  if (isPaletteOpen) return;
+  isPaletteOpen = true;
+  lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  paletteOverlay.hidden = false;
+  paletteOverlay.classList.add('open');
+  paletteOverlay.setAttribute('aria-hidden', 'false');
+
+  const firstAction = paletteOverlay.querySelector('.command-palette-action:not([disabled])');
+  if (firstAction) {
+    firstAction.focus();
+  }
+}
+
+function closePalette() {
+  if (!isPaletteOpen) return;
+  isPaletteOpen = false;
+  paletteOverlay.classList.remove('open');
+  paletteOverlay.setAttribute('aria-hidden', 'true');
+  paletteOverlay.hidden = true;
+
+  if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+    lastFocusedElement.focus();
+  }
+}
+
+paletteOverlay.addEventListener('click', (event) => {
+  if (event.target === paletteOverlay) {
+    closePalette();
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  const key = event.key;
+  const hasModifier = event.ctrlKey || event.metaKey;
+
+  if (hasModifier && !event.altKey && !event.shiftKey) {
+    if (key.toLowerCase() === 'k') {
+      if (event.repeat) {
+        event.preventDefault();
+        return;
+      }
+      event.preventDefault();
+      if (isPaletteOpen) {
+        closePalette();
+      } else {
+        openPalette();
+      }
+      return;
+    }
+
+    const targetTab = tabFromShortcutKey(key);
+    if (targetTab) {
+      if (event.repeat) {
+        event.preventDefault();
+        return;
+      }
+      event.preventDefault();
+      setActiveTab(targetTab);
+      if (isPaletteOpen) {
+        closePalette();
+      }
+      return;
+    }
+  }
+
+  if (key === 'Escape' && isPaletteOpen) {
+    event.preventDefault();
+    closePalette();
+  }
 });
 
 const configPanel = document.querySelector('.tab-panel[data-tab="config"]');
