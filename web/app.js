@@ -3,29 +3,254 @@ const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
 const tabOrder = ['calendar', 'config', 'console', 'json', 'fixtures', 'logs'];
 const consoleTabButton = tabButtons.find((button) => button.dataset.tab === 'console');
 
+const INTENT_TYPES = {
+  NAVIGATE_TAB: 'NAVIGATE_TAB',
+  SHOW_TOAST: 'SHOW_TOAST',
+  APP_STATUS: 'APP_STATUS',
+};
+
+const intentHandlers = new Map();
+
+function registerIntentHandler(type, handler) {
+  if (typeof type !== 'string' || !type) {
+    return () => {};
+  }
+  if (typeof handler !== 'function') {
+    return () => {};
+  }
+  if (!intentHandlers.has(type)) {
+    intentHandlers.set(type, new Set());
+  }
+  const handlers = intentHandlers.get(type);
+  handlers.add(handler);
+  return () => {
+    handlers.delete(handler);
+    if (handlers.size === 0) {
+      intentHandlers.delete(type);
+    }
+  };
+}
+
+function dispatchIntent(intent) {
+  if (!intent || typeof intent.type !== 'string') {
+    return;
+  }
+  const handlers = intentHandlers.get(intent.type);
+  if (!handlers || handlers.size === 0) {
+    return;
+  }
+  handlers.forEach((handler) => {
+    try {
+      handler(intent.payload ?? {}, intent);
+    } catch (error) {
+      console.error(`Intent handler for ${intent.type} failed:`, error);
+    }
+  });
+}
+
+let toastContainer;
+let toastIdCounter = 0;
+const activeToasts = new Map();
+
+function getToastContainer() {
+  if (toastContainer && document.body.contains(toastContainer)) {
+    return toastContainer;
+  }
+  toastContainer = document.createElement('div');
+  toastContainer.className = 'toast-container';
+  toastContainer.style.position = 'fixed';
+  toastContainer.style.top = '16px';
+  toastContainer.style.right = '16px';
+  toastContainer.style.display = 'flex';
+  toastContainer.style.flexDirection = 'column';
+  toastContainer.style.alignItems = 'flex-end';
+  toastContainer.style.gap = '8px';
+  toastContainer.style.zIndex = '9999';
+  toastContainer.style.pointerEvents = 'none';
+  document.body.append(toastContainer);
+  return toastContainer;
+}
+
+function removeToast(id) {
+  const entry = activeToasts.get(id);
+  if (!entry) {
+    return;
+  }
+  activeToasts.delete(id);
+  window.clearTimeout(entry.timeoutId);
+  const { element } = entry;
+  element.style.opacity = '0';
+  element.style.transform = 'translateY(-6px)';
+  const removeDelay = Number.parseInt(element.dataset.dismissDelay ?? '200', 10);
+  window.setTimeout(() => {
+    element.remove();
+    if (toastContainer && toastContainer.childElementCount === 0) {
+      toastContainer.remove();
+      toastContainer = undefined;
+    }
+  }, Number.isNaN(removeDelay) ? 200 : removeDelay);
+}
+
+function showToast(payload = {}) {
+  const message = typeof payload.message === 'string' ? payload.message.trim() : '';
+  if (!message) {
+    return;
+  }
+  const description =
+    typeof payload.description === 'string' ? payload.description.trim() : '';
+  const intent = typeof payload.intent === 'string' ? payload.intent.toLowerCase() : 'info';
+  const duration = Number.isFinite(payload.duration) ? payload.duration : 4000;
+
+  const container = getToastContainer();
+  toastIdCounter += 1;
+  const toastId = toastIdCounter;
+
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.style.pointerEvents = 'auto';
+  toast.style.background = '#0f172a';
+  toast.style.border = '1px solid #1e293b';
+  toast.style.borderRadius = '8px';
+  toast.style.padding = '12px 16px';
+  toast.style.color = '#f8fafc';
+  toast.style.display = 'flex';
+  toast.style.flexDirection = 'row';
+  toast.style.alignItems = 'flex-start';
+  toast.style.gap = '12px';
+  toast.style.minWidth = '240px';
+  toast.style.maxWidth = '320px';
+  toast.style.boxShadow = '0 20px 35px rgba(15, 23, 42, 0.35)';
+  toast.style.opacity = '0';
+  toast.style.transform = 'translateY(-6px)';
+  toast.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+  toast.setAttribute('role', 'status');
+  toast.setAttribute('aria-live', 'polite');
+
+  const intentColors = {
+    success: '#22c55e',
+    error: '#f97316',
+    warning: '#facc15',
+    info: '#38bdf8',
+  };
+  const accentColor = intentColors[intent] || intentColors.info;
+
+  const accent = document.createElement('span');
+  accent.style.display = 'block';
+  accent.style.width = '4px';
+  accent.style.borderRadius = '4px';
+  accent.style.background = accentColor;
+
+  const content = document.createElement('div');
+  content.style.display = 'flex';
+  content.style.flexDirection = 'column';
+  content.style.gap = description ? '4px' : '0';
+  content.style.flex = '1 1 auto';
+
+  const title = document.createElement('p');
+  title.textContent = message;
+  title.style.margin = '0';
+  title.style.fontSize = '13px';
+  title.style.fontWeight = '600';
+  title.style.lineHeight = '1.4';
+  content.append(title);
+
+  if (description) {
+    const details = document.createElement('p');
+    details.textContent = description;
+    details.style.margin = '0';
+    details.style.fontSize = '12px';
+    details.style.fontWeight = '400';
+    details.style.color = '#cbd5f5';
+    details.style.lineHeight = '1.4';
+    content.append(details);
+  }
+
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.textContent = '×';
+  closeButton.setAttribute('aria-label', 'Dismiss notification');
+  closeButton.style.background = 'transparent';
+  closeButton.style.border = 'none';
+  closeButton.style.color = '#94a3b8';
+  closeButton.style.cursor = 'pointer';
+  closeButton.style.fontSize = '16px';
+  closeButton.style.lineHeight = '1';
+  closeButton.style.padding = '2px';
+  closeButton.style.marginLeft = '4px';
+  closeButton.style.transition = 'color 0.2s ease';
+  closeButton.addEventListener('mouseenter', () => {
+    closeButton.style.color = '#f8fafc';
+  });
+  closeButton.addEventListener('mouseleave', () => {
+    closeButton.style.color = '#94a3b8';
+  });
+
+  closeButton.addEventListener('click', () => {
+    removeToast(toastId);
+  });
+
+  toast.append(accent, content, closeButton);
+  container.append(toast);
+
+  requestAnimationFrame(() => {
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateY(0)';
+  });
+
+  const safeDuration = Number.isFinite(duration) ? Math.max(2000, duration) : 4000;
+  const timeoutId = window.setTimeout(() => {
+    removeToast(toastId);
+  }, safeDuration);
+
+  toast.dataset.dismissDelay = '200';
+  activeToasts.set(toastId, { element: toast, timeoutId });
+}
+
+registerIntentHandler(INTENT_TYPES.SHOW_TOAST, showToast);
+
 let currentTab =
   tabButtons.find((button) => button.classList.contains('active'))?.dataset.tab ||
   tabOrder[0];
 let consoleIndicator;
 let pendingAutoSwitch = false;
 
-function setActiveTab(targetTab) {
+function applyActiveTab(targetTab) {
+  if (typeof targetTab !== 'string') {
+    return;
+  }
+  const normalizedTarget = targetTab.toLowerCase();
+  if (!tabOrder.includes(normalizedTarget)) {
+    return;
+  }
+
   tabButtons.forEach((button) => {
-    const isActive = button.dataset.tab === targetTab;
+    const isActive = button.dataset.tab === normalizedTarget;
     button.classList.toggle('active', isActive);
   });
 
   tabPanels.forEach((panel) => {
-    const isActive = panel.dataset.tab === targetTab;
+    const isActive = panel.dataset.tab === normalizedTarget;
     panel.classList.toggle('active', isActive);
   });
 
-  currentTab = targetTab;
-  if (targetTab === 'console') {
-    setConsoleIndicatorVisible(false);
+  currentTab = normalizedTarget;
+  if (normalizedTarget === 'console') {
+    dispatchIntent({
+      type: INTENT_TYPES.APP_STATUS,
+      payload: { channel: 'console-indicator', visible: false },
+    });
     pendingAutoSwitch = false;
   }
 }
+
+registerIntentHandler(INTENT_TYPES.NAVIGATE_TAB, (payload = {}) => {
+  const target =
+    typeof payload.tab === 'string' ? payload.tab.toLowerCase() : undefined;
+  if (!target) {
+    return;
+  }
+  applyActiveTab(target);
+});
 
 if (consoleTabButton) {
   consoleTabButton.style.display = 'inline-flex';
@@ -47,7 +272,10 @@ if (consoleTabButton) {
 tabButtons.forEach((button) => {
   button.addEventListener('click', () => {
     const targetTab = button.dataset.tab;
-    setActiveTab(targetTab);
+    dispatchIntent({
+      type: INTENT_TYPES.NAVIGATE_TAB,
+      payload: { tab: targetTab },
+    });
   });
 });
 
@@ -105,7 +333,10 @@ paletteActions.forEach((action) => {
     button.setAttribute('aria-disabled', 'true');
   } else if (action.tab) {
     button.addEventListener('click', () => {
-      setActiveTab(action.tab);
+      dispatchIntent({
+        type: INTENT_TYPES.NAVIGATE_TAB,
+        payload: { tab: action.tab },
+      });
       closePalette();
     });
   }
@@ -179,7 +410,10 @@ document.addEventListener('keydown', (event) => {
         return;
       }
       event.preventDefault();
-      setActiveTab(targetTab);
+      dispatchIntent({
+        type: INTENT_TYPES.NAVIGATE_TAB,
+        payload: { tab: targetTab },
+      });
       if (isPaletteOpen) {
         closePalette();
       }
@@ -208,6 +442,8 @@ let initializeRuntimeButton;
 let runTestButton;
 let runtimeReady = false;
 let runtimeLoadingPromise;
+let runtimeStatus = 'idle';
+let hasShownRuntimeReadyToast = false;
 
 let pyWorker;
 try {
@@ -304,7 +540,7 @@ function updateRuntimeButtonState(button) {
   }
 }
 
-function setConsoleIndicatorVisible(isVisible) {
+function applyConsoleIndicatorVisible(isVisible) {
   if (!consoleIndicator) {
     return;
   }
@@ -320,7 +556,10 @@ function beginConsoleRun(message) {
     stderrOutput.textContent = defaultStderrMessage;
   }
   if (currentTab === 'console') {
-    setConsoleIndicatorVisible(false);
+    dispatchIntent({
+      type: INTENT_TYPES.APP_STATUS,
+      payload: { channel: 'console-indicator', visible: false },
+    });
   }
 }
 
@@ -337,12 +576,19 @@ function renderConsoleOutputs({ stdout, stderr }) {
   }
 
   if (currentTab !== 'console') {
-    setConsoleIndicatorVisible(Boolean(stdout) || Boolean(stderr));
+    const hasOutput = Boolean(stdout) || Boolean(stderr);
+    dispatchIntent({
+      type: INTENT_TYPES.APP_STATUS,
+      payload: { channel: 'console-indicator', visible: hasOutput },
+    });
   }
 
   if ((stdout && stdout.length > 0) || (stderr && stderr.length > 0)) {
     if (pendingAutoSwitch && currentTab !== 'console') {
-      setActiveTab('console');
+      dispatchIntent({
+        type: INTENT_TYPES.NAVIGATE_TAB,
+        payload: { tab: 'console' },
+      });
     }
   }
   pendingAutoSwitch = false;
@@ -353,18 +599,67 @@ async function ensureRuntimeLoaded() {
     return;
   }
   if (!runtimeLoadingPromise) {
-    runtimeLoadingPromise = sendWorkerMessage('load');
+    dispatchIntent({
+      type: INTENT_TYPES.APP_STATUS,
+      payload: { channel: 'runtime', status: 'loading' },
+    });
+    runtimeLoadingPromise = sendWorkerMessage('load')
+      .then((result) => {
+        dispatchIntent({
+          type: INTENT_TYPES.APP_STATUS,
+          payload: { channel: 'runtime', status: 'ready' },
+        });
+        return result;
+      })
+      .catch((error) => {
+        dispatchIntent({
+          type: INTENT_TYPES.APP_STATUS,
+          payload: { channel: 'runtime', status: 'error', error },
+        });
+        throw error;
+      })
+      .finally(() => {
+        runtimeLoadingPromise = undefined;
+      });
   }
-  try {
-    await runtimeLoadingPromise;
-    runtimeReady = true;
-  } catch (error) {
-    runtimeReady = false;
-    throw error;
-  } finally {
-    runtimeLoadingPromise = undefined;
-  }
+  return runtimeLoadingPromise;
 }
+
+registerIntentHandler(INTENT_TYPES.APP_STATUS, (payload = {}) => {
+  const channel = payload.channel;
+  if (channel === 'console-indicator') {
+    applyConsoleIndicatorVisible(Boolean(payload.visible));
+    return;
+  }
+
+  if (channel === 'runtime') {
+    const status = typeof payload.status === 'string' ? payload.status : '';
+    if (!status) {
+      return;
+    }
+    const previousStatus = runtimeStatus;
+    if (status === 'ready') {
+      runtimeReady = true;
+      if (!hasShownRuntimeReadyToast || previousStatus !== 'ready') {
+        dispatchIntent({
+          type: INTENT_TYPES.SHOW_TOAST,
+          payload: {
+            message: payload.message || 'Runtime ready',
+            intent: 'success',
+            duration: 3200,
+          },
+        });
+        hasShownRuntimeReadyToast = true;
+      }
+    } else if (status === 'loading') {
+      runtimeReady = false;
+    } else if (status === 'error') {
+      runtimeReady = false;
+      hasShownRuntimeReadyToast = false;
+    }
+    runtimeStatus = status;
+  }
+});
 
 function handleRuntimeLoadSuccess() {
   if (initializeRuntimeButton) {
@@ -388,11 +683,25 @@ function handleRuntimeLoadFailure(error) {
     runTestButton.disabled = true;
     updateRuntimeButtonState(runTestButton);
   }
+  hasShownRuntimeReadyToast = false;
   const stderrMessage =
     typeof error?.stderr === 'string' && error.stderr
       ? error.stderr
       : error?.error || 'Failed to initialize Pyodide runtime.';
   renderConsoleOutputs({ stdout: error?.stdout || '', stderr: stderrMessage });
+  const toastDescription =
+    typeof error?.error === 'string' && error.error !== stderrMessage
+      ? error.error
+      : stderrMessage;
+  dispatchIntent({
+    type: INTENT_TYPES.SHOW_TOAST,
+    payload: {
+      message: 'Runtime error',
+      description: toastDescription,
+      intent: 'error',
+      duration: 6000,
+    },
+  });
 }
 
 if (configPanel) {
@@ -549,12 +858,32 @@ if (configPanel) {
         code: 'print("Pyodide OK")',
       });
       renderConsoleOutputs({ stdout, stderr });
+      const hasErrorOutput =
+        typeof stderr === 'string' && stderr.trim().length > 0;
+      dispatchIntent({
+        type: INTENT_TYPES.SHOW_TOAST,
+        payload: {
+          message: hasErrorOutput ? 'Smoke test completed with warnings' : 'Smoke test passed',
+          description: hasErrorOutput ? 'Check the console output for details.' : undefined,
+          intent: hasErrorOutput ? 'warning' : 'success',
+          duration: hasErrorOutput ? 5000 : 2800,
+        },
+      });
     } catch (error) {
       const stderrMessage =
         typeof error?.stderr === 'string' && error.stderr
           ? error.stderr
           : error?.error || 'Pyodide execution failed.';
       renderConsoleOutputs({ stdout: error?.stdout || '', stderr: stderrMessage });
+      dispatchIntent({
+        type: INTENT_TYPES.SHOW_TOAST,
+        payload: {
+          message: 'Smoke test failed',
+          description: stderrMessage,
+          intent: 'error',
+          duration: 6000,
+        },
+      });
     } finally {
       runTestButton.disabled = false;
       runTestButton.textContent = 'Run Test';
