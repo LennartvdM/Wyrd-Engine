@@ -1,3 +1,5 @@
+import { calendarFoundation } from './classes/calendar/foundation.js';
+
 const tabButtons = Array.from(
   document.querySelectorAll('.tab[data-tab-scope="root"]')
 );
@@ -764,23 +766,23 @@ function handleRuntimeLoadFailure(error) {
 }
 
 if (configPanel && configPanel.dataset.hydrated !== '1') {
+  const CLASS_STORAGE_KEY = 'config.class';
   const VARIANT_STORAGE_KEY = 'config.variant';
-  const RIG_STORAGE_KEY = 'config.rig';
+  const RIG_STORAGE_PREFIX = 'config.rig.';
+  const LEGACY_RIG_STORAGE_KEY = 'config.rig';
 
-  const variantRigs = {
-    mk1: ['default'],
-    mk2: ['calendar', 'workforce'],
+  const summaryLabels = {
+    class: 'Class',
+    variant: 'Variant',
+    rig: 'Rig',
+    archetype: 'Archetype',
+    weekStart: 'Week Start',
+    seed: 'Seed',
   };
 
-  const defaultRigByVariant = {
-    mk1: 'default',
-    mk2: 'calendar',
+  const foundationByClass = {
+    calendar: calendarFoundation,
   };
-
-  const engineTabBar = configPanel.querySelector('[data-config="engine-tabs"]');
-  const engineButtons = engineTabBar
-    ? Array.from(engineTabBar.querySelectorAll('button[data-variant]'))
-    : [];
 
   const configActions = configPanel.querySelector('.config-actions');
   if (configActions) {
@@ -792,24 +794,119 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
       configActions.querySelector('.primary-action');
   }
 
-  const rigRows = Array.from(
-    configPanel.querySelectorAll('[data-config="rig-tabs"][data-variant]')
-  );
+  const classTabBar = configPanel.querySelector('[data-config="class-tabs"]');
+  const classButtons = classTabBar
+    ? Array.from(classTabBar.querySelectorAll('button[data-class]'))
+    : [];
 
-  const rigButtonsByVariant = new Map();
-  rigRows.forEach((row) => {
-    const { variant } = row.dataset;
-    if (!variant) {
-      return;
+  const classPanels = new Map();
+  configPanel.querySelectorAll('[data-class-panel]').forEach((panel) => {
+    const classId = panel.dataset.classPanel;
+    if (classId) {
+      classPanels.set(classId, panel);
     }
-    const rigButtons = Array.from(row.querySelectorAll('button[data-rig]'));
-    if (rigButtons.length === 0) {
-      return;
-    }
-    rigButtonsByVariant.set(variant, rigButtons);
   });
 
-  const configPanels = Array.from(configPanel.querySelectorAll('[data-panel]'));
+  const calendarPanel = classPanels.get('calendar');
+  const variantTabBar = calendarPanel
+    ? calendarPanel.querySelector('[data-calendar="variant-tabs"]')
+    : null;
+  const variantButtons = variantTabBar
+    ? Array.from(variantTabBar.querySelectorAll('button[data-variant]'))
+    : [];
+
+  const variantPanels = new Map();
+  const rigTabsByVariant = new Map();
+  const rigButtonsByVariant = new Map();
+  const rigPanels = new Map();
+
+  if (calendarPanel) {
+    calendarPanel.querySelectorAll('[data-variant-panel]').forEach((panel) => {
+      const variantId = panel.dataset.variantPanel;
+      if (!variantId) {
+        return;
+      }
+      variantPanels.set(variantId, panel);
+      const rigTabRow = panel.querySelector(`[data-rig-tabs="${variantId}"]`);
+      if (rigTabRow) {
+        rigTabsByVariant.set(variantId, rigTabRow);
+        const rigButtons = Array.from(rigTabRow.querySelectorAll('button[data-rig]'));
+        if (rigButtons.length > 0) {
+          rigButtonsByVariant.set(variantId, rigButtons);
+        }
+      }
+      panel.querySelectorAll('[data-panel]').forEach((contentPanel) => {
+        const panelKey = contentPanel.dataset.panel;
+        if (panelKey) {
+          rigPanels.set(panelKey, contentPanel);
+        }
+      });
+    });
+  }
+
+  const variantRigs = {};
+  const defaultRigByVariant = {};
+  rigButtonsByVariant.forEach((buttons, variantId) => {
+    const rigs = buttons
+      .map((button) => button.dataset.rig)
+      .filter((rig) => typeof rig === 'string' && rig.length > 0);
+    if (rigs.length === 0) {
+      return;
+    }
+    variantRigs[variantId] = rigs;
+    const defaultButton =
+      buttons.find((button) => button.classList.contains('active')) || buttons[0];
+    if (defaultButton && defaultButton.dataset.rig) {
+      defaultRigByVariant[variantId] = defaultButton.dataset.rig;
+    }
+  });
+
+  const variantIds = Object.keys(variantRigs);
+  const defaultVariantButton =
+    variantButtons.find((button) => button.classList.contains('active')) ||
+    variantButtons[0];
+  let defaultVariant = defaultVariantButton?.dataset.variant;
+  if (!defaultVariant || !variantRigs[defaultVariant]) {
+    defaultVariant = variantIds[0];
+  }
+  if (!defaultVariant) {
+    defaultVariant = 'mk1';
+  }
+
+  const classVariantMap = new Map();
+  classVariantMap.set('calendar', variantIds);
+
+  const defaultVariantByClass = new Map();
+  if (variantIds.length > 0 && defaultVariant && variantRigs[defaultVariant]) {
+    defaultVariantByClass.set('calendar', defaultVariant);
+  }
+
+  const summaryRoot = configPanel.querySelector('[data-config-summary]');
+  const summaryChips = new Map();
+  if (summaryRoot) {
+    summaryRoot.querySelectorAll('[data-config-chip]').forEach((chip) => {
+      const key = chip.dataset.configChip;
+      if (key) {
+        summaryChips.set(key, chip);
+      }
+    });
+  }
+
+  const cfg = {
+    class: 'calendar',
+    variant: defaultVariant,
+    rig: {},
+    archetype: '',
+    weekStart: '',
+    seed: '',
+  };
+
+  variantIds.forEach((variantId) => {
+    const defaultRig = defaultRigByVariant[variantId] || variantRigs[variantId]?.[0];
+    if (defaultRig) {
+      cfg.rig[variantId] = defaultRig;
+    }
+  });
 
   const readStorageValue = (key) => {
     try {
@@ -822,6 +919,9 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
   };
 
   const persistStorageValue = (key, value) => {
+    if (typeof value !== 'string' || !value) {
+      return;
+    }
     try {
       localStorage.setItem(key, value);
     } catch (error) {
@@ -829,30 +929,125 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     }
   };
 
-  const state = {
-    variant: 'mk1',
-    rig: 'default',
+  const storedClass = readStorageValue(CLASS_STORAGE_KEY);
+  if (storedClass && classPanels.has(storedClass)) {
+    cfg.class = storedClass;
+  } else if (classButtons[0]?.dataset.class) {
+    cfg.class = classButtons[0].dataset.class;
+  }
+
+  const storedVariant = readStorageValue(VARIANT_STORAGE_KEY);
+  if (storedVariant && variantRigs[storedVariant]) {
+    cfg.variant = storedVariant;
+  }
+
+  const legacyRig = readStorageValue(LEGACY_RIG_STORAGE_KEY);
+  variantIds.forEach((variantId) => {
+    const storedRig = readStorageValue(`${RIG_STORAGE_PREFIX}${variantId}`);
+    if (storedRig && variantRigs[variantId]?.includes(storedRig)) {
+      cfg.rig[variantId] = storedRig;
+      return;
+    }
+    if (
+      variantId === cfg.variant &&
+      legacyRig &&
+      variantRigs[variantId]?.includes(legacyRig)
+    ) {
+      cfg.rig[variantId] = legacyRig;
+    }
+  });
+
+  const renderSummaryChips = () => {
+    if (summaryChips.size === 0) {
+      return;
+    }
+    const activeRig = cfg.rig[cfg.variant] || '';
+    const values = {
+      class: cfg.class || '',
+      variant: cfg.variant || '',
+      rig: activeRig || '',
+      archetype: cfg.archetype || '',
+      weekStart: cfg.weekStart || '',
+      seed: cfg.seed || '',
+    };
+    Object.entries(values).forEach(([key, value]) => {
+      const chip = summaryChips.get(key);
+      if (!chip) {
+        return;
+      }
+      const label = summaryLabels[key] || key;
+      const displayValue = value ? String(value) : '—';
+      chip.textContent = `${label}: ${displayValue}`;
+    });
   };
 
-  const syncVariantUI = () => {
-    engineButtons.forEach((button) => {
-      const isActive = button.dataset.variant === state.variant;
+  const updateDerivedFromFoundation = () => {
+    const foundation = foundationByClass[cfg.class];
+    if (!foundation || typeof foundation.defaults !== 'function') {
+      cfg.archetype = '';
+      cfg.weekStart = '';
+      cfg.seed = '';
+      renderSummaryChips();
+      return;
+    }
+    try {
+      const activeVariant = cfg.variant;
+      const activeRig = cfg.rig[activeVariant];
+      const defaults = foundation.defaults({ variant: activeVariant, rig: activeRig });
+      cfg.archetype = defaults?.archetype || '';
+      cfg.weekStart = defaults?.weekStart || '';
+      const seedValue = defaults?.seed;
+      cfg.seed =
+        typeof seedValue === 'number' || typeof seedValue === 'string'
+          ? String(seedValue)
+          : '';
+    } catch (error) {
+      console.warn(`Unable to compute defaults for class ${cfg.class}:`, error);
+      cfg.archetype = '';
+      cfg.weekStart = '';
+      cfg.seed = '';
+    }
+    renderSummaryChips();
+  };
+
+  const syncClassUI = () => {
+    classButtons.forEach((button) => {
+      const isActive = button.dataset.class === cfg.class;
       button.classList.toggle('active', isActive);
       button.dataset.active = isActive ? '1' : '0';
       button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
+    classPanels.forEach((panel, classId) => {
+      const isActive = classId === cfg.class;
+      panel.hidden = !isActive;
+      panel.classList.toggle('active', isActive);
+    });
+  };
 
-    rigRows.forEach((row) => {
-      const isActive = row.dataset.variant === state.variant;
+  const syncVariantUI = () => {
+    variantButtons.forEach((button) => {
+      const isActive = button.dataset.variant === cfg.variant;
+      button.classList.toggle('active', isActive);
+      button.dataset.active = isActive ? '1' : '0';
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+    variantPanels.forEach((panel, variantId) => {
+      const isActive = variantId === cfg.variant;
+      panel.hidden = !isActive;
+      panel.classList.toggle('active', isActive);
+    });
+    rigTabsByVariant.forEach((row, variantId) => {
+      const isActive = variantId === cfg.variant;
       row.hidden = !isActive;
       row.dataset.active = isActive ? '1' : '0';
     });
   };
 
-  const syncRigButtons = () => {
-    rigButtonsByVariant.forEach((buttons, variant) => {
+  const syncRigUI = () => {
+    rigButtonsByVariant.forEach((buttons, variantId) => {
       buttons.forEach((button) => {
-        const isActive = variant === state.variant && button.dataset.rig === state.rig;
+        const isActive =
+          variantId === cfg.variant && button.dataset.rig === cfg.rig[variantId];
         button.classList.toggle('active', isActive);
         button.dataset.active = isActive ? '1' : '0';
         button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
@@ -860,72 +1055,120 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     });
   };
 
-  const syncPanels = () => {
-    const targetKey = `${state.variant}:${state.rig}`;
-    configPanels.forEach((panel) => {
-      const isActive = panel.dataset.panel === targetKey;
+  const syncRigPanels = () => {
+    const activeVariant = cfg.variant;
+    const activeRig = cfg.rig[activeVariant];
+    const targetKey = activeVariant && activeRig ? `${activeVariant}:${activeRig}` : '';
+    rigPanels.forEach((panel, panelKey) => {
+      const isActive = panelKey === targetKey;
       panel.classList.toggle('active', isActive);
       panel.hidden = !isActive;
     });
   };
 
-  const applyRig = (rig, { updateStorage = true } = {}) => {
-    const validRigs = variantRigs[state.variant] || [];
-    if (!validRigs.includes(rig)) {
+  const rigStorageKey = (variantId) => `${RIG_STORAGE_PREFIX}${variantId}`;
+
+  const applyRig = (variantId, rigId, { updateStorage = true } = {}) => {
+    const rigs = variantRigs[variantId] || [];
+    if (!rigs.includes(rigId)) {
       return;
     }
-    state.rig = rig;
-    syncRigButtons();
-    syncPanels();
+    cfg.rig[variantId] = rigId;
+    if (variantId === cfg.variant) {
+      syncRigUI();
+      syncRigPanels();
+      renderSummaryChips();
+      updateDerivedFromFoundation();
+    }
     if (updateStorage) {
-      persistStorageValue(RIG_STORAGE_KEY, state.rig);
+      persistStorageValue(rigStorageKey(variantId), rigId);
     }
   };
 
-  const applyVariant = (variant, { updateStorage = true } = {}) => {
-    if (!variantRigs[variant]) {
+  const applyVariant = (variantId, { updateStorage = true } = {}) => {
+    if (!variantRigs[variantId]) {
       return;
     }
-    state.variant = variant;
-    const validRigs = variantRigs[state.variant];
-    if (!validRigs.includes(state.rig)) {
-      state.rig = defaultRigByVariant[state.variant] || validRigs[0];
+    cfg.variant = variantId;
+    const rigs = variantRigs[variantId];
+    const currentRig = cfg.rig[variantId];
+    if (!rigs.includes(currentRig)) {
+      const fallbackRig = defaultRigByVariant[variantId] || rigs[0];
+      if (fallbackRig) {
+        cfg.rig[variantId] = fallbackRig;
+      }
     }
     syncVariantUI();
-    applyRig(state.rig, { updateStorage });
+    syncRigUI();
+    syncRigPanels();
+    renderSummaryChips();
+    updateDerivedFromFoundation();
     if (updateStorage) {
-      persistStorageValue(VARIANT_STORAGE_KEY, state.variant);
+      persistStorageValue(VARIANT_STORAGE_KEY, cfg.variant);
+      const activeRig = cfg.rig[variantId];
+      if (activeRig) {
+        persistStorageValue(rigStorageKey(variantId), activeRig);
+      }
     }
   };
 
-  const storedVariant = readStorageValue(VARIANT_STORAGE_KEY);
-  const initialVariant = variantRigs[storedVariant] ? storedVariant : 'mk1';
-  const storedRig = readStorageValue(RIG_STORAGE_KEY);
-  const initialRig = variantRigs[initialVariant].includes(storedRig)
-    ? storedRig
-    : defaultRigByVariant[initialVariant];
+  const applyClass = (classId, { updateStorage = true } = {}) => {
+    if (!classPanels.has(classId)) {
+      return;
+    }
+    cfg.class = classId;
+    syncClassUI();
+    const variants = classVariantMap.get(classId) || [];
+    let targetVariant = cfg.variant;
+    if (!variants.includes(targetVariant)) {
+      const fallbackVariant = defaultVariantByClass.get(classId) || variants[0];
+      targetVariant = fallbackVariant;
+    }
+    if (targetVariant && variantRigs[targetVariant]) {
+      applyVariant(targetVariant, { updateStorage });
+    } else {
+      renderSummaryChips();
+      updateDerivedFromFoundation();
+    }
+    if (updateStorage) {
+      persistStorageValue(CLASS_STORAGE_KEY, classId);
+    }
+  };
 
-  state.variant = initialVariant;
-  state.rig = initialRig;
-  syncVariantUI();
-  applyRig(initialRig, { updateStorage: false });
-
-  engineButtons.forEach((button) => {
+  classButtons.forEach((button) => {
     button.addEventListener('click', () => {
-      applyVariant(button.dataset.variant);
+      const classId = button.dataset.class;
+      if (classId) {
+        applyClass(classId);
+      }
     });
   });
 
-  rigButtonsByVariant.forEach((buttons, variant) => {
+  variantButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const variantId = button.dataset.variant;
+      if (variantId) {
+        applyVariant(variantId);
+      }
+    });
+  });
+
+  rigButtonsByVariant.forEach((buttons, variantId) => {
     buttons.forEach((button) => {
       button.addEventListener('click', () => {
-        if (variant !== state.variant) {
-          applyVariant(variant);
+        const rigId = button.dataset.rig;
+        if (!rigId) {
+          return;
         }
-        applyRig(button.dataset.rig);
+        if (variantId !== cfg.variant) {
+          applyVariant(variantId);
+        }
+        applyRig(variantId, rigId);
       });
     });
   });
+
+  applyClass(cfg.class, { updateStorage: false });
 
   if (initializeRuntimeButton) {
     styleRuntimeButton(initializeRuntimeButton);
@@ -1027,6 +1270,7 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
 
   configPanel.dataset.hydrated = '1';
 }
+
 
 if (consolePanel) {
   const consoleContainer = document.createElement('div');
