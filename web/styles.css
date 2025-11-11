@@ -317,6 +317,19 @@ a:hover {
   margin: 0;
 }
 
+.mk2-panel__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  margin-top: 0.25rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.mk2-panel__actions button {
+  width: 100%;
+}
+
 .mk2-panel__heading {
   display: block;
   margin: 0;
