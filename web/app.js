@@ -764,161 +764,155 @@ function handleRuntimeLoadFailure(error) {
 }
 
 if (configPanel && configPanel.dataset.hydrated !== '1') {
-  const ENGINE_STORAGE_KEY = 'config.selectedEngine';
-  const RIG_STORAGE_KEY = 'config.selectedRig';
+  const VARIANT_STORAGE_KEY = 'config.variant';
+  const RIG_STORAGE_KEY = 'config.rig';
+
+  const variantRigs = {
+    mk1: ['default'],
+    mk2: ['calendar', 'workforce'],
+  };
+
+  const defaultRigByVariant = {
+    mk1: 'default',
+    mk2: 'calendar',
+  };
 
   const engineTabBar = configPanel.querySelector('[data-config="engine-tabs"]');
   const engineButtons = engineTabBar
-    ? Array.from(engineTabBar.querySelectorAll('.tab[data-tab-scope="config-engine"]'))
+    ? Array.from(engineTabBar.querySelectorAll('button[data-variant]'))
     : [];
-  const enginePanels = Array.from(
-    configPanel.querySelectorAll('.tab-panel[data-tab-scope="config-engine"]')
+
+  const rigRows = Array.from(
+    configPanel.querySelectorAll('[data-config="rig-tabs"][data-variant]')
   );
 
-  const rigGroups = new Map();
-  configPanel.querySelectorAll('[data-config="rig-tabs"]').forEach((group) => {
-    const engineId = group.dataset.engine;
-    if (!engineId) {
+  const rigButtonsByVariant = new Map();
+  rigRows.forEach((row) => {
+    const { variant } = row.dataset;
+    if (!variant) {
       return;
     }
-    const rigButtons = Array.from(group.querySelectorAll('.tab'));
-    const rigScope = rigButtons[0]?.dataset.tabScope;
-    if (!rigScope) {
+    const rigButtons = Array.from(row.querySelectorAll('button[data-rig]'));
+    if (rigButtons.length === 0) {
       return;
     }
-    const rigPanels = Array.from(
-      configPanel.querySelectorAll(`.tab-panel[data-tab-scope="${rigScope}"]`)
-    );
-    rigGroups.set(engineId, { buttons: rigButtons, panels: rigPanels });
+    rigButtonsByVariant.set(variant, rigButtons);
   });
 
-  const runtimeControls = configPanel.querySelector('[data-config="runtime-controls"]');
-  const actionButtons = runtimeControls
-    ? Array.from(runtimeControls.querySelectorAll('[data-config="actions"]'))
-    : [];
+  const configPanels = Array.from(configPanel.querySelectorAll('[data-panel]'));
 
-  initializeRuntimeButton = actionButtons.find(
-    (button) => button.dataset.action === 'initialize'
-  );
-  generateButton = actionButtons.find((button) => button.dataset.action === 'generate');
-
-  const loadStoredEngine = () => {
+  const readStorageValue = (key) => {
     try {
-      const stored = localStorage.getItem(ENGINE_STORAGE_KEY);
+      const stored = localStorage.getItem(key);
       return typeof stored === 'string' && stored ? stored : undefined;
     } catch (error) {
-      console.warn('Unable to read stored engine selection:', error);
+      console.warn(`Unable to read stored value for ${key}:`, error);
       return undefined;
     }
   };
 
-  const loadStoredRigs = () => {
+  const persistStorageValue = (key, value) => {
     try {
-      const stored = localStorage.getItem(RIG_STORAGE_KEY);
-      if (!stored) {
-        return {};
-      }
-      const parsed = JSON.parse(stored);
-      return parsed && typeof parsed === 'object' ? parsed : {};
+      localStorage.setItem(key, value);
     } catch (error) {
-      console.warn('Unable to read stored rig selections:', error);
-      return {};
+      console.warn(`Unable to persist value for ${key}:`, error);
     }
   };
 
-  const persistEngineSelection = (engineId) => {
-    try {
-      localStorage.setItem(ENGINE_STORAGE_KEY, engineId);
-    } catch (error) {
-      console.warn('Unable to persist engine selection:', error);
-    }
+  const state = {
+    variant: 'mk1',
+    rig: 'default',
   };
 
-  const persistRigSelections = (selections) => {
-    try {
-      localStorage.setItem(RIG_STORAGE_KEY, JSON.stringify(selections));
-    } catch (error) {
-      console.warn('Unable to persist rig selections:', error);
-    }
-  };
-
-  const rigSelections = loadStoredRigs();
-
-  const syncTabState = (buttons, panels, target) => {
-    if (!target) {
-      return;
-    }
-    buttons.forEach((button) => {
-      const isActive = button.dataset.tab === target;
+  const syncVariantUI = () => {
+    engineButtons.forEach((button) => {
+      const isActive = button.dataset.variant === state.variant;
       button.classList.toggle('active', isActive);
       button.dataset.active = isActive ? '1' : '0';
-      button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
-    panels.forEach((panel) => {
-      const isActive = panel.dataset.tab === target;
+
+    rigRows.forEach((row) => {
+      const isActive = row.dataset.variant === state.variant;
+      row.hidden = !isActive;
+      row.dataset.active = isActive ? '1' : '0';
+    });
+  };
+
+  const syncRigButtons = () => {
+    rigButtonsByVariant.forEach((buttons, variant) => {
+      buttons.forEach((button) => {
+        const isActive = variant === state.variant && button.dataset.rig === state.rig;
+        button.classList.toggle('active', isActive);
+        button.dataset.active = isActive ? '1' : '0';
+        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+    });
+  };
+
+  const syncPanels = () => {
+    const targetKey = `${state.variant}:${state.rig}`;
+    configPanels.forEach((panel) => {
+      const isActive = panel.dataset.panel === targetKey;
       panel.classList.toggle('active', isActive);
-      panel.dataset.active = isActive ? '1' : '0';
       panel.hidden = !isActive;
-      panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
     });
   };
 
-  const applyRigSelection = (engineId, rigId, { updateStorage = true } = {}) => {
-    const rigGroup = rigGroups.get(engineId);
-    if (!rigGroup) {
+  const applyRig = (rig, { updateStorage = true } = {}) => {
+    const validRigs = variantRigs[state.variant] || [];
+    if (!validRigs.includes(rig)) {
       return;
     }
-    if (!rigGroup.buttons.some((button) => button.dataset.tab === rigId)) {
-      return;
-    }
-    syncTabState(rigGroup.buttons, rigGroup.panels, rigId);
+    state.rig = rig;
+    syncRigButtons();
+    syncPanels();
     if (updateStorage) {
-      rigSelections[engineId] = rigId;
-      persistRigSelections(rigSelections);
+      persistStorageValue(RIG_STORAGE_KEY, state.rig);
     }
   };
 
-  const applyEngineSelection = (engineId, { updateStorage = true } = {}) => {
-    if (!engineButtons.some((button) => button.dataset.tab === engineId)) {
+  const applyVariant = (variant, { updateStorage = true } = {}) => {
+    if (!variantRigs[variant]) {
       return;
     }
-    syncTabState(engineButtons, enginePanels, engineId);
-    if (updateStorage) {
-      persistEngineSelection(engineId);
+    state.variant = variant;
+    const validRigs = variantRigs[state.variant];
+    if (!validRigs.includes(state.rig)) {
+      state.rig = defaultRigByVariant[state.variant] || validRigs[0];
     }
-    const rigGroup = rigGroups.get(engineId);
-    if (rigGroup) {
-      const storedRig = rigSelections[engineId];
-      const defaultRig =
-        rigGroup.buttons.find((button) => button.classList.contains('active'))?.dataset.tab ||
-        rigGroup.buttons[0]?.dataset.tab;
-      const rigToActivate =
-        rigGroup.buttons.some((button) => button.dataset.tab === storedRig) && storedRig
-          ? storedRig
-          : defaultRig;
-      applyRigSelection(engineId, rigToActivate, { updateStorage: false });
+    syncVariantUI();
+    applyRig(state.rig, { updateStorage });
+    if (updateStorage) {
+      persistStorageValue(VARIANT_STORAGE_KEY, state.variant);
     }
   };
 
-  const defaultEngine =
-    engineButtons.find((button) => button.classList.contains('active'))?.dataset.tab ||
-    engineButtons[0]?.dataset.tab;
-  const storedEngine = loadStoredEngine();
-  const initialEngine =
-    engineButtons.some((button) => button.dataset.tab === storedEngine) && storedEngine
-      ? storedEngine
-      : defaultEngine;
+  const storedVariant = readStorageValue(VARIANT_STORAGE_KEY);
+  const initialVariant = variantRigs[storedVariant] ? storedVariant : 'mk1';
+  const storedRig = readStorageValue(RIG_STORAGE_KEY);
+  const initialRig = variantRigs[initialVariant].includes(storedRig)
+    ? storedRig
+    : defaultRigByVariant[initialVariant];
+
+  state.variant = initialVariant;
+  state.rig = initialRig;
+  syncVariantUI();
+  applyRig(initialRig, { updateStorage: false });
 
   engineButtons.forEach((button) => {
     button.addEventListener('click', () => {
-      applyEngineSelection(button.dataset.tab);
+      applyVariant(button.dataset.variant);
     });
   });
 
-  rigGroups.forEach(({ buttons }, engineId) => {
+  rigButtonsByVariant.forEach((buttons, variant) => {
     buttons.forEach((button) => {
       button.addEventListener('click', () => {
-        applyRigSelection(engineId, button.dataset.tab);
+        if (variant !== state.variant) {
+          applyVariant(variant);
+        }
+        applyRig(button.dataset.rig);
       });
     });
   });
@@ -1014,8 +1008,6 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
       }
     });
   }
-
-  applyEngineSelection(initialEngine, { updateStorage: false });
 
   if (initializeRuntimeButton && runtimeReady) {
     initializeRuntimeButton.textContent = 'Runtime Ready';

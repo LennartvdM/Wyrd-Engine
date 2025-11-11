@@ -110,6 +110,18 @@ body {
   gap: 18px;
 }
 
+[data-config="rig-tabs"][hidden] {
+  display: none;
+}
+
+.config-panel-content {
+  display: none;
+}
+
+.config-panel-content.active {
+  display: block;
+}
+
 .tab-group {
   display: flex;
   flex-direction: column;
