@@ -1,0 +1,79 @@
+:root {
+  color-scheme: dark;
+  font-family: "Inter", "Segoe UI", sans-serif;
+  font-size: 13px;
+  background-color: #1b1d23;
+  color: #e5e7eb;
+}
+
+body {
+  margin: 0;
+  background: #121318;
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+}
+
+.workbench {
+  width: 100%;
+  max-width: 960px;
+  background: #1b1d23;
+  border: 1px solid #2a2d35;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+}
+
+.tab-bar {
+  display: flex;
+  gap: 2px;
+  background: #15161c;
+  padding: 6px;
+  border-bottom: 1px solid #2a2d35;
+}
+
+.tab {
+  flex: 1;
+  background: #1f2128;
+  color: #cbd0df;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.tab:hover {
+  background: #272a33;
+  color: #ffffff;
+}
+
+.tab.active {
+  background: #3a3f4f;
+  color: #ffffff;
+}
+
+.tab-content {
+  padding: 12px;
+  background: #181a21;
+  min-height: 420px;
+}
+
+.tab-panel {
+  display: none;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+#calendar-container {
+  min-height: 380px;
+  border: 1px dashed #3a3f4f;
+  border-radius: 6px;
+  background: rgba(58, 63, 79, 0.1);
+}
