@@ -4358,22 +4358,17 @@ async function generateScheduleForEngine(engineId, config, startDate) {
       throw new Error("MK2 runtime returned an unexpected result payload.");
     }
 
-    const topLevelKeys =
-      result && typeof result === "object" ? Object.keys(result) : [];
-    const rawEventsField = result?.events;
+    console.debug("[MK2] payload diagnostics", {
+      eventsIsArray: Array.isArray(result?.events),
+      eventsType: typeof result?.events,
+      extractedLength: Array.isArray(result?.events) ? result.events.length : 0,
+      keys: Object.keys(result || {}),
+    });
 
     const extractedEvents = extractMk2Events(result);
     result.events = extractedEvents;
 
     const events = normalizeMk2Events(extractedEvents);
-
-    console.log("[MK2] payload diagnostics", {
-      keys: topLevelKeys,
-      eventsType: typeof rawEventsField,
-      eventsIsArray: Array.isArray(rawEventsField),
-      extractedLength: extractedEvents.length,
-      normalizedLength: events.length,
-    });
     const totals = normalizeMk2Totals(result.metadata?.summary_hours);
     const meta = normalizeMk2Meta(result, {
       engineId: normalizedId,
@@ -4478,16 +4473,25 @@ function getMk2Options(
   };
 }
 
-function parseRunnerResultJSON(resultJSON) {
-  if (typeof resultJSON !== "string") {
-    throw new Error("MK2 runtime did not return JSON output.");
-  }
-  const trimmed = resultJSON.trim();
+function parseRunnerResultJSON(rawValue) {
+  const hasToString = Boolean(rawValue && typeof rawValue.toString === "function");
+  const text = hasToString ? rawValue.toString() : String(rawValue ?? "");
+  console.debug("[MK2] raw payload value", {
+    type: typeof rawValue,
+    constructor: rawValue?.constructor?.name,
+    hasToString,
+    textSample: text.slice(0, 120),
+  });
+
+  const trimmed = text.trim();
   if (!trimmed) {
     throw new Error("MK2 runtime returned an empty result.");
   }
   try {
-    return JSON.parse(trimmed);
+    const payload = JSON.parse(trimmed);
+    const keys = payload && typeof payload === "object" ? Object.keys(payload) : [];
+    console.debug("[MK2] rawLen", trimmed.length, "keys", keys);
+    return payload;
   } catch (error) {
     const reason = error?.message || error;
     throw new Error(`Failed to parse MK2 result: ${reason}`);
