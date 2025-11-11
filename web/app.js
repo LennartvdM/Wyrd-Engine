@@ -468,7 +468,8 @@ def coerce_time_string(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, (int, float)):
-        hours, minutes = divmod(int(value), 60)
+        total_minutes = int(round(float(value)))
+        hours, minutes = divmod(total_minutes, 60)
         return f"{hours:02d}:{minutes:02d}"
     if isinstance(value, timedelta):
         total_minutes = int(value.total_seconds() // 60)
@@ -476,8 +477,55 @@ def coerce_time_string(value: Any) -> str:
         return f"{hours:02d}:{minutes:02d}"
     if isinstance(value, (datetime, time)):
         return normalise_datetime_like(value).split("T")[-1]
-    text = str(value)
-    return text
+    text = str(value).strip()
+    if not text:
+        return ""
+    if ":" in text:
+        return text
+    try:
+        numeric = float(text)
+    except (TypeError, ValueError):
+        return text
+    if "." in text and abs(numeric) <= 24:
+        total_minutes = int(round(numeric * 60))
+    else:
+        total_minutes = int(round(numeric))
+    hours, minutes = divmod(total_minutes, 60)
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def extract_time_candidate(event: Dict[str, Any], key: str) -> Any:
+    candidates = [
+        event.get(key),
+        event.get(f"{key}_time"),
+        event.get(f"{key}Time"),
+        event.get(f"{key}_at"),
+        event.get(f"{key}At"),
+    ]
+    if key == "start":
+        candidates.extend(
+            [
+                event.get("minute_start"),
+                event.get("minuteStart"),
+                event.get("start_minutes"),
+                event.get("startMinutes"),
+                event.get("start_minute"),
+            ]
+        )
+    else:
+        candidates.extend(
+            [
+                event.get("minute_end"),
+                event.get("minuteEnd"),
+                event.get("end_minutes"),
+                event.get("endMinutes"),
+                event.get("end_minute"),
+            ]
+        )
+    for candidate in candidates:
+        if candidate not in (None, ""):
+            return candidate
+    return None
 
 
 def serialise_event(raw: Dict[str, Any], fallback_date: str = ""):
@@ -489,13 +537,18 @@ def serialise_event(raw: Dict[str, Any], fallback_date: str = ""):
             event[key] = normalise_datetime_like(value)
     date_value = event.get("date") or event.get("day") or fallback_date
     event["date"] = str(date_value) if date_value is not None else ""
+    if fallback_date and not event.get("day") and not event.get("day_name"):
+        event.setdefault("day", fallback_date)
     for key in ("start", "end"):
-        event[key] = coerce_time_string(event.get(key) or event.get(f"{key}_time")) or ""
+        candidate = extract_time_candidate(event, key)
+        event[key] = coerce_time_string(candidate) or ""
     label_value = (
         event.get("label")
         or event.get("activity")
         or event.get("name")
         or event.get("description")
+        or event.get("title")
+        or event.get("summary")
     )
     event["label"] = str(label_value) if label_value is not None else ""
     return event
@@ -512,15 +565,64 @@ def iter_event_records(payload: Any) -> Iterable[Tuple[Any, str]]:
             yield item, ""
 
 
-raw_events_payload: Any = result.get("events")
-if not raw_events_payload:
-    raw_events_payload = result.get("schedule") or result.get("items") or []
+candidate_payloads: List[Tuple[Any, Optional[str]]] = []
+
+
+def enqueue_payload(payload: Any, fallback: Optional[str] = None) -> None:
+    if payload:
+        candidate_payloads.append((payload, fallback))
+
+
+enqueue_payload(result.get("events"))
+enqueue_payload(result.get("schedule"))
+enqueue_payload(result.get("items"))
+
+calendar_payload = result.get("calendar")
+if isinstance(calendar_payload, dict):
+    calendar_fallback = (
+        calendar_payload.get("date")
+        or calendar_payload.get("day")
+        or calendar_payload.get("day_name")
+    )
+    enqueue_payload(calendar_payload.get("events"), calendar_fallback)
+    enqueue_payload(calendar_payload.get("items"), calendar_fallback)
+    days_payload = calendar_payload.get("days")
+    if isinstance(days_payload, list):
+        for day in days_payload:
+            if not isinstance(day, dict):
+                continue
+            day_fallback = day.get("date") or day.get("day") or day.get("day_name")
+            enqueue_payload(
+                day.get("events") or day.get("items") or day.get("schedule"),
+                day_fallback,
+            )
+
+days_payload = result.get("days")
+if isinstance(days_payload, list):
+    for day in days_payload:
+        if not isinstance(day, dict):
+            continue
+        day_fallback = day.get("date") or day.get("day") or day.get("day_name")
+        enqueue_payload(
+            day.get("events") or day.get("items") or day.get("schedule"),
+            day_fallback,
+        )
 
 events: List[Dict[str, Any]] = []
-for raw_event, fallback_date in iter_event_records(raw_events_payload):
-    serialised = serialise_event(raw_event, fallback_date)
-    if serialised is not None:
-        events.append(serialised)
+raw_event_counter = 0
+
+for payload, fallback in candidate_payloads:
+    fallback_text = str(fallback) if fallback is not None else ""
+    for raw_event, inferred in iter_event_records(payload):
+        raw_event_counter += 1
+        serialised = serialise_event(raw_event, inferred or fallback_text)
+        if serialised is not None:
+            events.append(serialised)
+
+print(
+    f"[MK2 bridge] serialized {len(events)} events (raw seen {raw_event_counter})"
+)
+
 result["events"] = events
 
 metadata: Dict[str, Any] = result.setdefault("metadata", {})
@@ -4118,30 +4220,22 @@ async function generateScheduleForEngine(engineId, config, startDate) {
       throw new Error("MK2 runtime returned an unexpected result payload.");
     }
 
-    let events = result?.events ?? result?.schedule ?? result?.items ?? null;
+    const topLevelKeys =
+      result && typeof result === "object" ? Object.keys(result) : [];
+    const rawEventsField = result?.events;
 
-    if (events && !Array.isArray(events) && typeof events === "object") {
-      const flat = [];
-      for (const [key, arr] of Object.entries(events)) {
-        if (Array.isArray(arr)) {
-          for (const event of arr) {
-            const clone = { ...event };
-            if (clone.date == null && clone.day == null) {
-              clone.date = key;
-            }
-            flat.push(clone);
-          }
-        }
-      }
-      events = flat;
-    }
+    const extractedEvents = extractMk2Events(result);
+    result.events = extractedEvents;
 
-    if (!Array.isArray(events)) {
-      events = [];
-    }
-    result.events = events;
+    const events = normalizeMk2Events(extractedEvents);
 
-    events = normalizeMk2Events(result.events);
+    console.log("[MK2] payload diagnostics", {
+      keys: topLevelKeys,
+      eventsType: typeof rawEventsField,
+      eventsIsArray: Array.isArray(rawEventsField),
+      extractedLength: extractedEvents.length,
+      normalizedLength: events.length,
+    });
     const totals = normalizeMk2Totals(result.metadata?.summary_hours);
     const meta = normalizeMk2Meta(result, {
       engineId: normalizedId,
@@ -4262,45 +4356,6 @@ function parseRunnerResultJSON(resultJSON) {
   }
 }
 
-function normalizeMk2Events(list) {
-  if (!Array.isArray(list)) return [];
-
-  const out = [];
-  for (const raw of list) {
-    if (raw == null || typeof raw !== "object") continue;
-
-    const label = raw.label ?? raw.activity ?? raw.name ?? "untitled";
-
-    let date = raw.date ?? raw.day ?? null;
-    if (typeof date === "number") date = String(date);
-
-    const start = coerceTime(raw.start ?? raw.start_time ?? raw.begin);
-    const end = coerceTime(raw.end ?? raw.end_time ?? raw.finish);
-
-    if (!date || !start || !end) continue;
-
-    out.push({ date, start, end, label, ...raw });
-  }
-  return out;
-}
-
-function coerceTime(v) {
-  if (v == null) return null;
-  if (typeof v === "string") {
-    const m = v.match(/\b(\d{2}):(\d{2})\b/);
-    if (m) return `${m[1]}:${m[2]}`;
-  }
-  if (typeof v === "number" && Number.isFinite(v)) {
-    const hh = Math.floor(v / 60);
-    const mm = v % 60;
-    return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
-  }
-  if (v instanceof Date) {
-    return `${String(v.getHours()).padStart(2, "0")}:${String(v.getMinutes()).padStart(2, "0")}`;
-  }
-  return null;
-}
-
 function pickMk2EventField(event, keys) {
   for (const key of keys) {
     if (Object.prototype.hasOwnProperty.call(event, key)) {
@@ -4311,6 +4366,449 @@ function pickMk2EventField(event, keys) {
     }
   }
   return undefined;
+}
+
+function extractMk2Events(result) {
+  if (!result || typeof result !== "object") {
+    return [];
+  }
+
+  const collected = [];
+  const seenObjects = new WeakSet();
+
+  const pushEvent = (raw, fallbackDate) => {
+    if (raw == null) {
+      return;
+    }
+
+    const fallback = fallbackDate != null ? String(fallbackDate) : "";
+
+    if (typeof raw === "object") {
+      if (seenObjects.has(raw)) {
+        return;
+      }
+      seenObjects.add(raw);
+      const clone = { ...raw };
+      if (
+        fallback &&
+        clone.date == null &&
+        clone.day == null &&
+        clone.day_name == null &&
+        clone.dayName == null
+      ) {
+        clone.date = fallback;
+      }
+      collected.push(clone);
+      return;
+    }
+
+    const event = { value: raw };
+    if (fallback) {
+      event.date = fallback;
+    }
+    collected.push(event);
+  };
+
+  const fromCollection = (collection, fallbackDate) => {
+    if (collection == null) {
+      return;
+    }
+
+    const fallback = fallbackDate != null ? String(fallbackDate) : "";
+
+    if (Array.isArray(collection)) {
+      collection.forEach((item) => {
+        pushEvent(item, fallback);
+      });
+      return;
+    }
+
+    if (typeof collection === "object") {
+      let flattened = false;
+      for (const [key, value] of Object.entries(collection)) {
+        if (Array.isArray(value)) {
+          flattened = true;
+          const stampedKey = key != null ? String(key) : fallback;
+          value.forEach((item) => {
+            pushEvent(item, stampedKey);
+          });
+        }
+      }
+
+      if (flattened) {
+        return;
+      }
+
+      if (isLikelyMk2EventObject(collection)) {
+        pushEvent(collection, fallback);
+      }
+    }
+  };
+
+  fromCollection(result.events, null);
+  fromCollection(result.schedule, null);
+  fromCollection(result.items, null);
+
+  const calendar = result.calendar;
+  if (calendar && typeof calendar === "object") {
+    const calendarDate =
+      calendar.date ??
+      calendar.day ??
+      calendar.day_name ??
+      calendar.dayName ??
+      null;
+
+    fromCollection(calendar.events, calendarDate);
+    fromCollection(calendar.items, calendarDate);
+
+    if (Array.isArray(calendar.days)) {
+      calendar.days.forEach((day) => {
+        if (!day || typeof day !== "object") {
+          return;
+        }
+        const dayDate =
+          day.date ?? day.day ?? day.day_name ?? day.dayName ?? calendarDate;
+        fromCollection(day.events ?? day.items ?? day.schedule, dayDate);
+      });
+    }
+  }
+
+  if (Array.isArray(result.days)) {
+    result.days.forEach((day) => {
+      if (!day || typeof day !== "object") {
+        return;
+      }
+      const dayDate =
+        day.date ?? day.day ?? day.day_name ?? day.dayName ?? null;
+      fromCollection(day.events ?? day.items ?? day.schedule, dayDate);
+    });
+  }
+
+  return collected;
+}
+
+function isLikelyMk2EventObject(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidateKeys = [
+    "start",
+    "start_time",
+    "startTime",
+    "end",
+    "end_time",
+    "endTime",
+    "label",
+    "activity",
+    "name",
+    "description",
+    "title",
+    "day",
+    "date",
+    "minutes",
+    "duration",
+    "duration_minutes",
+  ];
+
+  return candidateKeys.some((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function normalizeMk2Events(list) {
+  if (!Array.isArray(list)) {
+    return [];
+  }
+
+  const normalized = [];
+
+  for (const raw of list) {
+    if (raw == null) {
+      continue;
+    }
+
+    const event = typeof raw === "object" ? { ...raw } : { value: raw };
+
+    const label =
+      coerceMk2Label([
+        event.label,
+        event.activity,
+        event.activity_name,
+        event.activityName,
+        event.name,
+        event.title,
+        event.description,
+        event.summary,
+        typeof event.value === "string" ? event.value : null,
+      ]) || "untitled";
+
+    const dateValue = pickMk2EventField(event, [
+      "date",
+      "day",
+      "day_name",
+      "dayName",
+      "calendar_date",
+      "calendarDate",
+      "date_str",
+      "dateString",
+    ]);
+    const date = coerceMk2IsoDate(dateValue);
+
+    const startCandidate = pickMk2EventField(event, [
+      "start",
+      "start_time",
+      "startTime",
+      "begin",
+      "time",
+      "start_at",
+      "startAt",
+      "from",
+      "minute_start",
+      "minuteStart",
+      "start_minutes",
+      "startMinutes",
+      "start_minute",
+    ]);
+    let start = coerceMk2Time(startCandidate);
+    if (!start) {
+      const startMinutes = pickMk2EventField(event, [
+        "start_minutes",
+        "start_minute",
+        "minute_start",
+      ]);
+      start = coerceMk2Time(startMinutes);
+    }
+
+    const endCandidate = pickMk2EventField(event, [
+      "end",
+      "end_time",
+      "endTime",
+      "finish",
+      "end_at",
+      "endAt",
+      "to",
+      "minute_end",
+      "minuteEnd",
+      "end_minutes",
+      "endMinutes",
+      "end_minute",
+    ]);
+    let end = coerceMk2Time(endCandidate);
+    if (!end) {
+      const endMinutes = pickMk2EventField(event, [
+        "end_minutes",
+        "end_minute",
+        "minute_end",
+      ]);
+      end = coerceMk2Time(endMinutes);
+    }
+
+    let durationMinutes = coerceMk2DurationMinutes(
+      pickMk2EventField(event, [
+        "duration_minutes",
+        "duration_minute",
+        "duration",
+        "minutes",
+        "length_minutes",
+        "length",
+        "durationMinutes",
+        "durationMins",
+      ]),
+    );
+
+    if (!end && start && Number.isFinite(durationMinutes)) {
+      end = addMinutesToTime(start, durationMinutes);
+    }
+
+    if (!durationMinutes && start && end) {
+      durationMinutes = differenceBetweenTimes(start, end);
+    }
+
+    if (!date || !start || !end) {
+      continue;
+    }
+
+    const normalizedEvent = { ...event, date, start, end, label };
+
+    if (Number.isFinite(durationMinutes) && durationMinutes > 0) {
+      normalizedEvent.duration_minutes = durationMinutes;
+    }
+
+    normalized.push(normalizedEvent);
+  }
+
+  return normalized;
+}
+
+function coerceMk2Time(value) {
+  if (value == null) {
+    return null;
+  }
+
+  if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+    return `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
+  }
+
+  if (typeof value === "object") {
+    const hours = Number(
+      value.hours ?? value.hour ?? value.h ?? value.H ?? value.Hour,
+    );
+    const minutes = Number(
+      value.minutes ?? value.minute ?? value.m ?? value.M ?? value.Minute,
+    );
+    if (Number.isFinite(hours) && Number.isFinite(minutes)) {
+      return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+    }
+    if (typeof value.time === "string") {
+      return coerceMk2Time(value.time);
+    }
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return minutesToTime(Math.round(value));
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (trimmed.includes("T")) {
+      const [, timePart = ""] = trimmed.split("T");
+      return coerceMk2Time(timePart);
+    }
+
+    const hhmm = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (hhmm) {
+      const hours = Number.parseInt(hhmm[1], 10);
+      const minutes = Number.parseInt(hhmm[2], 10);
+      if (Number.isFinite(hours) && Number.isFinite(minutes)) {
+        return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+      }
+    }
+
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      // Treat integers as minutes and fractional hours as hours.
+      const absolute = Math.abs(numeric);
+      if (absolute <= 24 && trimmed.includes(".")) {
+        return minutesToTime(Math.round(numeric * 60));
+      }
+      return minutesToTime(Math.round(numeric));
+    }
+  }
+
+  return null;
+}
+
+function coerceMk2DurationMinutes(value) {
+  if (value == null) {
+    return null;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const hhmm = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (hhmm) {
+      const hours = Number.parseInt(hhmm[1], 10);
+      const minutes = Number.parseInt(hhmm[2], 10);
+      if (Number.isFinite(hours) && Number.isFinite(minutes)) {
+        return hours * 60 + minutes;
+      }
+    }
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return numeric;
+    }
+  }
+
+  if (typeof value === "object") {
+    const minutes = Number(
+      value.minutes ?? value.minute ?? value.mins ?? value.duration ?? value.value,
+    );
+    if (Number.isFinite(minutes)) {
+      return minutes;
+    }
+  }
+
+  return null;
+}
+
+function parseMk2TimeToMinutes(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const match = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
+function addMinutesToTime(timeValue, minutesToAdd) {
+  const startMinutes = parseMk2TimeToMinutes(timeValue);
+  const duration = Number(minutesToAdd);
+  if (!Number.isFinite(startMinutes) || !Number.isFinite(duration)) {
+    return null;
+  }
+  const total = startMinutes + duration;
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function differenceBetweenTimes(startTime, endTime) {
+  const startMinutes = parseMk2TimeToMinutes(startTime);
+  const endMinutes = parseMk2TimeToMinutes(endTime);
+  if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes)) {
+    return null;
+  }
+  let diff = endMinutes - startMinutes;
+  if (diff <= 0) {
+    diff += 24 * 60;
+  }
+  return diff > 0 ? diff : null;
+}
+
+function coerceMk2IsoDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+    return toIsoDate(value);
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return "";
+    }
+    const [datePart] = trimmed.split("T");
+    return datePart || trimmed;
+  }
+  return "";
+}
+
+function coerceMk2Label(candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length) {
+      return candidate.trim();
+    }
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return String(candidate);
+    }
+  }
+  return "";
 }
 
 function normalizeMk2TimeValue(value) {
@@ -4343,26 +4841,6 @@ function normalizeMk2TimeValue(value) {
     }
   }
 
-  return "";
-}
-
-function coerceMk2IsoDate(value) {
-  if (value instanceof Date && !Number.isNaN(value.valueOf())) {
-    return toIsoDate(value);
-  }
-  if (typeof value === "string" && value.trim()) {
-    const [datePart] = value.trim().split("T");
-    return datePart || "";
-  }
-  return "";
-}
-
-function coerceMk2Label(candidates) {
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim().length) {
-      return candidate.trim();
-    }
-  }
   return "";
 }
 
