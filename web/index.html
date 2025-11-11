@@ -20,29 +20,10 @@
       <section class="tab-panel active" data-tab="calendar" data-tab-scope="root">
         <div id="calendar-container"></div>
       </section>
-      <section class="tab-panel" data-tab="config" data-tab-scope="root" id="config-panel">
+      <section class="tab-panel" data-tab="config" data-tab-scope="root">
         <div class="config-layout">
-          <div class="config-actions" data-config="runtime-controls">
-            <button
-              type="button"
-              class="primary-action"
-              data-config="actions"
-              data-action="initialize"
-            >
-              Initialize Runtime
-            </button>
-            <button
-              type="button"
-              class="secondary-action"
-              data-config="actions"
-              data-action="generate"
-              disabled
-            >
-              Generate
-            </button>
-          </div>
           <div class="tab-group">
-            <div class="tab-bar nested" data-config="engine-tabs">
+            <div class="tab-bar nested">
               <button
                 class="tab active"
                 data-tab="mk1"
@@ -59,14 +40,9 @@
                 class="tab-panel active"
                 data-tab="mk1"
                 data-tab-scope="config-engine"
-                data-engine="mk1"
               >
                 <div class="tab-group">
-                  <div
-                    class="tab-bar nested subtle"
-                    data-config="rig-tabs"
-                    data-engine="mk1"
-                  >
+                  <div class="tab-bar nested subtle">
                     <button
                       class="tab active"
                       data-tab="rig-x"
@@ -120,13 +96,9 @@
                   </div>
                 </div>
               </section>
-              <section class="tab-panel" data-tab="mk2" data-tab-scope="config-engine" data-engine="mk2">
+              <section class="tab-panel" data-tab="mk2" data-tab-scope="config-engine">
                 <div class="tab-group">
-                  <div
-                    class="tab-bar nested subtle"
-                    data-config="rig-tabs"
-                    data-engine="mk2"
-                  >
+                  <div class="tab-bar nested subtle">
                     <button
                       class="tab active"
                       data-tab="rig-x"
