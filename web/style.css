@@ -71,6 +71,105 @@ body {
   display: block;
 }
 
+.tab-bar.nested {
+  background: #1c1e25;
+  padding: 4px;
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+}
+
+.tab-bar.nested.subtle {
+  background: #181a21;
+  border-color: #2f323c;
+}
+
+.tab-content.nested {
+  padding: 12px;
+  background: #1c1e25;
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+  margin-top: 10px;
+}
+
+.tab-content.nested.inset {
+  background: #15171d;
+  border-color: #2f323c;
+}
+
+.tab-content.nested.inset .tab-panel {
+  padding: 8px 4px;
+}
+
+.tab-content.nested.inset .tab-panel p {
+  margin: 0;
+}
+
+.config-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.tab-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.config-copy {
+  color: #cbd0df;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.config-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.primary-action,
+.secondary-action {
+  padding: 10px 18px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.primary-action {
+  background: linear-gradient(135deg, #6366f1, #22d3ee);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #0f172a;
+  box-shadow: 0 10px 22px rgba(34, 211, 238, 0.25);
+}
+
+.secondary-action {
+  background: #1f2128;
+  border-color: #2a2d35;
+  color: #cbd0df;
+}
+
+.primary-action:hover,
+.secondary-action:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.2);
+}
+
+.primary-action:active,
+.secondary-action:active {
+  transform: translateY(0);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.2);
+}
+
+.primary-action:focus-visible,
+.secondary-action:focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 2px;
+}
+
 #calendar-container {
   min-height: 380px;
   border: 1px dashed #3a3f4f;

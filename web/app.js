@@ -1,5 +1,9 @@
-const tabButtons = Array.from(document.querySelectorAll('.tab'));
-const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
+const tabButtons = Array.from(
+  document.querySelectorAll('.tab[data-tab-scope="root"]')
+);
+const tabPanels = Array.from(
+  document.querySelectorAll('.tab-panel[data-tab-scope="root"]')
+);
 const tabOrder = ['calendar', 'config', 'console', 'json', 'fixtures', 'logs'];
 const consoleTabButton = tabButtons.find((button) => button.dataset.tab === 'console');
 
@@ -47,6 +51,61 @@ function dispatchIntent(intent) {
     }
   });
 }
+
+function initializeNestedTabScopes() {
+  const scopeRegistry = new Map();
+
+  document.querySelectorAll('[data-tab-scope]').forEach((element) => {
+    const scope = element.dataset.tabScope;
+    if (!scope || scope === 'root') {
+      return;
+    }
+
+    if (!scopeRegistry.has(scope)) {
+      scopeRegistry.set(scope, { buttons: [], panels: [] });
+    }
+
+    const entry = scopeRegistry.get(scope);
+    if (element.classList.contains('tab')) {
+      entry.buttons.push(element);
+    } else if (element.classList.contains('tab-panel')) {
+      entry.panels.push(element);
+    }
+  });
+
+  scopeRegistry.forEach(({ buttons, panels }) => {
+    if (buttons.length === 0 || panels.length === 0) {
+      return;
+    }
+
+    const activate = (target) => {
+      if (typeof target !== 'string') {
+        return;
+      }
+      const normalizedTarget = target.toLowerCase();
+      buttons.forEach((button) => {
+        button.classList.toggle('active', button.dataset.tab === normalizedTarget);
+      });
+      panels.forEach((panel) => {
+        panel.classList.toggle('active', panel.dataset.tab === normalizedTarget);
+      });
+    };
+
+    const defaultButton =
+      buttons.find((button) => button.classList.contains('active')) ?? buttons[0];
+    if (defaultButton && typeof defaultButton.dataset.tab === 'string') {
+      activate(defaultButton.dataset.tab);
+    }
+
+    buttons.forEach((button) => {
+      button.addEventListener('click', () => {
+        activate(button.dataset.tab);
+      });
+    });
+  });
+}
+
+initializeNestedTabScopes();
 
 let toastContainer;
 let toastIdCounter = 0;
