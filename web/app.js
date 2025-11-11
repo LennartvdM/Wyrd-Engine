@@ -755,22 +755,6 @@ if isinstance(week_start_value, (datetime, date, time, timedelta)):
 else:
     week_start_text = str(week_start_value) if week_start_value else start.isoformat()
 
-first_event_sample = events_list[0] if events_list else None
-try:
-    first_event_preview = json.loads(json.dumps(first_event_sample)) if first_event_sample else None
-except TypeError:
-    first_event_preview = str(first_event_sample)
-
-print(
-    "[MK2 bridge] payload diagnostics",
-    {
-        "events_length": len(events_list),
-        "raw_events_type": type(raw_events_field).__name__,
-        "events_list_type": type(events_list).__name__,
-        "first_event": first_event_preview,
-    },
-)
-
 payload = {
     "person": person_payload,
     "week_start": week_start_text,
@@ -778,6 +762,20 @@ payload = {
     "issues": issues_list,
     "metadata": metadata,
 }
+
+print("[MK2 bridge] first event sample", payload["events"][:1])
+
+first_event_preview = payload["events"][:1]
+
+print(
+    "[MK2 bridge] payload diagnostics",
+    {
+        "events_length": len(events_list),
+        "raw_events_type": type(raw_events_field).__name__,
+        "events_list_type": type(events_list).__name__,
+        "first_event": first_event_preview[0] if first_event_preview else None,
+    },
+)
 
 payload_json = json.dumps(payload)
 
@@ -1339,7 +1337,14 @@ form?.addEventListener("submit", async (event) => {
     renderDiagnostics({ issues, metadata, meta });
     enableDownload(events, config.name);
     resultsSection?.classList.remove("hidden");
-    setFormStatusMessage({ message: "Schedule generated.", tone: "success" });
+
+    const generatedEventsCount = Array.isArray(events) ? events.length : 0;
+    const isMk2Engine = (engineId || "").toLowerCase() === "mk2";
+    if (isMk2Engine && generatedEventsCount === 0) {
+      setFormStatusMessage({ message: "MK2 returned 0 events", tone: "error" });
+    } else {
+      setFormStatusMessage({ message: "Schedule generated.", tone: "success" });
+    }
   } catch (error) {
     console.error(error);
     const message = getFriendlyErrorMessage(error);
@@ -4382,6 +4387,7 @@ async function generateScheduleForEngine(engineId, config, startDate) {
     });
 
     const result = parseRunnerResultJSON(response.resultJSON);
+    console.debug("[MK2] raw events sample", result?.events?.[0] ?? null);
     if (!result || typeof result !== "object") {
       throw new Error("MK2 runtime returned an unexpected result payload.");
     }
@@ -4684,44 +4690,110 @@ function isLikelyMk2EventObject(value) {
   return candidateKeys.some((key) => Object.prototype.hasOwnProperty.call(value, key));
 }
 
-function normalizeMk2Events(list) {
+function mk2ToFlatEvents(list) {
   if (!Array.isArray(list)) {
     return [];
   }
 
-  const normalized = [];
+  const normalizeLabel = (value) => {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      return trimmed.length ? trimmed : "untitled";
+    }
+    if (Number.isFinite(value)) {
+      return String(value);
+    }
+    if (value == null) {
+      return "untitled";
+    }
+    try {
+      const stringified = String(value).trim();
+      return stringified.length ? stringified : "untitled";
+    } catch (error) {
+      return "untitled";
+    }
+  };
+
+  const normalizeDate = (value) => {
+    if (value == null) {
+      return null;
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      return trimmed.length ? trimmed : null;
+    }
+    if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+      return toIsoDate(value);
+    }
+    if (Number.isFinite(value)) {
+      return String(value);
+    }
+    try {
+      const stringified = String(value).trim();
+      return stringified.length ? stringified : null;
+    } catch (error) {
+      return null;
+    }
+  };
+
+  const normalizeTime = (value) => {
+    if (value == null) {
+      return null;
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      return trimmed.length ? trimmed : null;
+    }
+    if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+      return value.toISOString();
+    }
+    if (Number.isFinite(value)) {
+      return String(value);
+    }
+    if (typeof value === "object") {
+      const hours = Number(
+        value.hours ?? value.hour ?? value.h ?? value.H ?? value.Hour,
+      );
+      const minutes = Number(
+        value.minutes ?? value.minute ?? value.m ?? value.M ?? value.Minute,
+      );
+      if (Number.isFinite(hours) && Number.isFinite(minutes)) {
+        return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+      }
+      if (typeof value.time === "string") {
+        return value.time;
+      }
+      if (typeof value.start === "string") {
+        return value.start;
+      }
+      if (typeof value.end === "string") {
+        return value.end;
+      }
+    }
+    try {
+      const stringified = String(value).trim();
+      return stringified.length ? stringified : null;
+    } catch (error) {
+      return null;
+    }
+  };
+
+  const flattened = [];
 
   for (const raw of list) {
     if (raw == null) {
       continue;
     }
 
-    const event = typeof raw === "object" ? { ...raw } : { value: raw };
+    const sourceEvent = typeof raw === "object" ? raw : { value: raw };
+    const event = { ...sourceEvent };
 
-    const label =
-      coerceMk2Label([
-        event.label,
-        event.activity,
-        event.activity_name,
-        event.activityName,
-        event.name,
-        event.title,
-        event.description,
-        event.summary,
-        typeof event.value === "string" ? event.value : null,
-      ]) || "untitled";
+    const labelCandidate =
+      event.label ?? event.activity ?? event.name ?? "untitled";
+    event.label = normalizeLabel(labelCandidate);
 
-    const dateValue = pickMk2EventField(event, [
-      "date",
-      "day",
-      "day_name",
-      "dayName",
-      "calendar_date",
-      "calendarDate",
-      "date_str",
-      "dateString",
-    ]);
-    const date = coerceMk2IsoDate(dateValue);
+    const dayCandidate = event.day ?? event.date ?? event.day_index ?? null;
+    event.day = normalizeDate(dayCandidate);
 
     const startCandidate = pickMk2EventField(event, [
       "start",
@@ -4731,21 +4803,15 @@ function normalizeMk2Events(list) {
       "time",
       "start_at",
       "startAt",
-      "from",
       "minute_start",
       "minuteStart",
       "start_minutes",
       "startMinutes",
       "start_minute",
     ]);
-    let start = coerceMk2Time(startCandidate);
-    if (!start) {
-      const startMinutes = pickMk2EventField(event, [
-        "start_minutes",
-        "start_minute",
-        "minute_start",
-      ]);
-      start = coerceMk2Time(startMinutes);
+    let startValue = normalizeTime(startCandidate);
+    if (startValue == null && Object.prototype.hasOwnProperty.call(sourceEvent, "start")) {
+      startValue = normalizeTime(sourceEvent.start);
     }
 
     const endCandidate = pickMk2EventField(event, [
@@ -4755,58 +4821,35 @@ function normalizeMk2Events(list) {
       "finish",
       "end_at",
       "endAt",
-      "to",
       "minute_end",
       "minuteEnd",
       "end_minutes",
       "endMinutes",
       "end_minute",
     ]);
-    let end = coerceMk2Time(endCandidate);
-    if (!end) {
-      const endMinutes = pickMk2EventField(event, [
-        "end_minutes",
-        "end_minute",
-        "minute_end",
-      ]);
-      end = coerceMk2Time(endMinutes);
+    let endValue = normalizeTime(endCandidate);
+    if (endValue == null && Object.prototype.hasOwnProperty.call(sourceEvent, "end")) {
+      endValue = normalizeTime(sourceEvent.end);
     }
 
-    let durationMinutes = coerceMk2DurationMinutes(
-      pickMk2EventField(event, [
-        "duration_minutes",
-        "duration_minute",
-        "duration",
-        "minutes",
-        "length_minutes",
-        "length",
-        "durationMinutes",
-        "durationMins",
-      ]),
-    );
-
-    if (!end && start && Number.isFinite(durationMinutes)) {
-      end = addMinutesToTime(start, durationMinutes);
+    const dateCandidate =
+      event.date ?? sourceEvent.date ?? event.day ?? event.day_index ?? null;
+    const normalizedDate = normalizeDate(dateCandidate);
+    if (
+      !Object.prototype.hasOwnProperty.call(event, "date") ||
+      event.date == null ||
+      event.date instanceof Date
+    ) {
+      event.date = normalizedDate;
     }
 
-    if (!durationMinutes && start && end) {
-      durationMinutes = differenceBetweenTimes(start, end);
-    }
+    event.start = startValue ?? null;
+    event.end = endValue ?? null;
 
-    if (!date || !start || !end) {
-      continue;
-    }
-
-    const normalizedEvent = { ...event, date, start, end, label };
-
-    if (Number.isFinite(durationMinutes) && durationMinutes > 0) {
-      normalizedEvent.duration_minutes = durationMinutes;
-    }
-
-    normalized.push(normalizedEvent);
+    flattened.push(event);
   }
 
-  return normalized;
+  return flattened;
 }
 
 function coerceMk2Time(value) {
