@@ -1,5 +1,9 @@
-const tabButtons = Array.from(document.querySelectorAll('.tab'));
-const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
+const tabButtons = Array.from(
+  document.querySelectorAll('.tab[data-tab-scope="root"]')
+);
+const tabPanels = Array.from(
+  document.querySelectorAll('.tab-panel[data-tab-scope="root"]')
+);
 const tabOrder = ['calendar', 'config', 'console', 'json', 'fixtures', 'logs'];
 const consoleTabButton = tabButtons.find((button) => button.dataset.tab === 'console');
 
@@ -47,6 +51,61 @@ function dispatchIntent(intent) {
     }
   });
 }
+
+function initializeNestedTabScopes() {
+  const scopeRegistry = new Map();
+
+  document.querySelectorAll('[data-tab-scope]').forEach((element) => {
+    const scope = element.dataset.tabScope;
+    if (!scope || scope === 'root') {
+      return;
+    }
+
+    if (!scopeRegistry.has(scope)) {
+      scopeRegistry.set(scope, { buttons: [], panels: [] });
+    }
+
+    const entry = scopeRegistry.get(scope);
+    if (element.classList.contains('tab')) {
+      entry.buttons.push(element);
+    } else if (element.classList.contains('tab-panel')) {
+      entry.panels.push(element);
+    }
+  });
+
+  scopeRegistry.forEach(({ buttons, panels }) => {
+    if (buttons.length === 0 || panels.length === 0) {
+      return;
+    }
+
+    const activate = (target) => {
+      if (typeof target !== 'string') {
+        return;
+      }
+      const normalizedTarget = target.toLowerCase();
+      buttons.forEach((button) => {
+        button.classList.toggle('active', button.dataset.tab === normalizedTarget);
+      });
+      panels.forEach((panel) => {
+        panel.classList.toggle('active', panel.dataset.tab === normalizedTarget);
+      });
+    };
+
+    const defaultButton =
+      buttons.find((button) => button.classList.contains('active')) ?? buttons[0];
+    if (defaultButton && typeof defaultButton.dataset.tab === 'string') {
+      activate(defaultButton.dataset.tab);
+    }
+
+    buttons.forEach((button) => {
+      button.addEventListener('click', () => {
+        activate(button.dataset.tab);
+      });
+    });
+  });
+}
+
+initializeNestedTabScopes();
 
 let toastContainer;
 let toastIdCounter = 0;
@@ -427,7 +486,7 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-const configPanel = document.querySelector('.tab-panel[data-tab="config"]');
+const configPanel = document.getElementById('config-panel');
 const consolePanel = document.querySelector('.tab-panel[data-tab="console"]');
 const jsonPanel = document.querySelector('.tab-panel[data-tab="json"]');
 const fixturesPanel = document.querySelector('.tab-panel[data-tab="fixtures"]');
@@ -439,7 +498,7 @@ const defaultStderrMessage = 'Error output will appear here.';
 let stdoutOutput;
 let stderrOutput;
 let initializeRuntimeButton;
-let runTestButton;
+let generateButton;
 let runtimeReady = false;
 let runtimeLoadingPromise;
 let runtimeStatus = 'idle';
@@ -667,9 +726,9 @@ function handleRuntimeLoadSuccess() {
     initializeRuntimeButton.disabled = true;
     updateRuntimeButtonState(initializeRuntimeButton);
   }
-  if (runTestButton) {
-    runTestButton.disabled = false;
-    updateRuntimeButtonState(runTestButton);
+  if (generateButton) {
+    generateButton.disabled = false;
+    updateRuntimeButtonState(generateButton);
   }
 }
 
@@ -679,9 +738,9 @@ function handleRuntimeLoadFailure(error) {
     initializeRuntimeButton.disabled = false;
     updateRuntimeButtonState(initializeRuntimeButton);
   }
-  if (runTestButton && !runtimeReady) {
-    runTestButton.disabled = true;
-    updateRuntimeButtonState(runTestButton);
+  if (generateButton && !runtimeReady) {
+    generateButton.disabled = true;
+    updateRuntimeButtonState(generateButton);
   }
   hasShownRuntimeReadyToast = false;
   const stderrMessage =
@@ -704,200 +763,267 @@ function handleRuntimeLoadFailure(error) {
   });
 }
 
-if (configPanel) {
-  const accordionSections = [
-    {
-      id: 'mk1-engine',
-      title: 'MK1 Engine',
-      content: 'Configuration options for the MK1 Engine will appear here.'
-    },
-    {
-      id: 'mk2-engine',
-      title: 'MK2 Engine',
-      content: 'Configuration options for the MK2 Engine will appear here.'
-    },
-    {
-      id: 'calendar-rig',
-      title: 'Calendar Rig',
-      content: 'Calendar Rig settings and adjustments will be available in this section.'
-    },
-    {
-      id: 'workforce-rig',
-      title: 'Workforce Rig',
-      content: 'Manage Workforce Rig parameters from this placeholder area.'
-    },
-    {
-      id: 'yearly-budget',
-      title: 'Yearly Budget',
-      content: 'Budget configuration tools will live in this Yearly Budget section.'
+if (configPanel && configPanel.dataset.hydrated !== '1') {
+  const ENGINE_STORAGE_KEY = 'config.selectedEngine';
+  const RIG_STORAGE_KEY = 'config.selectedRig';
+
+  const engineTabBar = configPanel.querySelector('[data-config="engine-tabs"]');
+  const engineButtons = engineTabBar
+    ? Array.from(engineTabBar.querySelectorAll('.tab[data-tab-scope="config-engine"]'))
+    : [];
+  const enginePanels = Array.from(
+    configPanel.querySelectorAll('.tab-panel[data-tab-scope="config-engine"]')
+  );
+
+  const rigGroups = new Map();
+  configPanel.querySelectorAll('[data-config="rig-tabs"]').forEach((group) => {
+    const engineId = group.dataset.engine;
+    if (!engineId) {
+      return;
     }
-  ];
+    const rigButtons = Array.from(group.querySelectorAll('.tab'));
+    const rigScope = rigButtons[0]?.dataset.tabScope;
+    if (!rigScope) {
+      return;
+    }
+    const rigPanels = Array.from(
+      configPanel.querySelectorAll(`.tab-panel[data-tab-scope="${rigScope}"]`)
+    );
+    rigGroups.set(engineId, { buttons: rigButtons, panels: rigPanels });
+  });
 
-  const storageKey = 'configAccordionState';
-  let accordionState = {};
+  const runtimeControls = configPanel.querySelector('[data-config="runtime-controls"]');
+  const actionButtons = runtimeControls
+    ? Array.from(runtimeControls.querySelectorAll('[data-config="actions"]'))
+    : [];
 
-  try {
-    const storedState = localStorage.getItem(storageKey);
-    if (storedState) {
-      const parsed = JSON.parse(storedState);
-      if (parsed && typeof parsed === 'object') {
-        accordionState = parsed;
+  initializeRuntimeButton = actionButtons.find(
+    (button) => button.dataset.action === 'initialize'
+  );
+  generateButton = actionButtons.find((button) => button.dataset.action === 'generate');
+
+  const loadStoredEngine = () => {
+    try {
+      const stored = localStorage.getItem(ENGINE_STORAGE_KEY);
+      return typeof stored === 'string' && stored ? stored : undefined;
+    } catch (error) {
+      console.warn('Unable to read stored engine selection:', error);
+      return undefined;
+    }
+  };
+
+  const loadStoredRigs = () => {
+    try {
+      const stored = localStorage.getItem(RIG_STORAGE_KEY);
+      if (!stored) {
+        return {};
       }
+      const parsed = JSON.parse(stored);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (error) {
+      console.warn('Unable to read stored rig selections:', error);
+      return {};
     }
-  } catch (error) {
-    console.warn('Unable to read config accordion state:', error);
-  }
+  };
 
-  const accordion = document.createElement('div');
-  accordion.className = 'accordion';
+  const persistEngineSelection = (engineId) => {
+    try {
+      localStorage.setItem(ENGINE_STORAGE_KEY, engineId);
+    } catch (error) {
+      console.warn('Unable to persist engine selection:', error);
+    }
+  };
 
-  accordionSections.forEach((section) => {
-    const item = document.createElement('div');
-    item.className = 'accordion-item';
+  const persistRigSelections = (selections) => {
+    try {
+      localStorage.setItem(RIG_STORAGE_KEY, JSON.stringify(selections));
+    } catch (error) {
+      console.warn('Unable to persist rig selections:', error);
+    }
+  };
 
-    const header = document.createElement('button');
-    header.type = 'button';
-    header.className = 'accordion-header';
-    header.dataset.sectionId = section.id;
+  const rigSelections = loadStoredRigs();
 
-    const title = document.createElement('span');
-    title.className = 'accordion-title';
-    title.textContent = section.title;
+  const syncTabState = (buttons, panels, target) => {
+    if (!target) {
+      return;
+    }
+    buttons.forEach((button) => {
+      const isActive = button.dataset.tab === target;
+      button.classList.toggle('active', isActive);
+      button.dataset.active = isActive ? '1' : '0';
+      button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+    panels.forEach((panel) => {
+      const isActive = panel.dataset.tab === target;
+      panel.classList.toggle('active', isActive);
+      panel.dataset.active = isActive ? '1' : '0';
+      panel.hidden = !isActive;
+      panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+    });
+  };
 
-    const arrow = document.createElement('span');
-    arrow.className = 'accordion-arrow';
-    arrow.setAttribute('aria-hidden', 'true');
-    arrow.textContent = '▸';
+  const applyRigSelection = (engineId, rigId, { updateStorage = true } = {}) => {
+    const rigGroup = rigGroups.get(engineId);
+    if (!rigGroup) {
+      return;
+    }
+    if (!rigGroup.buttons.some((button) => button.dataset.tab === rigId)) {
+      return;
+    }
+    syncTabState(rigGroup.buttons, rigGroup.panels, rigId);
+    if (updateStorage) {
+      rigSelections[engineId] = rigId;
+      persistRigSelections(rigSelections);
+    }
+  };
 
-    header.append(title, arrow);
+  const applyEngineSelection = (engineId, { updateStorage = true } = {}) => {
+    if (!engineButtons.some((button) => button.dataset.tab === engineId)) {
+      return;
+    }
+    syncTabState(engineButtons, enginePanels, engineId);
+    if (updateStorage) {
+      persistEngineSelection(engineId);
+    }
+    const rigGroup = rigGroups.get(engineId);
+    if (rigGroup) {
+      const storedRig = rigSelections[engineId];
+      const defaultRig =
+        rigGroup.buttons.find((button) => button.classList.contains('active'))?.dataset.tab ||
+        rigGroup.buttons[0]?.dataset.tab;
+      const rigToActivate =
+        rigGroup.buttons.some((button) => button.dataset.tab === storedRig) && storedRig
+          ? storedRig
+          : defaultRig;
+      applyRigSelection(engineId, rigToActivate, { updateStorage: false });
+    }
+  };
 
-    const content = document.createElement('div');
-    content.className = 'accordion-content';
-    content.innerHTML = `<p>${section.content}</p>`;
+  const defaultEngine =
+    engineButtons.find((button) => button.classList.contains('active'))?.dataset.tab ||
+    engineButtons[0]?.dataset.tab;
+  const storedEngine = loadStoredEngine();
+  const initialEngine =
+    engineButtons.some((button) => button.dataset.tab === storedEngine) && storedEngine
+      ? storedEngine
+      : defaultEngine;
 
-    const isOpen = Boolean(accordionState[section.id]);
-    item.classList.toggle('open', isOpen);
-    header.setAttribute('aria-expanded', String(isOpen));
-    content.hidden = !isOpen;
+  engineButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      applyEngineSelection(button.dataset.tab);
+    });
+  });
 
-    header.addEventListener('click', () => {
-      const nowOpen = !item.classList.contains('open');
-      item.classList.toggle('open', nowOpen);
-      header.setAttribute('aria-expanded', String(nowOpen));
-      content.hidden = !nowOpen;
+  rigGroups.forEach(({ buttons }, engineId) => {
+    buttons.forEach((button) => {
+      button.addEventListener('click', () => {
+        applyRigSelection(engineId, button.dataset.tab);
+      });
+    });
+  });
 
-      accordionState[section.id] = nowOpen;
+  if (initializeRuntimeButton) {
+    styleRuntimeButton(initializeRuntimeButton);
+    initializeRuntimeButton.addEventListener('click', async () => {
+      if (runtimeReady) {
+        return;
+      }
+      initializeRuntimeButton.disabled = true;
+      initializeRuntimeButton.textContent = 'Initializing…';
+      if (generateButton) {
+        generateButton.disabled = true;
+        updateRuntimeButtonState(generateButton);
+      }
+      updateRuntimeButtonState(initializeRuntimeButton);
       try {
-        localStorage.setItem(storageKey, JSON.stringify(accordionState));
+        await ensureRuntimeLoaded();
+        handleRuntimeLoadSuccess();
       } catch (error) {
-        console.warn('Unable to persist config accordion state:', error);
+        handleRuntimeLoadFailure(error);
       }
     });
+  }
 
-    item.append(header, content);
-    accordion.append(item);
-  });
-
-  const runtimeControls = document.createElement('div');
-  runtimeControls.style.display = 'flex';
-  runtimeControls.style.gap = '8px';
-  runtimeControls.style.marginBottom = '12px';
-
-  initializeRuntimeButton = document.createElement('button');
-  initializeRuntimeButton.type = 'button';
-  initializeRuntimeButton.textContent = 'Initialize Runtime';
-  styleRuntimeButton(initializeRuntimeButton);
-
-  runTestButton = document.createElement('button');
-  runTestButton.type = 'button';
-  runTestButton.textContent = 'Run Test';
-  runTestButton.disabled = true;
-  styleRuntimeButton(runTestButton);
-
-  runtimeControls.append(initializeRuntimeButton, runTestButton);
-
-  initializeRuntimeButton.addEventListener('click', async () => {
-    if (runtimeReady) {
-      return;
-    }
-    initializeRuntimeButton.disabled = true;
-    initializeRuntimeButton.textContent = 'Initializing…';
-    runTestButton.disabled = true;
-    updateRuntimeButtonState(initializeRuntimeButton);
-    updateRuntimeButtonState(runTestButton);
-    try {
-      await ensureRuntimeLoaded();
-      handleRuntimeLoadSuccess();
-    } catch (error) {
-      handleRuntimeLoadFailure(error);
-    }
-  });
-
-  runTestButton.addEventListener('click', async () => {
-    runTestButton.disabled = true;
-    runTestButton.textContent = 'Running…';
-    if (initializeRuntimeButton) {
-      initializeRuntimeButton.disabled = true;
-      updateRuntimeButtonState(initializeRuntimeButton);
-    }
-    updateRuntimeButtonState(runTestButton);
-
-    try {
-      await ensureRuntimeLoaded();
-    } catch (error) {
-      handleRuntimeLoadFailure(error);
-      runTestButton.textContent = 'Run Test';
-      updateRuntimeButtonState(runTestButton);
-      return;
-    }
-
-    beginConsoleRun('Running smoke test…');
-
-    try {
-      const { stdout = '', stderr = '' } = await sendWorkerMessage('runPython', {
-        code: 'print("Pyodide OK")',
-      });
-      renderConsoleOutputs({ stdout, stderr });
-      const hasErrorOutput =
-        typeof stderr === 'string' && stderr.trim().length > 0;
-      dispatchIntent({
-        type: INTENT_TYPES.SHOW_TOAST,
-        payload: {
-          message: hasErrorOutput ? 'Smoke test completed with warnings' : 'Smoke test passed',
-          description: hasErrorOutput ? 'Check the console output for details.' : undefined,
-          intent: hasErrorOutput ? 'warning' : 'success',
-          duration: hasErrorOutput ? 5000 : 2800,
-        },
-      });
-    } catch (error) {
-      const stderrMessage =
-        typeof error?.stderr === 'string' && error.stderr
-          ? error.stderr
-          : error?.error || 'Pyodide execution failed.';
-      renderConsoleOutputs({ stdout: error?.stdout || '', stderr: stderrMessage });
-      dispatchIntent({
-        type: INTENT_TYPES.SHOW_TOAST,
-        payload: {
-          message: 'Smoke test failed',
-          description: stderrMessage,
-          intent: 'error',
-          duration: 6000,
-        },
-      });
-    } finally {
-      runTestButton.disabled = false;
-      runTestButton.textContent = 'Run Test';
-      updateRuntimeButtonState(runTestButton);
-      if (initializeRuntimeButton && runtimeReady) {
-        initializeRuntimeButton.textContent = 'Runtime Ready';
+  if (generateButton) {
+    styleRuntimeButton(generateButton);
+    generateButton.disabled = !runtimeReady;
+    updateRuntimeButtonState(generateButton);
+    generateButton.addEventListener('click', async () => {
+      generateButton.disabled = true;
+      generateButton.textContent = 'Generating…';
+      if (initializeRuntimeButton) {
         initializeRuntimeButton.disabled = true;
         updateRuntimeButtonState(initializeRuntimeButton);
       }
-    }
-  });
+      updateRuntimeButtonState(generateButton);
 
-  configPanel.innerHTML = '';
-  configPanel.append(runtimeControls, accordion);
+      try {
+        await ensureRuntimeLoaded();
+      } catch (error) {
+        handleRuntimeLoadFailure(error);
+        generateButton.textContent = 'Generate';
+        updateRuntimeButtonState(generateButton);
+        return;
+      }
+
+      beginConsoleRun('Running smoke test…');
+
+      try {
+        const { stdout = '', stderr = '' } = await sendWorkerMessage('runPython', {
+          code: 'print("Pyodide OK")',
+        });
+        renderConsoleOutputs({ stdout, stderr });
+        const hasErrorOutput =
+          typeof stderr === 'string' && stderr.trim().length > 0;
+        dispatchIntent({
+          type: INTENT_TYPES.SHOW_TOAST,
+          payload: {
+            message: hasErrorOutput
+              ? 'Smoke test completed with warnings'
+              : 'Smoke test passed',
+            description: hasErrorOutput ? 'Check the console output for details.' : undefined,
+            intent: hasErrorOutput ? 'warning' : 'success',
+            duration: hasErrorOutput ? 5000 : 2800,
+          },
+        });
+      } catch (error) {
+        const stderrMessage =
+          typeof error?.stderr === 'string' && error.stderr
+            ? error.stderr
+            : error?.error || 'Pyodide execution failed.';
+        renderConsoleOutputs({ stdout: error?.stdout || '', stderr: stderrMessage });
+        dispatchIntent({
+          type: INTENT_TYPES.SHOW_TOAST,
+          payload: {
+            message: 'Smoke test failed',
+            description: stderrMessage,
+            intent: 'error',
+            duration: 6000,
+          },
+        });
+      } finally {
+        generateButton.disabled = false;
+        generateButton.textContent = 'Generate';
+        updateRuntimeButtonState(generateButton);
+        if (initializeRuntimeButton && runtimeReady) {
+          initializeRuntimeButton.textContent = 'Runtime Ready';
+          initializeRuntimeButton.disabled = true;
+          updateRuntimeButtonState(initializeRuntimeButton);
+        }
+      }
+    });
+  }
+
+  applyEngineSelection(initialEngine, { updateStorage: false });
+
+  if (initializeRuntimeButton && runtimeReady) {
+    initializeRuntimeButton.textContent = 'Runtime Ready';
+    initializeRuntimeButton.disabled = true;
+    updateRuntimeButtonState(initializeRuntimeButton);
+  }
+
+  configPanel.dataset.hydrated = '1';
 }
 
 if (consolePanel) {
