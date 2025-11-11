@@ -1,6 +1,13 @@
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
 const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
 const tabOrder = ['calendar', 'config', 'console', 'json', 'fixtures', 'logs'];
+const consoleTabButton = tabButtons.find((button) => button.dataset.tab === 'console');
+
+let currentTab =
+  tabButtons.find((button) => button.classList.contains('active'))?.dataset.tab ||
+  tabOrder[0];
+let consoleIndicator;
+let pendingAutoSwitch = false;
 
 function setActiveTab(targetTab) {
   tabButtons.forEach((button) => {
@@ -12,6 +19,29 @@ function setActiveTab(targetTab) {
     const isActive = panel.dataset.tab === targetTab;
     panel.classList.toggle('active', isActive);
   });
+
+  currentTab = targetTab;
+  if (targetTab === 'console') {
+    setConsoleIndicatorVisible(false);
+    pendingAutoSwitch = false;
+  }
+}
+
+if (consoleTabButton) {
+  consoleTabButton.style.display = 'inline-flex';
+  consoleTabButton.style.alignItems = 'center';
+  consoleTabButton.style.justifyContent = 'center';
+
+  consoleIndicator = document.createElement('span');
+  consoleIndicator.textContent = '•';
+  consoleIndicator.setAttribute('aria-hidden', 'true');
+  consoleIndicator.style.marginLeft = '4px';
+  consoleIndicator.style.fontSize = '10px';
+  consoleIndicator.style.color = '#22d3ee';
+  consoleIndicator.style.opacity = '0';
+  consoleIndicator.style.transition = 'opacity 0.2s ease';
+  consoleIndicator.style.pointerEvents = 'none';
+  consoleTabButton.append(consoleIndicator);
 }
 
 tabButtons.forEach((button) => {
@@ -169,6 +199,202 @@ const jsonPanel = document.querySelector('.tab-panel[data-tab="json"]');
 const fixturesPanel = document.querySelector('.tab-panel[data-tab="fixtures"]');
 const logsPanel = document.querySelector('.tab-panel[data-tab="logs"]');
 
+const defaultStdoutMessage = 'Program output will appear here.';
+const defaultStderrMessage = 'Error output will appear here.';
+
+let stdoutOutput;
+let stderrOutput;
+let initializeRuntimeButton;
+let runTestButton;
+let runtimeReady = false;
+let runtimeLoadingPromise;
+
+let pyWorker;
+try {
+  pyWorker = new Worker('workers/pyRunner.js', { type: 'module' });
+} catch (error) {
+  console.error('Failed to initialize runtime worker:', error);
+}
+
+let workerMessageId = 0;
+const workerPendingRequests = new Map();
+
+if (pyWorker) {
+  pyWorker.addEventListener('message', (event) => {
+    const { data } = event;
+    if (!data || typeof data.id === 'undefined') {
+      return;
+    }
+    const pending = workerPendingRequests.get(data.id);
+    if (!pending) {
+      return;
+    }
+    workerPendingRequests.delete(data.id);
+    const { resolve, reject } = pending;
+    const { ok, id, ...rest } = data;
+    if (ok) {
+      resolve(rest);
+    } else {
+      reject(rest);
+    }
+  });
+
+  pyWorker.addEventListener('error', (event) => {
+    const message = event?.message || 'Unexpected runtime worker error.';
+    workerPendingRequests.forEach(({ reject }) => {
+      reject({ error: message, stdout: '', stderr: message });
+    });
+    workerPendingRequests.clear();
+  });
+
+  pyWorker.addEventListener('messageerror', () => {
+    workerPendingRequests.forEach(({ reject }) => {
+      reject({ error: 'Failed to decode message from runtime worker.' });
+    });
+    workerPendingRequests.clear();
+  });
+}
+
+function sendWorkerMessage(type, payload = {}) {
+  if (!pyWorker) {
+    return Promise.reject({ error: 'Runtime worker unavailable.' });
+  }
+  workerMessageId += 1;
+  const id = workerMessageId;
+  const message = { id, type, ...payload };
+  return new Promise((resolve, reject) => {
+    workerPendingRequests.set(id, { resolve, reject });
+    try {
+      pyWorker.postMessage(message);
+    } catch (error) {
+      workerPendingRequests.delete(id);
+      reject({
+        error: error?.message || 'Unable to communicate with runtime worker.',
+      });
+    }
+  });
+}
+
+function styleRuntimeButton(button) {
+  if (!button) {
+    return;
+  }
+  button.style.background = '#1f2128';
+  button.style.border = '1px solid #2a2d35';
+  button.style.borderRadius = '4px';
+  button.style.color = '#cbd0df';
+  button.style.padding = '6px 12px';
+  button.style.fontSize = '12px';
+  button.style.letterSpacing = '0.02em';
+  button.style.fontWeight = '600';
+  button.style.transition = 'background 0.2s ease, color 0.2s ease, opacity 0.2s ease';
+  button.style.cursor = button.disabled ? 'not-allowed' : 'pointer';
+  updateRuntimeButtonState(button);
+}
+
+function updateRuntimeButtonState(button) {
+  if (!button) {
+    return;
+  }
+  button.style.opacity = button.disabled ? '0.6' : '1';
+  button.style.cursor = button.disabled ? 'not-allowed' : 'pointer';
+  if (button.disabled) {
+    button.style.background = '#1f2128';
+    button.style.color = '#cbd0df';
+  }
+}
+
+function setConsoleIndicatorVisible(isVisible) {
+  if (!consoleIndicator) {
+    return;
+  }
+  consoleIndicator.style.opacity = isVisible ? '1' : '0';
+}
+
+function beginConsoleRun(message) {
+  pendingAutoSwitch = true;
+  if (stdoutOutput) {
+    stdoutOutput.textContent = message;
+  }
+  if (stderrOutput) {
+    stderrOutput.textContent = defaultStderrMessage;
+  }
+  if (currentTab === 'console') {
+    setConsoleIndicatorVisible(false);
+  }
+}
+
+function renderConsoleOutputs({ stdout, stderr }) {
+  if (stdoutOutput) {
+    const stdoutText = typeof stdout === 'string' && stdout ? stdout : '';
+    stdoutOutput.textContent = stdoutText || defaultStdoutMessage;
+    stdoutOutput.scrollTop = stdoutOutput.scrollHeight;
+  }
+  if (stderrOutput) {
+    const stderrText = typeof stderr === 'string' && stderr ? stderr : '';
+    stderrOutput.textContent = stderrText || defaultStderrMessage;
+    stderrOutput.scrollTop = stderrOutput.scrollHeight;
+  }
+
+  if (currentTab !== 'console') {
+    setConsoleIndicatorVisible(Boolean(stdout) || Boolean(stderr));
+  }
+
+  if ((stdout && stdout.length > 0) || (stderr && stderr.length > 0)) {
+    if (pendingAutoSwitch && currentTab !== 'console') {
+      setActiveTab('console');
+    }
+  }
+  pendingAutoSwitch = false;
+}
+
+async function ensureRuntimeLoaded() {
+  if (runtimeReady) {
+    return;
+  }
+  if (!runtimeLoadingPromise) {
+    runtimeLoadingPromise = sendWorkerMessage('load');
+  }
+  try {
+    await runtimeLoadingPromise;
+    runtimeReady = true;
+  } catch (error) {
+    runtimeReady = false;
+    throw error;
+  } finally {
+    runtimeLoadingPromise = undefined;
+  }
+}
+
+function handleRuntimeLoadSuccess() {
+  if (initializeRuntimeButton) {
+    initializeRuntimeButton.textContent = 'Runtime Ready';
+    initializeRuntimeButton.disabled = true;
+    updateRuntimeButtonState(initializeRuntimeButton);
+  }
+  if (runTestButton) {
+    runTestButton.disabled = false;
+    updateRuntimeButtonState(runTestButton);
+  }
+}
+
+function handleRuntimeLoadFailure(error) {
+  if (initializeRuntimeButton) {
+    initializeRuntimeButton.textContent = 'Initialize Runtime';
+    initializeRuntimeButton.disabled = false;
+    updateRuntimeButtonState(initializeRuntimeButton);
+  }
+  if (runTestButton && !runtimeReady) {
+    runTestButton.disabled = true;
+    updateRuntimeButtonState(runTestButton);
+  }
+  const stderrMessage =
+    typeof error?.stderr === 'string' && error.stderr
+      ? error.stderr
+      : error?.error || 'Failed to initialize Pyodide runtime.';
+  renderConsoleOutputs({ stdout: error?.stdout || '', stderr: stderrMessage });
+}
+
 if (configPanel) {
   const accordionSections = [
     {
@@ -263,8 +489,86 @@ if (configPanel) {
     accordion.append(item);
   });
 
+  const runtimeControls = document.createElement('div');
+  runtimeControls.style.display = 'flex';
+  runtimeControls.style.gap = '8px';
+  runtimeControls.style.marginBottom = '12px';
+
+  initializeRuntimeButton = document.createElement('button');
+  initializeRuntimeButton.type = 'button';
+  initializeRuntimeButton.textContent = 'Initialize Runtime';
+  styleRuntimeButton(initializeRuntimeButton);
+
+  runTestButton = document.createElement('button');
+  runTestButton.type = 'button';
+  runTestButton.textContent = 'Run Test';
+  runTestButton.disabled = true;
+  styleRuntimeButton(runTestButton);
+
+  runtimeControls.append(initializeRuntimeButton, runTestButton);
+
+  initializeRuntimeButton.addEventListener('click', async () => {
+    if (runtimeReady) {
+      return;
+    }
+    initializeRuntimeButton.disabled = true;
+    initializeRuntimeButton.textContent = 'Initializing…';
+    runTestButton.disabled = true;
+    updateRuntimeButtonState(initializeRuntimeButton);
+    updateRuntimeButtonState(runTestButton);
+    try {
+      await ensureRuntimeLoaded();
+      handleRuntimeLoadSuccess();
+    } catch (error) {
+      handleRuntimeLoadFailure(error);
+    }
+  });
+
+  runTestButton.addEventListener('click', async () => {
+    runTestButton.disabled = true;
+    runTestButton.textContent = 'Running…';
+    if (initializeRuntimeButton) {
+      initializeRuntimeButton.disabled = true;
+      updateRuntimeButtonState(initializeRuntimeButton);
+    }
+    updateRuntimeButtonState(runTestButton);
+
+    try {
+      await ensureRuntimeLoaded();
+    } catch (error) {
+      handleRuntimeLoadFailure(error);
+      runTestButton.textContent = 'Run Test';
+      updateRuntimeButtonState(runTestButton);
+      return;
+    }
+
+    beginConsoleRun('Running smoke test…');
+
+    try {
+      const { stdout = '', stderr = '' } = await sendWorkerMessage('runPython', {
+        code: 'print("Pyodide OK")',
+      });
+      renderConsoleOutputs({ stdout, stderr });
+    } catch (error) {
+      const stderrMessage =
+        typeof error?.stderr === 'string' && error.stderr
+          ? error.stderr
+          : error?.error || 'Pyodide execution failed.';
+      renderConsoleOutputs({ stdout: error?.stdout || '', stderr: stderrMessage });
+    } finally {
+      runTestButton.disabled = false;
+      runTestButton.textContent = 'Run Test';
+      updateRuntimeButtonState(runTestButton);
+      if (initializeRuntimeButton && runtimeReady) {
+        initializeRuntimeButton.textContent = 'Runtime Ready';
+        initializeRuntimeButton.disabled = true;
+        updateRuntimeButtonState(initializeRuntimeButton);
+      }
+    }
+  });
+
   configPanel.innerHTML = '';
-  configPanel.append(accordion);
+  configPanel.append(runtimeControls, accordion);
 }
 
 if (consolePanel) {
@@ -278,9 +582,9 @@ if (consolePanel) {
   stdoutHeader.className = 'console-stream-title';
   stdoutHeader.textContent = 'Stdout';
 
-  const stdoutOutput = document.createElement('div');
+  stdoutOutput = document.createElement('div');
   stdoutOutput.className = 'console-output';
-  stdoutOutput.textContent = 'Program output will appear here.';
+  stdoutOutput.textContent = defaultStdoutMessage;
 
   stdoutSection.append(stdoutHeader, stdoutOutput);
 
@@ -291,9 +595,9 @@ if (consolePanel) {
   stderrHeader.className = 'console-stream-title';
   stderrHeader.textContent = 'Stderr';
 
-  const stderrOutput = document.createElement('div');
+  stderrOutput = document.createElement('div');
   stderrOutput.className = 'console-output';
-  stderrOutput.textContent = 'Error output will appear here.';
+  stderrOutput.textContent = defaultStderrMessage;
 
   stderrSection.append(stderrHeader, stderrOutput);
 
