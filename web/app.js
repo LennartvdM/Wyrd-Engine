@@ -498,7 +498,7 @@ const defaultStderrMessage = 'Error output will appear here.';
 let stdoutOutput;
 let stderrOutput;
 let initializeRuntimeButton;
-let runTestButton;
+let generateButton;
 let runtimeReady = false;
 let runtimeLoadingPromise;
 let runtimeStatus = 'idle';
@@ -726,9 +726,10 @@ function handleRuntimeLoadSuccess() {
     initializeRuntimeButton.disabled = true;
     updateRuntimeButtonState(initializeRuntimeButton);
   }
-  if (runTestButton) {
-    runTestButton.disabled = false;
-    updateRuntimeButtonState(runTestButton);
+  if (generateButton) {
+    generateButton.disabled = false;
+    generateButton.textContent = 'Generate';
+    updateRuntimeButtonState(generateButton);
   }
 }
 
@@ -738,9 +739,10 @@ function handleRuntimeLoadFailure(error) {
     initializeRuntimeButton.disabled = false;
     updateRuntimeButtonState(initializeRuntimeButton);
   }
-  if (runTestButton && !runtimeReady) {
-    runTestButton.disabled = true;
-    updateRuntimeButtonState(runTestButton);
+  if (generateButton && !runtimeReady) {
+    generateButton.disabled = true;
+    generateButton.textContent = 'Generate';
+    updateRuntimeButtonState(generateButton);
   }
   hasShownRuntimeReadyToast = false;
   const stderrMessage =
@@ -763,200 +765,281 @@ function handleRuntimeLoadFailure(error) {
   });
 }
 
-if (configPanel) {
-  const accordionSections = [
-    {
-      id: 'mk1-engine',
-      title: 'MK1 Engine',
-      content: 'Configuration options for the MK1 Engine will appear here.'
-    },
-    {
-      id: 'mk2-engine',
-      title: 'MK2 Engine',
-      content: 'Configuration options for the MK2 Engine will appear here.'
-    },
-    {
-      id: 'calendar-rig',
-      title: 'Calendar Rig',
-      content: 'Calendar Rig settings and adjustments will be available in this section.'
-    },
-    {
-      id: 'workforce-rig',
-      title: 'Workforce Rig',
-      content: 'Manage Workforce Rig parameters from this placeholder area.'
-    },
-    {
-      id: 'yearly-budget',
-      title: 'Yearly Budget',
-      content: 'Budget configuration tools will live in this Yearly Budget section.'
-    }
-  ];
+const configPanelRoot = document.getElementById('config-panel');
 
-  const storageKey = 'configAccordionState';
-  let accordionState = {};
+if (configPanel && configPanelRoot) {
+  const ACTIVE_TAB_CLASS = 'tab--active';
 
-  try {
-    const storedState = localStorage.getItem(storageKey);
-    if (storedState) {
-      const parsed = JSON.parse(storedState);
-      if (parsed && typeof parsed === 'object') {
-        accordionState = parsed;
+  const engineTabsContainer = configPanelRoot.querySelector('[data-config="engine-tabs"]');
+  const engineButtons = engineTabsContainer
+    ? Array.from(engineTabsContainer.querySelectorAll('button[data-engine]'))
+    : [];
+
+  const rigTabsContainer = configPanelRoot.querySelector('[data-config="rig-tabs"]');
+  const rigRows = new Map();
+  const rigButtonsByEngine = new Map();
+
+  if (rigTabsContainer) {
+    rigTabsContainer.querySelectorAll('[data-engine]').forEach((row) => {
+      const engine = row.dataset.engine;
+      if (!engine) {
+        return;
       }
-    }
-  } catch (error) {
-    console.warn('Unable to read config accordion state:', error);
+      rigRows.set(engine, row);
+      const buttons = Array.from(row.querySelectorAll('button[data-rig]'));
+      rigButtonsByEngine.set(engine, buttons);
+    });
   }
 
-  const accordion = document.createElement('div');
-  accordion.className = 'accordion';
-
-  accordionSections.forEach((section) => {
-    const item = document.createElement('div');
-    item.className = 'accordion-item';
-
-    const header = document.createElement('button');
-    header.type = 'button';
-    header.className = 'accordion-header';
-    header.dataset.sectionId = section.id;
-
-    const title = document.createElement('span');
-    title.className = 'accordion-title';
-    title.textContent = section.title;
-
-    const arrow = document.createElement('span');
-    arrow.className = 'accordion-arrow';
-    arrow.setAttribute('aria-hidden', 'true');
-    arrow.textContent = '▸';
-
-    header.append(title, arrow);
-
-    const content = document.createElement('div');
-    content.className = 'accordion-content';
-    content.innerHTML = `<p>${section.content}</p>`;
-
-    const isOpen = Boolean(accordionState[section.id]);
-    item.classList.toggle('open', isOpen);
-    header.setAttribute('aria-expanded', String(isOpen));
-    content.hidden = !isOpen;
-
-    header.addEventListener('click', () => {
-      const nowOpen = !item.classList.contains('open');
-      item.classList.toggle('open', nowOpen);
-      header.setAttribute('aria-expanded', String(nowOpen));
-      content.hidden = !nowOpen;
-
-      accordionState[section.id] = nowOpen;
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(accordionState));
-      } catch (error) {
-        console.warn('Unable to persist config accordion state:', error);
+  const rigPanelsContainer = configPanelRoot.querySelector('[data-config="rig-panels"]');
+  const rigPanelMap = new Map();
+  if (rigPanelsContainer) {
+    rigPanelsContainer.querySelectorAll('[data-panel]').forEach((panel) => {
+      const key = panel.dataset.panel;
+      if (key) {
+        rigPanelMap.set(key, panel);
       }
     });
+  }
 
-    item.append(header, content);
-    accordion.append(item);
+  const initialEngineButton = engineButtons.find((button) =>
+    button.classList.contains(ACTIVE_TAB_CLASS)
+  );
+  let activeEngine =
+    initialEngineButton?.dataset.engine || engineButtons[0]?.dataset.engine || 'mk1';
+
+  const rigSelections = {};
+  rigButtonsByEngine.forEach((buttons, engine) => {
+    const initialButton = buttons.find((button) =>
+      button.classList.contains(ACTIVE_TAB_CLASS)
+    );
+    const fallbackRig = initialButton?.dataset.rig || buttons[0]?.dataset.rig;
+    if (fallbackRig) {
+      rigSelections[engine] = fallbackRig;
+    }
   });
 
-  const runtimeControls = document.createElement('div');
-  runtimeControls.style.display = 'flex';
-  runtimeControls.style.gap = '8px';
-  runtimeControls.style.marginBottom = '12px';
+  const safeRead = (key) => {
+    try {
+      return localStorage.getItem(key);
+    } catch (error) {
+      console.warn(`Unable to read ${key} from storage:`, error);
+      return null;
+    }
+  };
 
-  initializeRuntimeButton = document.createElement('button');
-  initializeRuntimeButton.type = 'button';
-  initializeRuntimeButton.textContent = 'Initialize Runtime';
-  styleRuntimeButton(initializeRuntimeButton);
+  const safeWrite = (key, value) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (error) {
+      console.warn(`Unable to persist ${key} to storage:`, error);
+    }
+  };
 
-  runTestButton = document.createElement('button');
-  runTestButton.type = 'button';
-  runTestButton.textContent = 'Run Test';
-  runTestButton.disabled = true;
-  styleRuntimeButton(runTestButton);
+  const storedEngine = safeRead('cfg.engine');
+  if (storedEngine && rigRows.has(storedEngine)) {
+    activeEngine = storedEngine;
+  }
 
-  runtimeControls.append(initializeRuntimeButton, runTestButton);
+  rigButtonsByEngine.forEach((buttons, engine) => {
+    const storedRig = safeRead(`cfg.rig.${engine}`);
+    if (storedRig && buttons.some((button) => button.dataset.rig === storedRig)) {
+      rigSelections[engine] = storedRig;
+    }
+    if (!rigSelections[engine] && buttons[0]) {
+      rigSelections[engine] = buttons[0].dataset.rig;
+    }
+  });
 
-  initializeRuntimeButton.addEventListener('click', async () => {
-    if (runtimeReady) {
+  const setButtonActive = (button, isActive) => {
+    button.classList.toggle(ACTIVE_TAB_CLASS, isActive);
+    button.setAttribute('aria-pressed', String(Boolean(isActive)));
+  };
+
+  const updatePanels = () => {
+    rigPanelMap.forEach((panel, key) => {
+      const [panelEngine, panelRig] = key.split(':');
+      const shouldShow =
+        panelEngine === activeEngine && rigSelections[panelEngine] === panelRig;
+      panel.hidden = !shouldShow;
+      panel.classList.toggle(ACTIVE_TAB_CLASS, shouldShow);
+    });
+  };
+
+  const setActiveRig = (engine, rig) => {
+    const buttons = rigButtonsByEngine.get(engine) || [];
+    if (buttons.length === 0) {
       return;
     }
-    initializeRuntimeButton.disabled = true;
-    initializeRuntimeButton.textContent = 'Initializing…';
-    runTestButton.disabled = true;
-    updateRuntimeButtonState(initializeRuntimeButton);
-    updateRuntimeButtonState(runTestButton);
-    try {
-      await ensureRuntimeLoaded();
-      handleRuntimeLoadSuccess();
-    } catch (error) {
-      handleRuntimeLoadFailure(error);
+    let targetButton = buttons.find((button) => button.dataset.rig === rig);
+    if (!targetButton) {
+      targetButton = buttons[0];
     }
+    if (!targetButton) {
+      return;
+    }
+    const selectedRig = targetButton.dataset.rig;
+    rigSelections[engine] = selectedRig;
+    buttons.forEach((button) => {
+      setButtonActive(button, button === targetButton);
+    });
+    safeWrite(`cfg.rig.${engine}`, selectedRig);
+    updatePanels();
+  };
+
+  const updateRigRows = () => {
+    rigRows.forEach((row, engine) => {
+      const isActive = engine === activeEngine;
+      row.hidden = !isActive;
+      if (isActive) {
+        row.removeAttribute('aria-hidden');
+      } else {
+        row.setAttribute('aria-hidden', 'true');
+      }
+    });
+  };
+
+  const setActiveEngine = (engine) => {
+    if (!rigRows.has(engine)) {
+      return;
+    }
+    activeEngine = engine;
+    engineButtons.forEach((button) => {
+      setButtonActive(button, button.dataset.engine === engine);
+    });
+    safeWrite('cfg.engine', engine);
+    updateRigRows();
+    setActiveRig(engine, rigSelections[engine]);
+  };
+
+  engineButtons.forEach((button) => {
+    const { engine } = button.dataset;
+    if (!engine) {
+      return;
+    }
+    button.addEventListener('click', () => {
+      setActiveEngine(engine);
+    });
   });
 
-  runTestButton.addEventListener('click', async () => {
-    runTestButton.disabled = true;
-    runTestButton.textContent = 'Running…';
+  rigButtonsByEngine.forEach((buttons, engine) => {
+    buttons.forEach((button) => {
+      const { rig } = button.dataset;
+      if (!rig) {
+        return;
+      }
+      button.addEventListener('click', () => {
+        if (engine !== activeEngine) {
+          setActiveEngine(engine);
+        }
+        setActiveRig(engine, rig);
+      });
+    });
+  });
+
+  updateRigRows();
+  setActiveEngine(activeEngine);
+
+  const configActions = configPanelRoot.querySelector('[data-config="actions"]');
+  if (configActions) {
+    initializeRuntimeButton = configActions.querySelector('[data-action="initialize-runtime"]');
+    generateButton = configActions.querySelector('[data-action="generate"]');
     if (initializeRuntimeButton) {
+      styleRuntimeButton(initializeRuntimeButton);
+    }
+    if (generateButton) {
+      generateButton.disabled = true;
+      styleRuntimeButton(generateButton);
+    }
+  }
+
+  if (initializeRuntimeButton) {
+    initializeRuntimeButton.addEventListener('click', async () => {
+      if (runtimeReady) {
+        return;
+      }
       initializeRuntimeButton.disabled = true;
+      initializeRuntimeButton.textContent = 'Initializing…';
+      if (generateButton) {
+        generateButton.disabled = true;
+        updateRuntimeButtonState(generateButton);
+      }
       updateRuntimeButtonState(initializeRuntimeButton);
-    }
-    updateRuntimeButtonState(runTestButton);
+      try {
+        await ensureRuntimeLoaded();
+        handleRuntimeLoadSuccess();
+      } catch (error) {
+        handleRuntimeLoadFailure(error);
+      }
+    });
+  }
 
-    try {
-      await ensureRuntimeLoaded();
-    } catch (error) {
-      handleRuntimeLoadFailure(error);
-      runTestButton.textContent = 'Run Test';
-      updateRuntimeButtonState(runTestButton);
-      return;
-    }
-
-    beginConsoleRun('Running smoke test…');
-
-    try {
-      const { stdout = '', stderr = '' } = await sendWorkerMessage('runPython', {
-        code: 'print("Pyodide OK")',
-      });
-      renderConsoleOutputs({ stdout, stderr });
-      const hasErrorOutput =
-        typeof stderr === 'string' && stderr.trim().length > 0;
-      dispatchIntent({
-        type: INTENT_TYPES.SHOW_TOAST,
-        payload: {
-          message: hasErrorOutput ? 'Smoke test completed with warnings' : 'Smoke test passed',
-          description: hasErrorOutput ? 'Check the console output for details.' : undefined,
-          intent: hasErrorOutput ? 'warning' : 'success',
-          duration: hasErrorOutput ? 5000 : 2800,
-        },
-      });
-    } catch (error) {
-      const stderrMessage =
-        typeof error?.stderr === 'string' && error.stderr
-          ? error.stderr
-          : error?.error || 'Pyodide execution failed.';
-      renderConsoleOutputs({ stdout: error?.stdout || '', stderr: stderrMessage });
-      dispatchIntent({
-        type: INTENT_TYPES.SHOW_TOAST,
-        payload: {
-          message: 'Smoke test failed',
-          description: stderrMessage,
-          intent: 'error',
-          duration: 6000,
-        },
-      });
-    } finally {
-      runTestButton.disabled = false;
-      runTestButton.textContent = 'Run Test';
-      updateRuntimeButtonState(runTestButton);
-      if (initializeRuntimeButton && runtimeReady) {
-        initializeRuntimeButton.textContent = 'Runtime Ready';
+  if (generateButton) {
+    generateButton.addEventListener('click', async () => {
+      generateButton.disabled = true;
+      generateButton.textContent = 'Generating…';
+      if (initializeRuntimeButton) {
         initializeRuntimeButton.disabled = true;
         updateRuntimeButtonState(initializeRuntimeButton);
       }
-    }
-  });
+      updateRuntimeButtonState(generateButton);
 
-  configPanel.innerHTML = '';
-  configPanel.append(runtimeControls, accordion);
+      try {
+        await ensureRuntimeLoaded();
+      } catch (error) {
+        handleRuntimeLoadFailure(error);
+        generateButton.textContent = 'Generate';
+        updateRuntimeButtonState(generateButton);
+        return;
+      }
+
+      beginConsoleRun('Generating output…');
+
+      try {
+        const { stdout = '', stderr = '' } = await sendWorkerMessage('runPython', {
+          code: 'print("Pyodide OK")',
+        });
+        renderConsoleOutputs({ stdout, stderr });
+        const hasErrorOutput =
+          typeof stderr === 'string' && stderr.trim().length > 0;
+        dispatchIntent({
+          type: INTENT_TYPES.SHOW_TOAST,
+          payload: {
+            message: hasErrorOutput
+              ? 'Generation completed with warnings'
+              : 'Generation succeeded',
+            description: hasErrorOutput ? 'Check the console output for details.' : undefined,
+            intent: hasErrorOutput ? 'warning' : 'success',
+            duration: hasErrorOutput ? 5000 : 2800,
+          },
+        });
+      } catch (error) {
+        const stderrMessage =
+          typeof error?.stderr === 'string' && error.stderr
+            ? error.stderr
+            : error?.error || 'Pyodide execution failed.';
+        renderConsoleOutputs({ stdout: error?.stdout || '', stderr: stderrMessage });
+        dispatchIntent({
+          type: INTENT_TYPES.SHOW_TOAST,
+          payload: {
+            message: 'Generation failed',
+            description: stderrMessage,
+            intent: 'error',
+            duration: 6000,
+          },
+        });
+      } finally {
+        generateButton.disabled = false;
+        generateButton.textContent = 'Generate';
+        updateRuntimeButtonState(generateButton);
+        if (initializeRuntimeButton && runtimeReady) {
+          initializeRuntimeButton.textContent = 'Runtime Ready';
+          initializeRuntimeButton.disabled = true;
+          updateRuntimeButtonState(initializeRuntimeButton);
+        }
+      }
+    });
+  }
 }
 
 if (consolePanel) {
