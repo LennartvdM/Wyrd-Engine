@@ -9,22 +9,161 @@
 <body>
   <div class="workbench">
     <nav class="tab-bar">
-      <button class="tab active" data-tab="calendar">Calendar</button>
-      <button class="tab" data-tab="config">Config</button>
-      <button class="tab" data-tab="console">Console</button>
-      <button class="tab" data-tab="json">JSON</button>
-      <button class="tab" data-tab="fixtures">Fixtures</button>
-      <button class="tab" data-tab="logs">Logs</button>
+      <button class="tab active" data-tab="calendar" data-tab-scope="root">Calendar</button>
+      <button class="tab" data-tab="config" data-tab-scope="root">Config</button>
+      <button class="tab" data-tab="console" data-tab-scope="root">Console</button>
+      <button class="tab" data-tab="json" data-tab-scope="root">JSON</button>
+      <button class="tab" data-tab="fixtures" data-tab-scope="root">Fixtures</button>
+      <button class="tab" data-tab="logs" data-tab-scope="root">Logs</button>
     </nav>
     <main class="tab-content">
-      <section class="tab-panel active" data-tab="calendar">
+      <section class="tab-panel active" data-tab="calendar" data-tab-scope="root">
         <div id="calendar-container"></div>
       </section>
-      <section class="tab-panel" data-tab="config"></section>
-      <section class="tab-panel" data-tab="console"></section>
-      <section class="tab-panel" data-tab="json"></section>
-      <section class="tab-panel" data-tab="fixtures"></section>
-      <section class="tab-panel" data-tab="logs"></section>
+      <section class="tab-panel" data-tab="config" data-tab-scope="root">
+        <div class="config-layout">
+          <div class="tab-group">
+            <div class="tab-bar nested">
+              <button
+                class="tab active"
+                data-tab="mk1"
+                data-tab-scope="config-engine"
+              >
+                MK1
+              </button>
+              <button class="tab" data-tab="mk2" data-tab-scope="config-engine">
+                MK2
+              </button>
+            </div>
+            <div class="tab-content nested">
+              <section
+                class="tab-panel active"
+                data-tab="mk1"
+                data-tab-scope="config-engine"
+              >
+                <div class="tab-group">
+                  <div class="tab-bar nested subtle">
+                    <button
+                      class="tab active"
+                      data-tab="rig-x"
+                      data-tab-scope="config-engine-mk1"
+                    >
+                      Rig X
+                    </button>
+                    <button
+                      class="tab"
+                      data-tab="rig-y"
+                      data-tab-scope="config-engine-mk1"
+                    >
+                      Rig Y
+                    </button>
+                    <button
+                      class="tab"
+                      data-tab="rig-z"
+                      data-tab-scope="config-engine-mk1"
+                    >
+                      Rig Z
+                    </button>
+                  </div>
+                  <div class="tab-content nested inset">
+                    <section
+                      class="tab-panel active"
+                      data-tab="rig-x"
+                      data-tab-scope="config-engine-mk1"
+                    >
+                      <p class="config-copy">
+                        Configure the MK1 engine with Rig X parameters and presets.
+                      </p>
+                    </section>
+                    <section
+                      class="tab-panel"
+                      data-tab="rig-y"
+                      data-tab-scope="config-engine-mk1"
+                    >
+                      <p class="config-copy">
+                        Configure the MK1 engine with Rig Y layout and override values.
+                      </p>
+                    </section>
+                    <section
+                      class="tab-panel"
+                      data-tab="rig-z"
+                      data-tab-scope="config-engine-mk1"
+                    >
+                      <p class="config-copy">
+                        Configure the MK1 engine with Rig Z experimental settings.
+                      </p>
+                    </section>
+                  </div>
+                </div>
+              </section>
+              <section class="tab-panel" data-tab="mk2" data-tab-scope="config-engine">
+                <div class="tab-group">
+                  <div class="tab-bar nested subtle">
+                    <button
+                      class="tab active"
+                      data-tab="rig-x"
+                      data-tab-scope="config-engine-mk2"
+                    >
+                      Rig X
+                    </button>
+                    <button
+                      class="tab"
+                      data-tab="rig-y"
+                      data-tab-scope="config-engine-mk2"
+                    >
+                      Rig Y
+                    </button>
+                    <button
+                      class="tab"
+                      data-tab="rig-z"
+                      data-tab-scope="config-engine-mk2"
+                    >
+                      Rig Z
+                    </button>
+                  </div>
+                  <div class="tab-content nested inset">
+                    <section
+                      class="tab-panel active"
+                      data-tab="rig-x"
+                      data-tab-scope="config-engine-mk2"
+                    >
+                      <p class="config-copy">
+                        Configure the MK2 engine with Rig X balanced defaults.
+                      </p>
+                    </section>
+                    <section
+                      class="tab-panel"
+                      data-tab="rig-y"
+                      data-tab-scope="config-engine-mk2"
+                    >
+                      <p class="config-copy">
+                        Configure the MK2 engine with Rig Y adaptive parameters.
+                      </p>
+                    </section>
+                    <section
+                      class="tab-panel"
+                      data-tab="rig-z"
+                      data-tab-scope="config-engine-mk2"
+                    >
+                      <p class="config-copy">
+                        Configure the MK2 engine with Rig Z advanced tuning.
+                      </p>
+                    </section>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+          <div class="config-actions">
+            <button type="button" class="primary-action">Generate</button>
+            <button type="button" class="secondary-action">Validate</button>
+          </div>
+        </div>
+      </section>
+      <section class="tab-panel" data-tab="console" data-tab-scope="root"></section>
+      <section class="tab-panel" data-tab="json" data-tab-scope="root"></section>
+      <section class="tab-panel" data-tab="fixtures" data-tab-scope="root"></section>
+      <section class="tab-panel" data-tab="logs" data-tab-scope="root"></section>
     </main>
   </div>
   <script src="app.js"></script>
