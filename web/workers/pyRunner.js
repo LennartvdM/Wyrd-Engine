@@ -1,3 +1,5 @@
+import { DEBUG } from '../debug.js';
+
 const ALLOWED_FUNCTIONS = new Set(['mk1_run', 'mk2_run_calendar', 'mk2_run_workforce']);
 const FN_DISPATCH = {
   mk1_run: 'mk1_run_web',
@@ -6,10 +8,149 @@ const FN_DISPATCH = {
 };
 
 const RUN_TIMEOUT_MS = 30_000;
-const DEBUG = typeof self !== 'undefined' && Boolean(self.WYRD_DEBUG);
-
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+
+function tryStructuredClone(value) {
+  if (typeof structuredClone === 'function') {
+    try {
+      return structuredClone(value);
+    } catch (error) {
+      // ignore clone issues
+    }
+  }
+  return null;
+}
+
+function serializeWorkerLogArg(value) {
+  if (value instanceof Error) {
+    return {
+      __error: true,
+      name: value.name || 'Error',
+      message: value.message || '',
+      stack: value.stack || '',
+    };
+  }
+  const valueType = typeof value;
+  if (valueType === 'function') {
+    return { __type: 'function', name: value.name || '' };
+  }
+  if (valueType === 'symbol') {
+    return { __type: 'symbol', description: value.description || value.toString() };
+  }
+  if (valueType === 'bigint') {
+    return { __type: 'bigint', value: value.toString() };
+  }
+  if (!value || valueType !== 'object') {
+    return value;
+  }
+
+  const cloned = tryStructuredClone(value);
+  if (cloned !== null) {
+    return cloned;
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    return String(value);
+  }
+}
+
+function serializeErrorForPost(error) {
+  if (!error) {
+    return null;
+  }
+  if (error instanceof Error) {
+    return {
+      name: error.name || 'Error',
+      message: error.message || '',
+      stack: error.stack || '',
+      ...(error && typeof error === 'object' ? { stage: error.stage, type: error.type } : {}),
+    };
+  }
+  if (typeof error === 'object') {
+    const cloned = tryStructuredClone(error);
+    if (cloned !== null) {
+      return cloned;
+    }
+    try {
+      return JSON.parse(JSON.stringify(error));
+    } catch (cloneError) {
+      return { message: String(error) };
+    }
+  }
+  return { message: String(error) };
+}
+
+function postWorkerLog(level, args) {
+  try {
+    self.postMessage({
+      type: 'worker-log',
+      level,
+      args: Array.isArray(args) ? args.map((arg) => serializeWorkerLogArg(arg)) : [],
+    });
+  } catch (error) {
+    // ignore forwarding issues
+  }
+}
+
+const BRIDGE_LEVELS = [
+  'log',
+  'info',
+  'warn',
+  'error',
+  'group',
+  'groupCollapsed',
+  'groupEnd',
+  'table',
+];
+
+for (const level of BRIDGE_LEVELS) {
+  if (typeof console[level] !== 'function') {
+    continue;
+  }
+  const original = console[level].bind(console);
+  console[level] = (...args) => {
+    postWorkerLog(level, args);
+    try {
+      original(...args);
+    } catch (error) {
+      // ignore console replay issues
+    }
+  };
+}
+
+self.addEventListener('error', (event) => {
+  try {
+    self.postMessage({
+      type: 'worker-unhandled',
+      kind: 'error',
+      message: event?.message || '',
+      filename: event?.filename || '',
+      lineno: event?.lineno || 0,
+      colno: event?.colno || 0,
+      error: serializeErrorForPost(event?.error),
+    });
+  } catch (error) {
+    // ignore forwarding issues
+  }
+});
+
+self.addEventListener('unhandledrejection', (event) => {
+  try {
+    self.postMessage({
+      type: 'worker-unhandled',
+      kind: 'unhandledrejection',
+      message: event?.reason && typeof event.reason === 'object' && 'message' in event.reason
+        ? String(event.reason.message)
+        : toErrorMessage(event?.reason) || '',
+      reason: serializeErrorForPost(event?.reason),
+    });
+  } catch (error) {
+    // ignore forwarding issues
+  }
+});
 
 const RUNTIME_ENV = (() => {
   let hostname = '';
@@ -223,27 +364,53 @@ function isServiceWorkerControlled() {
   }
 }
 
-function logFailureGroup(label, rows) {
-  if (RUNTIME_ENV.stage === 'prod' && !DEBUG) {
+function logMirrorReport(status, label, rows, meta = {}) {
+  if (!DEBUG) {
     return;
   }
   if (typeof console === 'undefined') {
     return;
   }
+  const prefix = status === 'ok' ? '[mirror] ok' : '[mirror] fail';
+  const summaryLabel = label ? `${prefix} ${label}` : prefix;
   try {
-    console.groupCollapsed(`[wyrd][pyodide] ${label}`);
-    if (Array.isArray(rows) && rows.length > 0 && typeof console.table === 'function') {
-      console.table(rows);
-    } else if (rows) {
-      console.log(rows);
+    if (typeof console.groupCollapsed === 'function') {
+      console.groupCollapsed(summaryLabel);
+    } else if (typeof console.group === 'function') {
+      console.group(summaryLabel);
     }
   } catch (error) {
-    // ignore
+    // ignore group errors
   }
+
+  if (Array.isArray(rows) && rows.length > 0 && typeof console.table === 'function') {
+    try {
+      console.table(rows);
+    } catch (error) {
+      // ignore table errors
+    }
+  } else if (rows) {
+    try {
+      console.log(rows);
+    } catch (error) {
+      // ignore log errors
+    }
+  }
+
+  if (meta && typeof meta === 'object' && Object.keys(meta).length > 0) {
+    try {
+      console.log(meta);
+    } catch (error) {
+      // ignore meta log issues
+    }
+  }
+
   try {
-    console.groupEnd();
+    if (typeof console.groupEnd === 'function') {
+      console.groupEnd();
+    }
   } catch (error) {
-    // ignore
+    // ignore group end errors
   }
 }
 
@@ -949,6 +1116,7 @@ async function mirrorRepoFiles(instance) {
       reports.push({
         path,
         repoPath: repoTargetPath,
+        destPath: repoTargetPath,
         url,
         finalURL: finalUrl !== url ? finalUrl : undefined,
         status: typeof status === 'number' ? status : undefined,
@@ -957,15 +1125,18 @@ async function mirrorRepoFiles(instance) {
       });
       okCount += 1;
     } catch (error) {
+      const failureMessage = toErrorMessage(error) || 'Unknown mirror failure';
       const failureEntry = {
         path,
         repoPath: repoTargetPath,
+        destPath: repoTargetPath,
         url,
         status: typeof status === 'number' ? status : undefined,
         bytes: actualBytes,
         expectedBytes: bytes,
         finalURL: finalUrl !== url ? finalUrl : undefined,
-        reason: toErrorMessage(error) || 'Unknown mirror failure',
+        error: failureMessage,
+        reason: failureMessage,
       };
       reports.push({ ...failureEntry, ok: false });
       failures.push(failureEntry);
@@ -978,10 +1149,28 @@ async function mirrorRepoFiles(instance) {
     okCount,
     failCount,
     files: reports,
+    base: state?.base,
   };
 
+  const totalCount = Array.isArray(manifestEntries) ? manifestEntries.length : okCount + failCount;
+
   if (failCount > 0) {
-    logFailureGroup('Pyodide mirror failure', failures);
+    logMirrorReport(
+      'fail',
+      `${failCount} of ${totalCount}`,
+      failures.map((failure) => ({
+        path: failure.path,
+        status: typeof failure.status === 'number' ? failure.status : '',
+        url: failure.finalURL || failure.url,
+        error: failure.error,
+      })),
+      {
+        base: state?.base,
+        manifestSize: lastManifestSize,
+        okCount,
+        failCount,
+      }
+    );
     const summary =
       failCount === 1
         ? `Repository mirror failed for ${failures[0].path}`
@@ -996,6 +1185,24 @@ async function mirrorRepoFiles(instance) {
       base: state?.base,
     });
     throw errorPayload;
+  }
+
+  if (reports.length > 0) {
+    const previewRows = reports
+      .filter((entry) => entry.ok)
+      .slice(0, 5)
+      .map((entry) => ({
+        path: entry.path,
+        status: typeof entry.status === 'number' ? entry.status : '',
+        url: entry.finalURL || entry.url,
+        size: entry.size,
+      }));
+    logMirrorReport('ok', `${okCount} of ${totalCount}`, previewRows, {
+      base: state?.base,
+      manifestSize: lastManifestSize,
+      okCount,
+      failCount,
+    });
   }
 
   repoFilesMirrored = true;
