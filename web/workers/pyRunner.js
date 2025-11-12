@@ -1,7 +1,9 @@
 import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.mjs';
 
-const PYODIDE_INDEX_URL = 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/';
 const ALLOWED_FUNCTIONS = new Set(['mk1_run', 'mk2_run_calendar', 'mk2_run_workforce']);
+
+let pyodide = null;
+let repoFilesMirrored = false;
 
 function mockCalendarResult(args) {
   return {
@@ -36,10 +38,6 @@ const PYTHON_SOURCE_FILES = [
   'unique_days.py',
   'yearly_budget.py',
 ];
-
-let pyodideInstance;
-let pyodideReadyPromise;
-let repoFilesMirrored = false;
 
 function post(message) {
   self.postMessage(message);
@@ -79,74 +77,36 @@ async function mirrorRepoFiles(instance) {
 }
 
 async function ensurePyodide() {
-  if (!pyodideReadyPromise) {
-    pyodideReadyPromise = loadPyodide({ indexURL: PYODIDE_INDEX_URL })
-      .then(async (instance) => {
-        await mirrorRepoFiles(instance);
-        pyodideInstance = instance;
-        return instance;
-      })
-      .catch((error) => {
-        pyodideInstance = undefined;
-        repoFilesMirrored = false;
-        pyodideReadyPromise = undefined;
-        throw error;
-      });
+  if (pyodide) {
+    return pyodide;
   }
 
-  return pyodideReadyPromise;
+  try {
+    pyodide = await loadPyodide({ indexURL: 'pyodide/' });
+    await mirrorRepoFiles(pyodide);
+    return pyodide;
+  } catch (error) {
+    pyodide = null;
+    repoFilesMirrored = false;
+    throw error;
+  }
 }
 
-function buildRunnerCode(fn, args) {
-  const normalized = {
-    archetype: args?.archetype ?? null,
-    week_start: args?.week_start ?? null,
-    seed: args?.seed ?? null,
-    yearly_budget: args?.yearly_budget ?? null,
-  };
-  const argsJson = JSON.stringify(normalized);
-  const fnLiteral = String(fn ?? '');
-  const escapedArgsJson = argsJson
-    .replace(/\\/g, '\\\\')
-    .replace(/'/g, "\\'");
-  const escapedFn = fnLiteral.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  const template = `\
+async function tryImportEngines() {
+  if (!pyodide) {
+    return false;
+  }
+
+  try {
+    await pyodide.runPythonAsync(`
 import json
-from datetime import datetime
-from engines.engine_mk1 import mk1_run as _mk1_run
-from engines.engine_mk2 import mk2_run_calendar as _mk2_cal
-from engines.engine_mk2 import mk2_run_workforce as _mk2_wf
-
-ARGS_JSON = '__ARGS_JSON__'
-FN = '__FN_NAME__'
-
-ARGS = json.loads(ARGS_JSON)
-
-def _coerce(value):
-    return value if value is not None else None
-
-if FN == "mk1_run":
-    res = _mk1_run(ARGS["archetype"], ARGS["week_start"], ARGS["seed"])
-elif FN == "mk2_run_calendar":
-    res = _mk2_cal(ARGS["archetype"], ARGS["week_start"], ARGS["seed"])
-elif FN == "mk2_run_workforce":
-    res = _mk2_wf(
-        ARGS["archetype"],
-        ARGS["week_start"],
-        ARGS["seed"],
-        _coerce(ARGS.get("yearly_budget")),
-    )
-else:
-    raise ValueError(f"Unknown fn: {FN}")
-
-print("")
-__out = json.dumps(res)
-__out
-`;
-
-  return template
-    .replace('__ARGS_JSON__', escapedArgsJson)
-    .replace('__FN_NAME__', escapedFn);
+import engines.engine_mk1 as mk1
+import engines.engine_mk2 as mk2
+    `);
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
 self.onmessage = async (event) => {
@@ -177,7 +137,13 @@ self.onmessage = async (event) => {
   if (type === 'run') {
     const { fn, args = {} } = message;
     if (fn === 'mock_run') {
-      post({ id, ok: true, result: mockCalendarResult(args) });
+      respond({
+        ok: true,
+        result: mockCalendarResult(args),
+        fallback: true,
+        stdout: '',
+        stderr: '',
+      });
       return;
     }
     if (!ALLOWED_FUNCTIONS.has(fn)) {
@@ -192,7 +158,18 @@ self.onmessage = async (event) => {
 
     try {
       const instance = await ensurePyodide();
-      const code = buildRunnerCode(fn, args);
+      const importsOK = await tryImportEngines();
+
+      if (!importsOK) {
+        respond({
+          ok: true,
+          result: mockCalendarResult(args),
+          fallback: true,
+          stdout: stdoutParts.join(''),
+          stderr: stderrParts.join(''),
+        });
+        return;
+      }
 
       stdoutParts = [];
       stderrParts = [];
@@ -211,9 +188,26 @@ self.onmessage = async (event) => {
         },
       });
 
-      const raw = await instance.runPythonAsync(code);
-      const output = typeof raw === 'string' ? raw : String(raw ?? '');
-      const parsed = output ? JSON.parse(output) : null;
+      const pyCode = `
+import json
+import engines.engine_mk1 as mk1
+import engines.engine_mk2 as mk2
+
+args = json.loads("""${JSON.stringify(args)}""")
+
+if "${fn}" == "mk1_run":
+    out = mk1.generate_schedule(args["archetype"], args["week_start"], args["seed"])
+elif "${fn}" == "mk2_run_calendar":
+    out = mk2.generate_calendar(args["archetype"], args["week_start"], args["seed"])
+elif "${fn}" == "mk2_run_workforce":
+    out = mk2.generate_workforce(args["archetype"], args["week_start"], args["seed"], args.get("yearly_budget"))
+else:
+    raise ValueError("Unknown function")
+
+json.dumps(out)
+      `;
+      const resultJSON = await instance.runPythonAsync(pyCode);
+      const parsed = resultJSON ? JSON.parse(resultJSON) : null;
 
       respond({
         ok: true,
@@ -230,12 +224,12 @@ self.onmessage = async (event) => {
         stderr: stderrParts.join(''),
       });
     } finally {
-      if (pyodideInstance) {
+      if (pyodide) {
         if (typeof previousStdout !== 'undefined') {
-          pyodideInstance.setStdout(previousStdout);
+          pyodide.setStdout(previousStdout);
         }
         if (typeof previousStderr !== 'undefined') {
-          pyodideInstance.setStderr(previousStderr);
+          pyodide.setStderr(previousStderr);
         }
       }
     }
