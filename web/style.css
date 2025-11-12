@@ -47,7 +47,8 @@ body {
   transition: background 0.2s ease, color 0.2s ease;
 }
 
-.tab.json-tab {
+.tab.json-tab,
+.tab.fixtures-tab {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -55,7 +56,8 @@ body {
   padding-right: 12px;
 }
 
-.tab.json-tab .tab-badge {
+.tab.json-tab .tab-badge,
+.tab.fixtures-tab .tab-badge {
   width: 8px;
   height: 8px;
   border-radius: 9999px;
@@ -72,6 +74,11 @@ body {
 
 .tab.json-tab .tab-badge.tab-badge--err {
   background: #ef4444;
+  opacity: 1;
+}
+
+.tab.fixtures-tab .tab-badge.tab-badge--notice {
+  background: #38bdf8;
   opacity: 1;
 }
 
@@ -632,10 +639,27 @@ body {
 
 .json-toolbar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
 }
 
-.json-copy {
+.json-summary {
+  font-size: 11px;
+  color: #94a3b8;
+  letter-spacing: 0.02em;
+}
+
+.json-summary[hidden] {
+  display: none;
+}
+
+.json-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.json-button {
   background: #2b2f3b;
   color: #d0d5e2;
   border: 1px solid #3a3f4f;
@@ -643,12 +667,17 @@ body {
   padding: 6px 10px;
   font-size: 12px;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
+  transition: background 0.2s ease, color 0.2s ease, opacity 0.2s ease;
 }
 
-.json-copy:hover {
+.json-button:hover:enabled {
   background: #3a3f4f;
   color: #ffffff;
+}
+
+.json-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .json-output {
@@ -671,18 +700,10 @@ body {
   gap: 16px;
 }
 
-.fixtures-list {
-  list-style: disc;
-  padding-left: 20px;
-  margin: 0;
-  color: #cbd0df;
-  font-size: 13px;
-  align-self: flex-start;
-}
-
 .fixtures-actions {
   display: flex;
   gap: 8px;
+  align-items: center;
 }
 
 .fixtures-actions button {
@@ -692,11 +713,118 @@ body {
   border-radius: 4px;
   padding: 6px 12px;
   font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
 .fixtures-actions button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.fixtures-actions button:hover:enabled {
+  background: #343945;
+  color: #e5e7eb;
+}
+
+.run-history-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.run-history-heading {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #cbd0df;
+}
+
+.run-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.run-history-item {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+  background: #1a1c23;
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.run-history-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.run-history-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e5e7eb;
+  word-break: break-word;
+}
+
+.run-history-meta {
+  font-size: 11px;
+  color: #94a3b8;
+  word-break: break-word;
+}
+
+.run-history-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.run-history-button {
+  background: #2b2f3b;
+  color: #d0d5e2;
+  border: 1px solid #3a3f4f;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.run-history-button:hover {
+  background: #3a3f4f;
+  color: #ffffff;
+}
+
+.run-history-button--danger {
+  background: #3a1f23;
+  border-color: #4b2f34;
+  color: #fda29b;
+}
+
+.run-history-button--danger:hover {
+  background: #4c2b2f;
+  color: #ffffff;
+}
+
+.run-history-empty {
+  margin: 0;
+  padding: 12px;
+  background: #1a1c23;
+  border: 1px dashed #2a2d35;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #8188a0;
+  text-align: center;
 }
 
 .logs-pane {
