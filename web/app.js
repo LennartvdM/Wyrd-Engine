@@ -711,6 +711,7 @@ async function ensureRuntimeLoaded() {
           type: INTENT_TYPES.APP_STATUS,
           payload: { channel: 'runtime', status: 'ready' },
         });
+        handleRuntimeLoadSuccess();
         return result;
       })
       .catch((error) => {
@@ -718,6 +719,7 @@ async function ensureRuntimeLoaded() {
           type: INTENT_TYPES.APP_STATUS,
           payload: { channel: 'runtime', status: 'error', error },
         });
+        handleRuntimeLoadFailure(error);
         throw error;
       })
       .finally(() => {
@@ -742,6 +744,15 @@ registerIntentHandler(INTENT_TYPES.APP_STATUS, (payload = {}) => {
     const previousStatus = runtimeStatus;
     if (status === 'ready') {
       runtimeReady = true;
+      if (initializeRuntimeButton) {
+        initializeRuntimeButton.textContent = 'Runtime Ready';
+        initializeRuntimeButton.disabled = true;
+        updateRuntimeButtonState(initializeRuntimeButton);
+      }
+      if (generateButton) {
+        generateButton.disabled = false;
+        updateRuntimeButtonState(generateButton);
+      }
       if (!hasShownRuntimeReadyToast || previousStatus !== 'ready') {
         dispatchIntent({
           type: INTENT_TYPES.SHOW_TOAST,
@@ -755,9 +766,27 @@ registerIntentHandler(INTENT_TYPES.APP_STATUS, (payload = {}) => {
       }
     } else if (status === 'loading') {
       runtimeReady = false;
+      if (initializeRuntimeButton) {
+        initializeRuntimeButton.textContent = 'Initializing…';
+        initializeRuntimeButton.disabled = true;
+        updateRuntimeButtonState(initializeRuntimeButton);
+      }
+      if (generateButton) {
+        generateButton.disabled = true;
+        updateRuntimeButtonState(generateButton);
+      }
     } else if (status === 'error') {
       runtimeReady = false;
       hasShownRuntimeReadyToast = false;
+      if (initializeRuntimeButton) {
+        initializeRuntimeButton.textContent = 'Initialize Runtime';
+        initializeRuntimeButton.disabled = false;
+        updateRuntimeButtonState(initializeRuntimeButton);
+      }
+      if (generateButton) {
+        generateButton.disabled = true;
+        updateRuntimeButtonState(generateButton);
+      }
     }
     runtimeStatus = status;
   }
@@ -1516,18 +1545,45 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
 
   if (initializeRuntimeButton) {
     styleRuntimeButton(initializeRuntimeButton);
-    initializeRuntimeButton.textContent = 'Runtime Ready';
-    initializeRuntimeButton.disabled = true;
+    initializeRuntimeButton.textContent = 'Initialize Runtime';
+    initializeRuntimeButton.disabled = runtimeStatus === 'loading';
     updateRuntimeButtonState(initializeRuntimeButton);
+    initializeRuntimeButton.addEventListener('click', async () => {
+      if (runtimeReady || runtimeStatus === 'loading') {
+        return;
+      }
+      initializeRuntimeButton.disabled = true;
+      initializeRuntimeButton.textContent = 'Initializing…';
+      updateRuntimeButtonState(initializeRuntimeButton);
+      beginConsoleRun('Initializing runtime…');
+      try {
+        await ensureRuntimeLoaded();
+      } catch (error) {
+        console.error('Runtime initialization failed:', error);
+      }
+    });
   }
-
-  runtimeReady = true;
 
   if (generateButton) {
     styleRuntimeButton(generateButton);
     generateButton.disabled = !runtimeReady;
     updateRuntimeButtonState(generateButton);
     generateButton.addEventListener('click', async () => {
+      if (!runtimeReady) {
+        const description = 'Initialize the runtime before generating a calendar.';
+        appendConsoleLog(`error: ${description}`);
+        dispatchIntent({
+          type: INTENT_TYPES.SHOW_TOAST,
+          payload: {
+            message: 'Runtime not ready',
+            description,
+            intent: 'error',
+            duration: 4000,
+          },
+        });
+        return;
+      }
+
       generateButton.disabled = true;
       generateButton.textContent = 'Generating…';
       updateRuntimeButtonState(generateButton);
@@ -1564,25 +1620,23 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
       const fn = workerFnMap[workerKey] || workerFnMap['mk1:default'];
 
       const numericSeed = Number.parseInt(calendarConfig.common.seed, 10);
-      const args = {
-        class: cfg.class,
-        variant: variantId,
-        rig: rigId,
-        archetype: calendarConfig.common.archetype,
-        week_start: calendarConfig.common.weekStart,
-      };
-
+      const weekStartValue =
+        typeof calendarConfig.common.weekStart === 'string' && calendarConfig.common.weekStart
+          ? calendarConfig.common.weekStart
+          : null;
+      let seedValue = null;
       if (Number.isFinite(numericSeed)) {
-        args.seed = numericSeed;
-      } else if (calendarConfig.common.seed) {
-        args.seed = calendarConfig.common.seed;
+        seedValue = numericSeed;
+      } else if (calendarConfig.common.seed && `${calendarConfig.common.seed}`.trim()) {
+        seedValue = calendarConfig.common.seed;
       }
 
+      let yearlyBudget = null;
       if (variantId === 'mk2' && rigId === 'workforce') {
         const rawBudget = calendarConfig.mk2.workforce.budgetText || '';
         if (rawBudget.trim().length > 0) {
           try {
-            args.workforce_budget = JSON.parse(rawBudget);
+            yearlyBudget = JSON.parse(rawBudget);
           } catch (error) {
             const description =
               error instanceof Error ? error.message : 'Unable to parse workforce budget.';
@@ -1603,20 +1657,22 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
         }
       }
 
-      appendConsoleLog(`run ${fn} ${JSON.stringify(args)}`);
+      const workerArgs = {
+        archetype: calendarConfig.common.archetype,
+        week_start: weekStartValue,
+        seed: seedValue,
+        yearly_budget: yearlyBudget,
+      };
+
+      appendConsoleLog(`run ${fn} ${JSON.stringify(workerArgs)}`);
 
       try {
-        const { result, logs } = await sendWorkerMessage('run', { fn, args });
+        const { result, stdout, stderr } = await sendWorkerMessage('run', {
+          fn,
+          args: workerArgs,
+        });
 
-        if (Array.isArray(logs)) {
-          logs.forEach((log) => {
-            if (typeof log === 'string' && log.trim()) {
-              appendConsoleLog(log);
-            }
-          });
-        } else if (typeof logs === 'string' && logs.trim()) {
-          appendConsoleLog(logs);
-        }
+        renderConsoleOutputs({ stdout, stderr });
 
         if (jsonOutputElement) {
           const formatted = JSON.stringify(result ?? {}, null, 2);
@@ -1640,24 +1696,23 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
         if (error?.code === 'INVALID_WORKFORCE_BUDGET') {
           return;
         }
+        const stdoutText =
+          typeof error?.stdout === 'string' && error.stdout ? error.stdout : '';
+        const stderrText =
+          typeof error?.stderr === 'string' && error.stderr ? error.stderr : '';
+        if (stdoutText || stderrText) {
+          renderConsoleOutputs({ stdout: stdoutText, stderr: stderrText });
+        }
         const description =
           typeof error?.error === 'string' && error.error
             ? error.error
             : error instanceof Error && error.message
             ? error.message
             : 'Generation failed.';
-        const stdoutText =
-          stdoutOutput && stdoutOutput.textContent !== defaultStdoutMessage
-            ? stdoutOutput.textContent
-            : '';
-        const stderrText =
-          typeof error?.stderr === 'string' && error.stderr
-            ? error.stderr
-            : stderrOutput && stderrOutput.textContent !== defaultStderrMessage
-            ? stderrOutput.textContent
-            : '';
-        renderConsoleOutputs({ stdout: stdoutText, stderr: stderrText });
         appendConsoleLog(`error: ${description}`);
+        if (typeof error?.trace === 'string' && error.trace.trim()) {
+          appendConsoleLog(error.trace.trim());
+        }
         dispatchIntent({
           type: INTENT_TYPES.SHOW_TOAST,
           payload: {
