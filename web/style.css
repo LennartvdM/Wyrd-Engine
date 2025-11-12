@@ -175,6 +175,115 @@ body {
   gap: 10px;
 }
 
+.config-common-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-field-label {
+  font-size: 12px;
+  color: #cbd0df;
+  letter-spacing: 0.01em;
+}
+
+.config-control {
+  background: #1f2128;
+  border: 1px solid #2a2d35;
+  border-radius: 4px;
+  color: #e5e7eb;
+  font-size: 12px;
+  padding: 6px 8px;
+  min-height: 28px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.config-control:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+.config-control:disabled {
+  opacity: 0.6;
+}
+
+.config-field-seed .seed-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.seed-buttons {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.mini-button {
+  background: #2a2d35;
+  border: 1px solid #353843;
+  border-radius: 4px;
+  color: #d0d5e2;
+  cursor: pointer;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  padding: 4px 8px;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.mini-button:hover {
+  background: #353843;
+  color: #ffffff;
+}
+
+.mini-button:focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 2px;
+}
+
+.mini-button.accent {
+  background: #3a3f4f;
+  border-color: #4b5164;
+  color: #f8fafc;
+}
+
+.config-toggle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.config-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #d0d5e2;
+}
+
+.config-toggle input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: #6366f1;
+}
+
+.config-textarea {
+  min-height: 140px;
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.config-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .config-summary {
   display: flex;
   flex-wrap: wrap;
@@ -205,10 +314,15 @@ body {
 
 .config-panel-content {
   display: none;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .config-panel-content.active {
-  display: block;
+  display: flex;
 }
 
 .tab-group {

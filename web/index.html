@@ -33,7 +33,39 @@
                   <button class="tab" type="button" data-variant="mk2">MK2</button>
                 </div>
                 <section class="config-section" data-calendar="common">
-                  <p class="config-copy">Calendar common settings placeholder…</p>
+                  <div class="config-common-grid">
+                    <label class="config-field" for="cal-arch">
+                      <span class="config-field-label">Archetype</span>
+                      <select id="cal-arch" class="config-control">
+                        <option value="Office">Office</option>
+                        <option value="Parent">Parent</option>
+                        <option value="Freelancer">Freelancer</option>
+                      </select>
+                    </label>
+                    <label class="config-field" for="cal-week">
+                      <span class="config-field-label">Week start date</span>
+                      <input id="cal-week" class="config-control" type="date" />
+                    </label>
+                    <div class="config-field config-field-seed">
+                      <label class="config-field-label" for="cal-seed">Seed number</label>
+                      <div class="seed-row">
+                        <input
+                          id="cal-seed"
+                          class="config-control"
+                          type="number"
+                          inputmode="numeric"
+                        />
+                        <div class="seed-buttons">
+                          <button type="button" id="seed-reset" class="mini-button">
+                            Reset
+                          </button>
+                          <button type="button" id="seed-random" class="mini-button">
+                            Surprise me
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </section>
                 <div class="config-variant-panels">
                   <div class="config-variant-panel active" data-variant-panel="mk1">
@@ -53,10 +85,32 @@
                     </div>
                     <div class="tab-content nested inset config-panels">
                       <div class="config-panel-content active" data-panel="mk2:calendar">
-                        <p class="config-copy">MK2 Calendar settings placeholder…</p>
+                        <div class="config-toggle-list">
+                          <label class="config-toggle" for="mk2cal-compress">
+                            <input type="checkbox" id="mk2cal-compress" />
+                            <span>Show compression overlays</span>
+                          </label>
+                          <label class="config-toggle" for="mk2cal-conflicts">
+                            <input type="checkbox" id="mk2cal-conflicts" />
+                            <span>Show conflict markers</span>
+                          </label>
+                        </div>
                       </div>
                       <div class="config-panel-content" data-panel="mk2:workforce" hidden>
-                        <p class="config-copy">MK2 Workforce settings placeholder…</p>
+                        <div class="config-field">
+                          <label class="config-field-label" for="mk2wf-budget">
+                            Yearly budget (JSON)
+                          </label>
+                          <textarea id="mk2wf-budget" class="config-control config-textarea"></textarea>
+                        </div>
+                        <div class="config-inline-actions">
+                          <button type="button" id="mk2wf-default" class="mini-button">
+                            Use sensible default
+                          </button>
+                          <button type="button" id="mk2wf-validate" class="mini-button accent">
+                            Validate
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
