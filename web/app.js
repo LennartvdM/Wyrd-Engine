@@ -6,6 +6,44 @@ const tabPanels = Array.from(
 );
 const tabOrder = ['calendar', 'config', 'console', 'json', 'fixtures', 'logs'];
 const consoleTabButton = tabButtons.find((button) => button.dataset.tab === 'console');
+const jsonTabButton = tabButtons.find((button) => button.dataset.tab === 'json');
+let jsonTabBadge;
+
+const DEFAULT_JSON_PLACEHOLDER = '{\n  "data": "JSON payloads will render here."\n}';
+
+function ensureJsonTabBadge() {
+  if (!jsonTabButton) {
+    return null;
+  }
+  if (!jsonTabBadge) {
+    jsonTabBadge = document.createElement('span');
+    jsonTabBadge.className = 'tab-badge';
+    jsonTabBadge.hidden = true;
+    jsonTabBadge.setAttribute('aria-hidden', 'true');
+    jsonTabButton.classList.add('json-tab');
+    jsonTabButton.append(jsonTabBadge);
+  }
+  return jsonTabBadge;
+}
+
+function setJsonValidationBadge(status) {
+  const badge = ensureJsonTabBadge();
+  if (!badge) {
+    return;
+  }
+  badge.classList.remove('tab-badge--ok', 'tab-badge--err');
+  if (status === 'ok') {
+    badge.hidden = false;
+    badge.classList.add('tab-badge--ok');
+  } else if (status === 'err') {
+    badge.hidden = false;
+    badge.classList.add('tab-badge--err');
+  } else {
+    badge.hidden = true;
+  }
+}
+
+window.setJsonValidationBadge = setJsonValidationBadge;
 
 const INTENT_TYPES = {
   NAVIGATE_TAB: 'NAVIGATE_TAB',
@@ -106,6 +144,77 @@ function initializeNestedTabScopes() {
 }
 
 initializeNestedTabScopes();
+
+function isISODate(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+  if (!isoDatePattern.test(value)) {
+    return false;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return false;
+  }
+  return date.toISOString().slice(0, 10) === value;
+}
+
+function isTimeHHMM(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const match = value.match(/^([0-1]\d|2[0-3]):([0-5]\d)$/);
+  if (!match) {
+    return false;
+  }
+  return match[0] === value;
+}
+
+function validateWebV1Calendar(obj) {
+  const errors = [];
+
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    errors.push('Payload must be an object.');
+    return { ok: false, errors };
+  }
+
+  if (obj.schema_version !== 'web_v1_calendar') {
+    errors.push('schema_version must equal "web_v1_calendar".');
+  }
+
+  if (!isISODate(obj.week_start)) {
+    errors.push('week_start must be an ISO date (YYYY-MM-DD).');
+  }
+
+  if (!Array.isArray(obj.events)) {
+    errors.push('events must be an array.');
+  } else {
+    obj.events.forEach((event, index) => {
+      const prefix = `Event ${index + 1}:`;
+      if (!event || typeof event !== 'object' || Array.isArray(event)) {
+        errors.push(`${prefix} must be an object.`);
+        return;
+      }
+      if (!isISODate(event.date)) {
+        errors.push(`${prefix} date must be ISO formatted (YYYY-MM-DD).`);
+      }
+      if (!isTimeHHMM(event.start)) {
+        errors.push(`${prefix} start must be HH:MM.`);
+      }
+      if (!isTimeHHMM(event.end)) {
+        errors.push(`${prefix} end must be HH:MM.`);
+      }
+      if (typeof event.label !== 'string' || event.label.trim().length === 0) {
+        errors.push(`${prefix} label must be a non-empty string.`);
+      }
+    });
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+window.validateWebV1Calendar = validateWebV1Calendar;
 
 function currentMondayISO(referenceDate = new Date()) {
   const date = new Date(referenceDate);
@@ -522,6 +631,7 @@ let stderrOutput;
 let jsonOutputElement;
 let initializeRuntimeButton;
 let generateButton;
+let validateJsonButton;
 let runtimeReady = false;
 let runtimeLoadingPromise;
 let runtimeStatus = 'idle';
@@ -637,6 +747,7 @@ function beginConsoleRun(message) {
   if (stderrOutput) {
     stderrOutput.textContent = defaultStderrMessage;
   }
+  setJsonValidationBadge('clear');
   if (currentTab === 'console') {
     dispatchIntent({
       type: INTENT_TYPES.APP_STATUS,
@@ -858,12 +969,30 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
 
   const configActions = configPanel.querySelector('.config-actions');
   if (configActions) {
-    initializeRuntimeButton =
-      configActions.querySelector('[data-config-action="initialize-runtime"]') ||
-      configActions.querySelector('.secondary-action');
     generateButton =
       configActions.querySelector('[data-config-action="generate-runtime"]') ||
       configActions.querySelector('.primary-action');
+    initializeRuntimeButton =
+      configActions.querySelector('[data-config-action="initialize-runtime"]') ||
+      configActions.querySelector('.secondary-action');
+    validateJsonButton =
+      configActions.querySelector('[data-config-action="validate-json"]') ||
+      null;
+    if (!validateJsonButton) {
+      validateJsonButton = document.createElement('button');
+      validateJsonButton.type = 'button';
+      validateJsonButton.className = 'secondary-action';
+      validateJsonButton.dataset.configAction = 'validate-json';
+      validateJsonButton.textContent = 'Validate';
+      if (
+        initializeRuntimeButton &&
+        initializeRuntimeButton.parentElement === configActions
+      ) {
+        configActions.insertBefore(validateJsonButton, initializeRuntimeButton);
+      } else {
+        configActions.append(validateJsonButton);
+      }
+    }
   }
 
   const classTabBar = configPanel.querySelector('[data-config="class-tabs"]');
@@ -1588,6 +1717,7 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
       generateButton.textContent = 'Generating…';
       updateRuntimeButtonState(generateButton);
 
+      setJsonValidationBadge('clear');
       beginConsoleRun('Generating payload…');
 
       const workerFnMap = {
@@ -1679,6 +1809,16 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
           jsonOutputElement.textContent = formatted;
         }
 
+        const validation = validateWebV1Calendar(result ?? {});
+        setJsonValidationBadge(validation.ok ? 'ok' : 'err');
+        if (!validation.ok) {
+          const issueCount = validation.errors.length;
+          const summary = `Validation failed: ${issueCount} issue${
+            issueCount === 1 ? '' : 's'
+          }.`;
+          appendConsoleLog(summary);
+        }
+
         dispatchIntent({
           type: INTENT_TYPES.NAVIGATE_TAB,
           payload: { tab: 'json' },
@@ -1736,6 +1876,48 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     updateRuntimeButtonState(initializeRuntimeButton);
   }
 
+  if (validateJsonButton) {
+    styleRuntimeButton(validateJsonButton);
+    validateJsonButton.textContent = 'Validate';
+    validateJsonButton.disabled = false;
+    updateRuntimeButtonState(validateJsonButton);
+    validateJsonButton.addEventListener('click', () => {
+      if (!jsonOutputElement) {
+        return;
+      }
+      const raw = jsonOutputElement.textContent || '';
+      const trimmed = raw.trim();
+      if (!trimmed || trimmed === DEFAULT_JSON_PLACEHOLDER.trim()) {
+        dispatchIntent({
+          type: INTENT_TYPES.SHOW_TOAST,
+          payload: {
+            message: 'No JSON to validate',
+            intent: 'info',
+            duration: 2200,
+          },
+        });
+        return;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        const validation = validateWebV1Calendar(parsed);
+        setJsonValidationBadge(validation.ok ? 'ok' : 'err');
+        if (validation.ok) {
+          appendConsoleLog('Validation passed: payload is web_v1_calendar.');
+        } else {
+          const issueCount = validation.errors.length;
+          const summary = `Validation failed: ${issueCount} issue${
+            issueCount === 1 ? '' : 's'
+          }.`;
+          appendConsoleLog(summary);
+        }
+      } catch (error) {
+        setJsonValidationBadge('err');
+        appendConsoleLog('Validation failed: unable to parse JSON.');
+      }
+    });
+  }
+
   configPanel.dataset.hydrated = '1';
 }
 
@@ -1790,11 +1972,13 @@ if (jsonPanel) {
 
   jsonOutputElement = document.createElement('pre');
   jsonOutputElement.className = 'json-output';
-  jsonOutputElement.textContent = '{\n  "data": "JSON payloads will render here."\n}';
+  jsonOutputElement.textContent = DEFAULT_JSON_PLACEHOLDER;
 
   jsonContainer.append(jsonToolbar, jsonOutputElement);
   jsonPanel.append(jsonContainer);
 }
+
+setJsonValidationBadge('clear');
 
 if (fixturesPanel) {
   const fixturesContainer = document.createElement('div');
