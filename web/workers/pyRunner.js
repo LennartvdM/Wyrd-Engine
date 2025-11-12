@@ -8,6 +8,174 @@ const FN_DISPATCH = {
 const RUN_TIMEOUT_MS = 30_000;
 const DEBUG = typeof self !== 'undefined' && Boolean(self.WYRD_DEBUG);
 
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+const RUNTIME_ENV = (() => {
+  let hostname = '';
+  try {
+    if (typeof self !== 'undefined' && self.location && typeof self.location.hostname === 'string') {
+      hostname = self.location.hostname;
+    }
+  } catch (error) {
+    hostname = '';
+  }
+
+  let stage = 'prod';
+  if (typeof self !== 'undefined' && typeof self.WYRD_STAGE === 'string') {
+    stage = self.WYRD_STAGE;
+  } else if (!hostname || hostname === 'localhost' || hostname.endsWith('.local')) {
+    stage = 'dev';
+  } else if (/^(127\.|0\.)/.test(hostname) || hostname === '[::1]') {
+    stage = 'dev';
+  } else if (hostname.includes('--')) {
+    stage = 'preview';
+  } else if (/\.netlify\.app$/i.test(hostname) && hostname.split('--').length > 1) {
+    stage = 'preview';
+  }
+
+  let userAgent = '';
+  try {
+    if (typeof self !== 'undefined' && self.navigator && typeof self.navigator.userAgent === 'string') {
+      userAgent = self.navigator.userAgent;
+    }
+  } catch (error) {
+    userAgent = '';
+  }
+
+  return { stage, hostname, userAgent };
+})();
+
+const EMBEDDED_FALLBACK_FILES = Object.freeze({
+  'archetypes.py': `"""Embedded fallback archetypes."""
+
+ARCHETYPES = {
+    "embedded": {"label": "Embedded Fallback"}
+}
+`,
+  'calendar_gen_v2.py': `"""Embedded fallback calendar generator."""
+
+def generate_calendar(*_args, **_kwargs):
+    return {"events": [], "issues": []}
+`,
+  'calendar_layers.py': `"""Embedded fallback calendar layers."""
+
+LAYERS = []
+`,
+  'engines/__init__.py': `"""Embedded fallback engines package."""
+
+__all__ = ["base", "engine_mk1", "engine_mk2", "web_adapter"]
+`,
+  'engines/base.py': `"""Embedded fallback engine base."""
+
+class ScheduleInput:
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+`,
+  'engines/engine_mk1.py': `"""Embedded fallback MK1 engine."""
+
+class EngineMK1:
+    def run(self, *_args, **_kwargs):
+        return {"events": [], "issues": []}
+`,
+  'engines/engine_mk2.py': `"""Embedded fallback MK2 engine."""
+
+class EngineMK2:
+    def run(self, *_args, **_kwargs):
+        return {"events": [], "issues": []}
+`,
+  'engines/web_adapter.py': `"""Embedded fallback web adapter."""
+
+def _payload(archetype="", week_start="", rig=""):
+    return {
+        "schema_version": "web_v1_calendar",
+        "week_start": week_start or "",
+        "events": [
+            {"date": week_start or "", "start": "09:00", "end": "11:00", "label": "Work", "activity": "work"},
+            {"date": week_start or "", "start": "11:00", "end": "12:00", "label": "Break", "activity": "misc"},
+        ],
+        "issues": [],
+        "metadata": {
+            "engine": "embedded-fallback",
+            "variant": rig or "",
+            "rig": rig or "",
+            "archetype": archetype or "",
+        },
+    }
+
+
+def mk1_run_web(archetype, week_start=None, seed=None):
+    return _payload(archetype, week_start, "mk1")
+
+
+def mk2_run_calendar_web(archetype, week_start=None, seed=None):
+    return _payload(archetype, week_start, "mk2")
+
+
+def mk2_run_workforce_web(archetype, week_start=None, seed=None, yearly_budget=None):
+    payload = _payload(archetype, week_start, "workforce")
+    payload["metadata"]["yearly_budget"] = yearly_budget
+    return payload
+`,
+  'models.py': `"""Embedded fallback models."""
+
+class CalendarModel:
+    def __init__(self, **kwargs):
+        self.data = kwargs
+`,
+  'modules/__init__.py': `"""Embedded fallback modules package."""`,
+  'modules/calendar_provider.py': `"""Embedded fallback calendar provider."""
+
+def build_calendar(*_args, **_kwargs):
+    return {"events": [], "issues": []}
+`,
+  'modules/friction_model.py': `"""Embedded fallback friction model."""
+
+def calculate_friction(*_args, **_kwargs):
+    return 0.0
+`,
+  'modules/unique_events.py': `"""Embedded fallback unique events."""
+
+class UniqueDay:
+    def __init__(self, label, date):
+        self.label = label
+        self.date = date
+`,
+  'modules/validation.py': `"""Embedded fallback validation module."""
+
+def validate(*_args, **_kwargs):
+    return {"issues": []}
+`,
+  'rigs/__init__.py': `"""Embedded fallback rigs package."""`,
+  'rigs/calendar_rig.py': `"""Embedded fallback calendar rig."""
+
+class CalendarRig:
+    name = "embedded"
+`,
+  'rigs/simple_rig.py': `"""Embedded fallback simple rig."""
+
+class SimpleRig:
+    name = "embedded"
+`,
+  'rigs/workforce_rig.py': `"""Embedded fallback workforce rig."""
+
+class WorkforceRig:
+    name = "embedded"
+`,
+  'unique_days.py': `"""Embedded fallback unique days."""
+
+def unique_days(*_args, **_kwargs):
+    return []
+`,
+  'yearly_budget.py': `"""Embedded fallback yearly budget."""
+
+class YearlyBudget:
+    def __init__(self, total=0):
+        self.total = total
+`,
+});
+
 let pyodide = null;
 let pyodideReadyPromise = null;
 let repoFilesMirrored = false;
@@ -17,18 +185,11 @@ let currentSysPathSnapshot = null;
 let repoInitializationPromise = null;
 let lastManifestSize = null;
 let lastMirrorReport = null;
-
-function uniqueManifestEntries(entries) {
-  const seen = new Set();
-  const deduped = [];
-  for (const entry of entries || []) {
-    if (!seen.has(entry)) {
-      seen.add(entry);
-      deduped.push(entry);
-    }
-  }
-  return deduped;
-}
+let manifestState = null;
+let manifestPromise = null;
+let assetsBaseCache = null;
+let embeddedFallbackActive = false;
+const startupWarnings = [];
 
 function toErrorMessage(error) {
   if (!error) {
@@ -46,9 +207,69 @@ function toErrorMessage(error) {
   return String(error);
 }
 
+function isLikelyCspError(error) {
+  const message = toErrorMessage(error).toLowerCase();
+  if (!message) {
+    return false;
+  }
+  return message.includes('content security policy') || message.includes('csp');
+}
+
+function isServiceWorkerControlled() {
+  try {
+    return Boolean(self?.navigator?.serviceWorker?.controller);
+  } catch (error) {
+    return false;
+  }
+}
+
+function logFailureGroup(label, rows) {
+  if (RUNTIME_ENV.stage === 'prod' && !DEBUG) {
+    return;
+  }
+  if (typeof console === 'undefined') {
+    return;
+  }
+  try {
+    console.groupCollapsed(`[wyrd][pyodide] ${label}`);
+    if (Array.isArray(rows) && rows.length > 0 && typeof console.table === 'function') {
+      console.table(rows);
+    } else if (rows) {
+      console.log(rows);
+    }
+  } catch (error) {
+    // ignore
+  }
+  try {
+    console.groupEnd();
+  } catch (error) {
+    // ignore
+  }
+}
+
 function createStageError(stage, type, message, error, extra = {}) {
-  const { details, ...rest } = extra || {};
-  const payload = { stage, type, message, ...rest };
+  const { details, env: extraEnv, commit: overrideCommit, manifestVersion: overrideVersion, ...rest } =
+    extra || {};
+  const payload = {
+    stage,
+    type,
+    message,
+    commit:
+      typeof overrideCommit !== 'undefined'
+        ? overrideCommit
+        : manifestState?.manifest?.commit ?? null,
+    manifestVersion:
+      typeof overrideVersion !== 'undefined'
+        ? overrideVersion
+        : manifestState?.manifest?.version ?? null,
+    env: {
+      hostname: RUNTIME_ENV.hostname || '',
+      userAgent: RUNTIME_ENV.userAgent || '',
+      ...(extraEnv || {}),
+    },
+    ...rest,
+  };
+
   let detailPayload =
     details && typeof details === 'object' && !Array.isArray(details) ? { ...details } : undefined;
 
@@ -101,65 +322,523 @@ function mockCalendarResult(args) {
     metadata: { engine: 'mock', variant: args?.variant || '', rig: args?.rig || '' },
   };
 }
-const DEFAULT_PYTHON_SOURCE_FILES = uniqueManifestEntries([
-  'archetypes.py',
-  'calendar_gen_v2.py',
-  'calendar_layers.py',
-  'engines/__init__.py',
-  'engines/base.py',
-  'engines/engine_mk1.py',
-  'engines/engine_mk2.py',
-  'engines/web_adapter.py',
-  'models.py',
-  'modules/__init__.py',
-  'modules/calendar_provider.py',
-  'modules/friction_model.py',
-  'modules/unique_events.py',
-  'modules/validation.py',
-  'rigs/__init__.py',
-  'rigs/calendar_rig.py',
-  'rigs/simple_rig.py',
-  'rigs/workforce_rig.py',
-  'unique_days.py',
-  'yearly_budget.py',
-]);
-
-let pythonSourceFilesPromise = null;
 
 function post(message) {
   self.postMessage(message);
 }
 
-function resolveRepoUrl(path) {
-  return new URL(`../${path}`, self.location).toString();
-}
-
-async function loadPythonSourceFiles() {
-  if (!pythonSourceFilesPromise) {
-    pythonSourceFilesPromise = (async () => {
-      try {
-        const response = await fetch(resolveRepoUrl('PY_MANIFEST'));
-        if (!response.ok) {
-          throw new Error(`Failed to fetch PY_MANIFEST: ${response.status}`);
-        }
-        const text = await response.text();
-        const entries = text
-          .split(/\r?\n/g)
-          .map((line) => line.trim())
-          .filter((line) => line && !line.startsWith('#'));
-        if (entries.length > 0) {
-          return uniqueManifestEntries(entries);
-        }
-      } catch (error) {
-        if (DEBUG && typeof console !== 'undefined' && typeof console.warn === 'function') {
-          console.warn('Falling back to default PY manifest', error);
-        }
-      }
-      return [...DEFAULT_PYTHON_SOURCE_FILES];
-    })();
+function resolveAssetsBase() {
+  if (embeddedFallbackActive) {
+    return 'embedded://py/';
+  }
+  if (assetsBaseCache) {
+    return assetsBaseCache;
   }
 
-  return pythonSourceFilesPromise;
+  let baseCandidate = null;
+  try {
+    if (typeof self !== 'undefined' && typeof self.WYRD_ASSET_BASE === 'string') {
+      baseCandidate = self.WYRD_ASSET_BASE;
+    }
+  } catch (error) {
+    baseCandidate = null;
+  }
+
+  if (!baseCandidate) {
+    try {
+      if (typeof import.meta !== 'undefined' && import.meta.url) {
+        baseCandidate = new URL('../py/', import.meta.url).toString();
+      }
+    } catch (error) {
+      baseCandidate = null;
+    }
+  }
+
+  if (!baseCandidate) {
+    try {
+      if (typeof self !== 'undefined' && self.location && typeof self.location.href === 'string') {
+        baseCandidate = new URL('../py/', self.location.href).toString();
+      }
+    } catch (error) {
+      baseCandidate = null;
+    }
+  }
+
+  if (!baseCandidate) {
+    baseCandidate = '/py/';
+  }
+
+  if (!baseCandidate.endsWith('/')) {
+    baseCandidate = `${baseCandidate}/`;
+  }
+
+  assetsBaseCache = baseCandidate;
+
+  if (DEBUG || RUNTIME_ENV.stage !== 'prod') {
+    try {
+      const sample = new URL('manifest.json', assetsBaseCache).toString();
+      if (typeof console !== 'undefined' && typeof console.debug === 'function') {
+        console.debug('[wyrd][pyodide] asset base', {
+          stage: RUNTIME_ENV.stage,
+          base: assetsBaseCache,
+          sample,
+        });
+      }
+    } catch (error) {
+      // ignore logging issues
+    }
+  }
+
+  return assetsBaseCache;
+}
+
+function createAssetUrl(path) {
+  const base = resolveAssetsBase();
+  return new URL(path, base).toString();
+}
+
+function bufferFromData(data) {
+  if (data instanceof ArrayBuffer) {
+    return data;
+  }
+  if (ArrayBuffer.isView(data)) {
+    return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+  }
+  throw new TypeError('Unsupported data type for hashing');
+}
+
+async function computeSha256Hex(data) {
+  const buffer = bufferFromData(data);
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function sanitizeManifest(manifest, base, manifestUrl) {
+  if (!manifest || typeof manifest !== 'object') {
+    throw createStageError('startup', 'AssetIntegrityFailed', 'Manifest payload invalid', null, {
+      base,
+      probeURL: manifestUrl,
+      reason: 'InvalidManifest',
+    });
+  }
+
+  const rawFiles = Array.isArray(manifest.files) ? manifest.files : null;
+  if (!rawFiles || rawFiles.length === 0) {
+    throw createStageError('startup', 'AssetIntegrityFailed', 'Manifest contains no files', null, {
+      base,
+      probeURL: manifestUrl,
+      reason: 'EmptyManifest',
+    });
+  }
+
+  const files = [];
+  const seen = new Set();
+  const seenLower = new Map();
+
+  for (const entry of rawFiles) {
+    const pathValue = typeof entry?.path === 'string' ? entry.path.trim() : '';
+    if (!pathValue) {
+      throw createStageError('startup', 'AssetIntegrityFailed', 'Manifest entry missing path', null, {
+        base,
+        probeURL: manifestUrl,
+        reason: 'InvalidEntry',
+      });
+    }
+    if (seen.has(pathValue)) {
+      throw createStageError('startup', 'AssetIntegrityFailed', `Manifest contains duplicate path: ${pathValue}`, null, {
+        base,
+        probeURL: manifestUrl,
+        reason: 'DuplicatePath',
+      });
+    }
+    const lower = pathValue.toLowerCase();
+    if (seenLower.has(lower) && seenLower.get(lower) !== pathValue) {
+      throw createStageError('startup', 'AssetIntegrityFailed', `Manifest contains case-insensitive duplicate: ${pathValue}`, null, {
+        base,
+        probeURL: manifestUrl,
+        reason: 'DuplicateCase',
+        details: { existing: seenLower.get(lower), duplicate: pathValue },
+      });
+    }
+    seen.add(pathValue);
+    seenLower.set(lower, pathValue);
+
+    const bytes = Number(entry?.bytes);
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+      throw createStageError('startup', 'AssetIntegrityFailed', `Manifest entry has invalid byte size for ${pathValue}`, null, {
+        base,
+        probeURL: manifestUrl,
+        reason: 'InvalidBytes',
+        details: { path: pathValue, bytes: entry?.bytes },
+      });
+    }
+
+    const sha = typeof entry?.sha256 === 'string' ? entry.sha256.trim().toLowerCase() : '';
+    if (!/^[a-f0-9]{64}$/.test(sha)) {
+      throw createStageError('startup', 'AssetIntegrityFailed', `Manifest entry has invalid sha256 for ${pathValue}`, null, {
+        base,
+        probeURL: manifestUrl,
+        reason: 'InvalidSha',
+        details: { path: pathValue, sha256: entry?.sha256 },
+      });
+    }
+
+    files.push({ path: pathValue, bytes, sha256: sha });
+  }
+
+  files.sort((a, b) => a.path.localeCompare(b.path));
+
+  const version = typeof manifest.version === 'string' ? manifest.version : null;
+  const commit = typeof manifest.commit === 'string' ? manifest.commit : null;
+  const generatedAt = typeof manifest.generatedAt === 'string' ? manifest.generatedAt : null;
+
+  return { version, commit, generatedAt, files };
+}
+
+async function verifyManifestFiles(state) {
+  const { manifest, base } = state;
+  const files = manifest?.files || [];
+  const fileMap = new Map();
+  const cachedFiles = new Map();
+
+  for (const entry of files) {
+    fileMap.set(entry.path, entry);
+
+    const url = new URL(entry.path, base).toString();
+
+    if (state.embedded) {
+      const text = EMBEDDED_FALLBACK_FILES[entry.path] || '';
+      const buffer = textEncoder.encode(text);
+      const bytes = buffer.byteLength;
+      const sha256 = await computeSha256Hex(buffer);
+      if (bytes !== entry.bytes || sha256 !== entry.sha256) {
+        logFailureGroup('Embedded fallback integrity mismatch', [
+          {
+            path: entry.path,
+            expectedBytes: entry.bytes,
+            actualBytes: bytes,
+            expectedSha256: entry.sha256,
+            actualSha256: sha256,
+          },
+        ]);
+        throw createStageError('startup', 'AssetIntegrityFailed', `Embedded fallback mismatch for ${entry.path}`, null, {
+          base,
+          probeURL: url,
+          reason: 'EmbeddedMismatch',
+          expectedBytes: entry.bytes,
+          actualBytes: bytes,
+        });
+      }
+      cachedFiles.set(entry.path, {
+        text,
+        bytes,
+        sha256,
+        url,
+        finalUrl: url,
+        status: 200,
+      });
+      continue;
+    }
+
+    let response;
+    try {
+      response = await fetch(url, { cache: 'no-store' });
+    } catch (error) {
+      const swControlled = isServiceWorkerControlled();
+      if (isLikelyCspError(error)) {
+        logFailureGroup('Pyodide asset policy block', [{ path: entry.path, url, directive: 'connect-src' }]);
+        throw createStageError('startup', 'PolicyBlocked', 'Content Security Policy blocked asset fetch', error, {
+          directive: 'connect-src',
+          base,
+          probeURL: url,
+          manifestSize: files.length,
+          swControlled,
+        });
+      }
+      logFailureGroup('Pyodide asset fetch failure', [{ path: entry.path, url, reason: 'FetchError' }]);
+      throw createStageError('startup', 'AssetIntegrityFailed', `Failed to fetch ${entry.path}`, error, {
+        base,
+        probeURL: url,
+        reason: 'FetchError',
+        manifestSize: files.length,
+        swControlled,
+      });
+    }
+
+    const status = typeof response?.status === 'number' ? response.status : undefined;
+    const finalUrl = response?.url && response.url !== url ? response.url : undefined;
+
+    if (!response?.ok) {
+      const reason = `HTTP ${status ?? 'unknown'}`;
+      const failure = {
+        path: entry.path,
+        url,
+        status,
+        reason,
+        finalURL: finalUrl,
+      };
+      logFailureGroup('Pyodide asset fetch failure', [failure]);
+      throw createStageError('startup', 'AssetIntegrityFailed', `Asset fetch failed for ${entry.path}`, null, {
+        base,
+        probeURL: url,
+        reason,
+        status,
+        manifestSize: files.length,
+        swControlled: isServiceWorkerControlled(),
+        finalURL: finalUrl,
+      });
+    }
+
+    const buffer = await response.arrayBuffer();
+    const bytes = buffer.byteLength;
+    if (bytes !== entry.bytes) {
+      const failure = {
+        path: entry.path,
+        url,
+        status,
+        expectedBytes: entry.bytes,
+        actualBytes: bytes,
+        finalURL: finalUrl,
+      };
+      logFailureGroup('Pyodide asset byte mismatch', [failure]);
+      throw createStageError('startup', 'AssetIntegrityFailed', `Byte size mismatch for ${entry.path}`, null, {
+        base,
+        probeURL: url,
+        reason: 'ByteMismatch',
+        expectedBytes: entry.bytes,
+        actualBytes: bytes,
+        status,
+        manifestSize: files.length,
+        finalURL: finalUrl,
+      });
+    }
+
+    const sha256 = await computeSha256Hex(buffer);
+    if (sha256 !== entry.sha256) {
+      const failure = {
+        path: entry.path,
+        url,
+        status,
+        expectedSha256: entry.sha256,
+        actualSha256: sha256,
+        finalURL: finalUrl,
+      };
+      logFailureGroup('Pyodide asset hash mismatch', [failure]);
+      throw createStageError('startup', 'AssetIntegrityFailed', `SHA mismatch for ${entry.path}`, null, {
+        base,
+        probeURL: url,
+        reason: 'ShaMismatch',
+        expectedSha256: entry.sha256,
+        actualSha256: sha256,
+        status,
+        manifestSize: files.length,
+        finalURL: finalUrl,
+      });
+    }
+
+    const text = textDecoder.decode(buffer);
+    cachedFiles.set(entry.path, {
+      text,
+      bytes,
+      sha256,
+      url,
+      finalUrl: finalUrl || url,
+      status,
+    });
+  }
+
+  state.fileMap = fileMap;
+  state.cachedFiles = cachedFiles;
+  lastManifestSize = files.length;
+}
+
+function canUseEmbeddedFallback() {
+  return !embeddedFallbackActive && RUNTIME_ENV.stage !== 'prod';
+}
+
+async function activateEmbeddedFallback(triggerError) {
+  embeddedFallbackActive = true;
+  assetsBaseCache = 'embedded://py/';
+
+  const files = [];
+  const cachedFiles = new Map();
+
+  for (const [path, text] of Object.entries(EMBEDDED_FALLBACK_FILES)) {
+    const buffer = textEncoder.encode(text);
+    const bytes = buffer.byteLength;
+    const sha256 = await computeSha256Hex(buffer);
+    files.push({ path, bytes, sha256 });
+    const url = new URL(path, assetsBaseCache).toString();
+    cachedFiles.set(path, {
+      text,
+      bytes,
+      sha256,
+      url,
+      finalUrl: url,
+      status: 200,
+    });
+  }
+
+  files.sort((a, b) => a.path.localeCompare(b.path));
+
+  const manifest = {
+    version: 'embedded-fallback',
+    commit: 'embedded',
+    generatedAt: new Date().toISOString(),
+    files,
+  };
+
+  manifestState = {
+    manifest,
+    base: assetsBaseCache,
+    manifestUrl: new URL('manifest.json', assetsBaseCache).toString(),
+    embedded: true,
+    fileMap: new Map(files.map((entry) => [entry.path, entry])),
+    cachedFiles,
+  };
+
+  const warning = createStageError(
+    'startup',
+    'UsingEmbeddedFallback',
+    'Using embedded fallback Python bundle',
+    triggerError,
+    {
+      base: manifestState.base,
+      probeURL: manifestState.manifestUrl,
+      filesUsed: files.map((entry) => entry.path),
+      warning: true,
+    }
+  );
+  startupWarnings.push(warning);
+
+  if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+    console.warn('[wyrd][pyodide] Using embedded fallback Python sources', {
+      stage: RUNTIME_ENV.stage,
+      reason: toErrorMessage(triggerError) || 'asset base unavailable',
+    });
+  }
+
+  lastManifestSize = files.length;
+  return manifestState;
+}
+
+async function fetchManifestFromNetwork(base) {
+  const manifestUrl = new URL('manifest.json', base).toString();
+  const swControlled = isServiceWorkerControlled();
+  let response;
+
+  try {
+    response = await fetch(manifestUrl, { cache: 'no-store' });
+  } catch (error) {
+    if (isLikelyCspError(error)) {
+      throw createStageError('startup', 'PolicyBlocked', 'Content Security Policy blocked manifest fetch', error, {
+        directive: 'connect-src',
+        base,
+        probeURL: manifestUrl,
+        swControlled,
+      });
+    }
+    throw createStageError('startup', 'AssetIntegrityFailed', 'Failed to fetch manifest.json', error, {
+      base,
+      probeURL: manifestUrl,
+      reason: 'FetchError',
+      swControlled,
+    });
+  }
+
+  const status = typeof response?.status === 'number' ? response.status : undefined;
+  const finalUrl = response?.url && response.url !== manifestUrl ? response.url : undefined;
+
+  if (!response?.ok) {
+    const reason = `HTTP ${status ?? 'unknown'}`;
+    throw createStageError('startup', 'AssetIntegrityFailed', 'Manifest fetch failed', null, {
+      base,
+      probeURL: manifestUrl,
+      reason,
+      status,
+      swControlled,
+      finalURL: finalUrl,
+    });
+  }
+
+  let manifest;
+  try {
+    manifest = await response.json();
+  } catch (error) {
+    throw createStageError('startup', 'AssetIntegrityFailed', 'Manifest JSON parse failed', error, {
+      base,
+      probeURL: manifestUrl,
+      reason: 'InvalidManifest',
+      swControlled,
+      finalURL: finalUrl,
+    });
+  }
+
+  return { manifest, manifestUrl, finalUrl };
+}
+
+async function ensureManifestReady() {
+  if (manifestState && manifestState.cachedFiles && manifestState.cachedFiles.size > 0) {
+    return manifestState;
+  }
+
+  if (manifestPromise) {
+    return manifestPromise;
+  }
+
+  manifestPromise = (async () => {
+    if (embeddedFallbackActive && manifestState) {
+      return manifestState;
+    }
+
+    const base = resolveAssetsBase();
+
+    let fetched;
+    try {
+      fetched = await fetchManifestFromNetwork(base);
+    } catch (error) {
+      manifestState = null;
+      const allowFallback =
+        canUseEmbeddedFallback() &&
+        error &&
+        typeof error === 'object' &&
+        error.stage === 'startup' &&
+        error.type === 'AssetIntegrityFailed' &&
+        typeof error.reason === 'string' &&
+        error.reason === 'FetchError';
+      if (allowFallback) {
+        return activateEmbeddedFallback(error);
+      }
+      throw error;
+    }
+
+    try {
+      const sanitized = sanitizeManifest(fetched.manifest, base, fetched.manifestUrl);
+      manifestState = {
+        manifest: sanitized,
+        base,
+        manifestUrl: fetched.manifestUrl,
+        embedded: false,
+        fileMap: new Map(),
+        cachedFiles: new Map(),
+      };
+      await verifyManifestFiles(manifestState);
+      return manifestState;
+    } catch (error) {
+      manifestState = null;
+      throw error;
+    }
+  })();
+
+  try {
+    const result = await manifestPromise;
+    return result;
+  } catch (error) {
+    manifestPromise = null;
+    throw error;
+  }
 }
 
 async function mirrorRepoFiles(instance) {
@@ -167,43 +846,78 @@ async function mirrorRepoFiles(instance) {
     return lastMirrorReport;
   }
 
-  const manifest = await loadPythonSourceFiles();
-  const manifestEntries = uniqueManifestEntries(manifest);
+  const state = await ensureManifestReady();
+  const manifest = state?.manifest;
+  const manifestEntries = Array.isArray(manifest?.files) ? manifest.files : [];
   lastManifestSize = manifestEntries.length;
 
   try {
     instance.FS.mkdirTree('/repo');
   } catch (error) {
-    throw createStageError(
-      'mirror',
-      'MirrorSetupFailed',
-      'Failed to prepare /repo directory',
-      error,
-      {
-        manifestSize: lastManifestSize,
-        sysPath: getCurrentSysPathForPayload(),
-      }
-    );
+    throw createStageError('mirror', 'MirrorSetupFailed', 'Failed to prepare /repo directory', error, {
+      manifestSize: lastManifestSize,
+      sysPath: getCurrentSysPathForPayload(),
+      base: state?.base,
+    });
   }
 
   const reports = [];
   const failures = [];
   let okCount = 0;
 
-  for (const path of manifestEntries) {
-    const url = resolveRepoUrl(path);
+  for (const entry of manifestEntries) {
+    const { path, bytes } = entry;
     const repoTargetPath = `/repo/${path}`;
-    let status;
+    const baseUrl = state?.base ? new URL(path, state.base).toString() : createAssetUrl(path);
+    const url = baseUrl;
+    let cached = state.cachedFiles?.get(path);
+    let status = typeof cached?.status === 'number' ? cached.status : undefined;
+    let finalUrl = cached?.finalUrl || url;
+    let sourceText = typeof cached?.text === 'string' ? cached.text : undefined;
+    let actualBytes = typeof cached?.bytes === 'number' ? cached.bytes : 0;
 
     try {
-      const response = await fetch(url);
-      status = typeof response?.status === 'number' ? response.status : undefined;
-      if (!response?.ok) {
-        const statusText = response?.statusText ? ` ${response.statusText}` : '';
-        throw new Error(`HTTP ${response?.status ?? 'unknown'}${statusText}`.trim());
+      if (!cached) {
+        const response = await fetch(url, { cache: 'no-store' });
+        status = typeof response?.status === 'number' ? response.status : undefined;
+        if (!response?.ok) {
+          const reason = `HTTP ${status ?? 'unknown'}`;
+          throw new Error(reason);
+        }
+        const buffer = await response.arrayBuffer();
+        actualBytes = buffer.byteLength;
+        const digest = await computeSha256Hex(buffer);
+        if (actualBytes !== bytes) {
+          throw new Error('ByteMismatch');
+        }
+        if (digest !== entry.sha256) {
+          throw new Error('ShaMismatch');
+        }
+        sourceText = textDecoder.decode(buffer);
+        finalUrl = response?.url && response.url !== url ? response.url : url;
+        cached = {
+          text: sourceText,
+          bytes: actualBytes,
+          sha256: digest,
+          url,
+          finalUrl,
+          status,
+        };
+        state.cachedFiles?.set(path, cached);
       }
 
-      const source = await response.text();
+      if (typeof sourceText !== 'string') {
+        sourceText = cached?.text;
+      }
+      if (typeof sourceText !== 'string') {
+        throw new Error('Missing source payload');
+      }
+
+      actualBytes = typeof cached?.bytes === 'number' ? cached.bytes : textEncoder.encode(sourceText).byteLength;
+      if (actualBytes !== bytes) {
+        throw new Error('ByteMismatch');
+      }
+
       const directory = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
       if (directory) {
         try {
@@ -215,7 +929,7 @@ async function mirrorRepoFiles(instance) {
         }
       }
 
-      instance.FS.writeFile(path, source);
+      instance.FS.writeFile(path, sourceText);
 
       const repoDirectory = repoTargetPath.includes('/')
         ? repoTargetPath.slice(0, repoTargetPath.lastIndexOf('/'))
@@ -230,33 +944,30 @@ async function mirrorRepoFiles(instance) {
         }
       }
 
-      instance.FS.writeFile(repoTargetPath, source);
+      instance.FS.writeFile(repoTargetPath, sourceText);
+
       reports.push({
         path,
         repoPath: repoTargetPath,
         url,
-        status,
+        finalURL: finalUrl !== url ? finalUrl : undefined,
+        status: typeof status === 'number' ? status : undefined,
         ok: true,
-        size: typeof source === 'string' ? source.length : 0,
+        size: actualBytes,
       });
       okCount += 1;
     } catch (error) {
-      const inferredStatus =
-        typeof status === 'number'
-          ? status
-          : typeof error?.status === 'number'
-          ? error.status
-          : undefined;
       const failureEntry = {
         path,
         repoPath: repoTargetPath,
         url,
-        status: typeof inferredStatus === 'number' ? inferredStatus : undefined,
-        ok: false,
-        size: 0,
-        error: toErrorMessage(error) || 'Unknown mirror failure',
+        status: typeof status === 'number' ? status : undefined,
+        bytes: actualBytes,
+        expectedBytes: bytes,
+        finalURL: finalUrl !== url ? finalUrl : undefined,
+        reason: toErrorMessage(error) || 'Unknown mirror failure',
       };
-      reports.push({ ...failureEntry });
+      reports.push({ ...failureEntry, ok: false });
       failures.push(failureEntry);
     }
   }
@@ -270,6 +981,7 @@ async function mirrorRepoFiles(instance) {
   };
 
   if (failCount > 0) {
+    logFailureGroup('Pyodide mirror failure', failures);
     const summary =
       failCount === 1
         ? `Repository mirror failed for ${failures[0].path}`
@@ -281,6 +993,7 @@ async function mirrorRepoFiles(instance) {
       failures,
       report: reports,
       sysPath: getCurrentSysPathForPayload(),
+      base: state?.base,
     });
     throw errorPayload;
   }
@@ -428,6 +1141,7 @@ async function ensurePyodide() {
     pyodideReadyPromise = (async () => {
       let instance;
       try {
+        const manifestTask = ensureManifestReady();
         let loader;
         try {
           loader = await import('https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.mjs');
@@ -443,6 +1157,7 @@ async function ensurePyodide() {
           throw createStageError('pyodide-init', 'PyodideBootstrapFailed', 'Failed to initialize Pyodide runtime', error);
         }
 
+        await manifestTask;
         await mirrorRepoFiles(instance);
         await initializeRepo(instance);
         await probeImports(instance);
@@ -499,7 +1214,21 @@ self.onmessage = async (event) => {
   if (type === 'load') {
     try {
       await ensurePyodide();
-      respond({ ok: true, ready: true });
+      const payload = {
+        ok: true,
+        ready: true,
+        manifestVersion: manifestState?.manifest?.version ?? null,
+        commit: manifestState?.manifest?.commit ?? null,
+        base: manifestState?.base ?? resolveAssetsBase(),
+        sysPath: getCurrentSysPathForPayload(),
+      };
+      if (manifestState?.manifest?.generatedAt) {
+        payload.generatedAt = manifestState.manifest.generatedAt;
+      }
+      if (startupWarnings.length > 0) {
+        payload.warnings = startupWarnings.map((warning) => ({ ...warning }));
+      }
+      respond(payload);
     } catch (error) {
       const errorMessage =
         error instanceof Error
@@ -547,6 +1276,39 @@ self.onmessage = async (event) => {
           payload.sysPath = Array.isArray(error.sysPath)
             ? [...error.sysPath]
             : error.sysPath;
+        }
+        if ('commit' in error) {
+          payload.commit = error.commit;
+        }
+        if ('manifestVersion' in error) {
+          payload.manifestVersion = error.manifestVersion;
+        }
+        if ('env' in error) {
+          payload.env = error.env;
+        }
+        if ('base' in error) {
+          payload.base = error.base;
+        }
+        if ('probeURL' in error) {
+          payload.probeURL = error.probeURL;
+        }
+        if ('reason' in error) {
+          payload.reason = error.reason;
+        }
+        if ('swControlled' in error) {
+          payload.swControlled = error.swControlled;
+        }
+        if ('directive' in error) {
+          payload.directive = error.directive;
+        }
+        if ('warning' in error) {
+          payload.warning = error.warning;
+        }
+        if ('filesUsed' in error) {
+          payload.filesUsed = error.filesUsed;
+        }
+        if ('finalURL' in error) {
+          payload.finalURL = error.finalURL;
         }
       }
       if (typeof payload.sysPath === 'undefined') {
