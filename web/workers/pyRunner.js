@@ -9,8 +9,10 @@ const RUN_TIMEOUT_MS = 30_000;
 
 let pyodide = null;
 let pyodideReadyPromise = null;
-let repoFilesMirrored = false;
+let lastRepoInitError = null;
 let runInFlight = false;
+
+self.__repoReady = false;
 
 function mockCalendarResult(args) {
   return {
@@ -24,64 +26,78 @@ function mockCalendarResult(args) {
     metadata: { engine: 'mock', variant: args?.variant || '', rig: args?.rig || '' },
   };
 }
-const PYTHON_SOURCE_FILES = [
-  'archetypes.py',
-  'calendar_gen_v2.py',
-  'calendar_layers.py',
-  'engines/__init__.py',
-  'engines/base.py',
+const PY_MANIFEST = [
+  'engines/web_adapter.py',
   'engines/engine_mk1.py',
   'engines/engine_mk2.py',
-  'engines/web_adapter.py',
-  'models.py',
-  'modules/__init__.py',
-  'modules/calendar_provider.py',
-  'modules/friction_model.py',
-  'modules/unique_events.py',
-  'modules/validation.py',
-  'rigs/__init__.py',
-  'rigs/calendar_rig.py',
-  'rigs/simple_rig.py',
-  'rigs/workforce_rig.py',
-  'unique_days.py',
-  'yearly_budget.py',
 ];
 
 function post(message) {
   self.postMessage(message);
 }
 
-function resolveRepoUrl(path) {
-  return new URL(`../${path}`, self.location).toString();
+function resolveRepoUrl(rel) {
+  return new URL(`../../${rel}`, self.location.href).toString();
 }
 
-async function mirrorRepoFiles(instance) {
-  if (repoFilesMirrored) {
-    return;
+async function mirrorRepoFiles(manifest) {
+  if (!pyodide) {
+    throw new Error('mirror requires loaded pyodide');
   }
 
-  const tasks = PYTHON_SOURCE_FILES.map(async (path) => {
-    const response = await fetch(resolveRepoUrl(path));
-    if (!response.ok) {
-      throw new Error(`Failed to fetch ${path}: ${response.status} ${response.statusText}`);
+  try {
+    pyodide.FS.mkdirTree('/repo');
+  } catch (error) {
+    if (!/exists/i.test(String(error?.message || ''))) {
+      throw new Error(`mkdir fail: /repo ${String(error)}`);
     }
-    const source = await response.text();
-    const directory = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
-    if (directory) {
+  }
+
+  for (const rel of manifest) {
+    const url = resolveRepoUrl(rel);
+    let response;
+    try {
+      response = await fetch(url);
+    } catch (error) {
+      throw new Error(`fetch fail: ${url} ${String(error)}`);
+    }
+    if (!response.ok) {
+      throw new Error(`fetch fail: ${url} ${response.status}`);
+    }
+
+    const targetPath = `/repo/${rel}`;
+    const lastSlash = targetPath.lastIndexOf('/');
+    const dir = lastSlash > 0 ? targetPath.slice(0, lastSlash) : '/repo';
+
+    if (dir) {
       try {
-        instance.FS.mkdirTree(directory);
+        pyodide.FS.mkdirTree(dir);
       } catch (error) {
-        // Ignore EEXIST style errors from mkdirTree.
         if (!/exists/i.test(String(error?.message || ''))) {
-          throw error;
+          throw new Error(`mkdir fail: ${dir} ${String(error)}`);
         }
       }
     }
-    instance.FS.writeFile(path, source);
-  });
 
-  await Promise.all(tasks);
-  repoFilesMirrored = true;
+    const buffer = await response.arrayBuffer();
+    try {
+      pyodide.FS.writeFile(targetPath, new Uint8Array(buffer));
+    } catch (error) {
+      throw new Error(`write fail: ${targetPath} ${String(error)}`);
+    }
+  }
+
+  const result = await pyodide.runPythonAsync(`
+
+import sys, pathlib
+p = pathlib.Path('/repo')
+if str(p) not in sys.path: sys.path.insert(0, str(p))
+for want in ${JSON.stringify(manifest)}:
+    assert (p / want).exists(), f"missing after mirror: {want}"
+'OK'
+`);
+
+  return result;
 }
 
 async function ensurePyodide() {
@@ -97,7 +113,6 @@ async function ensurePyodide() {
       const instance = await loadPyodide({
         indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/',
       });
-      await mirrorRepoFiles(instance);
       pyodide = instance;
       return instance;
     })();
@@ -108,20 +123,26 @@ async function ensurePyodide() {
   } catch (error) {
     pyodideReadyPromise = null;
     pyodide = null;
-    repoFilesMirrored = false;
+    lastRepoInitError = null;
+    self.__repoReady = false;
     throw error;
   }
 }
 
-async function tryImportAdapter() {
-  if (!pyodide) {
-    return false;
+async function initRepo() {
+  if (self.__repoReady) {
+    return true;
   }
 
   try {
-    await pyodide.runPythonAsync(`import engines.web_adapter`);
+    lastRepoInitError = null;
+    await mirrorRepoFiles(PY_MANIFEST);
+    self.__repoReady = true;
     return true;
   } catch (error) {
+    lastRepoInitError = error instanceof Error ? error.message : String(error);
+    self.__repoReady = false;
+    post({ ok: false, stage: 'mirror', error: lastRepoInitError, hint: 'mirrorRepoFiles' });
     return false;
   }
 }
@@ -140,14 +161,29 @@ self.onmessage = async (event) => {
   if (type === 'load') {
     try {
       await ensurePyodide();
-      respond({ ok: true, ready: true });
     } catch (error) {
       respond({
         ok: false,
+        stage: 'import',
         error: error instanceof Error ? error.message : String(error),
+        hint: 'loadPyodide',
         trace: error?.stack || '',
       });
+      return;
     }
+
+    const repoReady = await initRepo();
+    if (!repoReady) {
+      respond({
+        ok: false,
+        stage: 'mirror',
+        error: lastRepoInitError || 'mirror failed',
+        hint: 'mirrorRepoFiles',
+      });
+      return;
+    }
+
+    respond({ ok: true, ready: true });
     return;
   }
 
@@ -164,12 +200,17 @@ self.onmessage = async (event) => {
       return;
     }
     if (!ALLOWED_FUNCTIONS.has(fn)) {
-      respond({ ok: false, error: `Unknown worker function: ${String(fn)}` });
+      respond({
+        ok: false,
+        stage: 'run',
+        error: `Unknown worker function: ${String(fn)}`,
+        hint: `fn:${String(fn)}`,
+      });
       return;
     }
 
     if (runInFlight) {
-      respond({ ok: false, error: 'Runtime busy' });
+      respond({ ok: false, stage: 'run', error: 'Runtime busy', hint: 'runInFlight' });
       return;
     }
 
@@ -183,23 +224,50 @@ self.onmessage = async (event) => {
     let runPromise;
 
     try {
-      const instance = await ensurePyodide();
-      const importsOK = await tryImportAdapter();
-
-      if (!importsOK) {
+      let instance;
+      try {
+        instance = await ensurePyodide();
+      } catch (error) {
         respond({
-          ok: true,
-          result: mockCalendarResult(args),
-          fallback: true,
-          stdout: stdoutParts.join(''),
-          stderr: stderrParts.join(''),
+          ok: false,
+          stage: 'import',
+          error: error instanceof Error ? error.message : String(error),
+          hint: 'loadPyodide',
+        });
+        return;
+      }
+
+      const repoReady = await initRepo();
+      if (!repoReady) {
+        respond({
+          ok: false,
+          stage: 'mirror',
+          error: lastRepoInitError || 'mirror failed',
+          hint: 'mirrorRepoFiles',
+        });
+        return;
+      }
+
+      try {
+        await instance.runPythonAsync(`import engines.web_adapter`);
+      } catch (error) {
+        respond({
+          ok: false,
+          stage: 'import',
+          error: error instanceof Error ? error.message : String(error),
+          hint: 'engines.web_adapter',
         });
         return;
       }
 
       const dispatchName = FN_DISPATCH[fn];
       if (!dispatchName) {
-        respond({ ok: false, error: `No adapter configured for ${String(fn)}` });
+        respond({
+          ok: false,
+          stage: 'run',
+          error: `No adapter configured for ${String(fn)}`,
+          hint: `dispatch:${String(fn)}`,
+        });
         return;
       }
 
@@ -277,6 +345,7 @@ __out
       }
       respond({
         ok: false,
+        stage: 'run',
         error:
           error instanceof Error && error.message === '__timeout__'
             ? 'timeout'
@@ -286,6 +355,7 @@ __out
         trace: error instanceof Error && error.message === '__timeout__' ? '' : error?.stack || '',
         stdout: stdoutParts.join(''),
         stderr: stderrParts.join(''),
+        hint: 'py.run',
       });
     } finally {
       if (timeoutId) {
@@ -307,5 +377,10 @@ __out
     return;
   }
 
-  respond({ ok: false, error: `Unknown message type: ${String(type)}` });
+  respond({
+    ok: false,
+    stage: 'run',
+    error: `Unknown message type: ${String(type)}`,
+    hint: `message:${String(type)}`,
+  });
 };
