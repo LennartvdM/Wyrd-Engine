@@ -332,6 +332,15 @@ let assetsBaseCache = null;
 let embeddedFallbackActive = false;
 const startupWarnings = [];
 
+const DEFAULT_REPO_ROOT = '/repo';
+const REPO_PROBE_NODES = Object.freeze(['engines', 'modules', 'rigs']);
+let repoRoot = DEFAULT_REPO_ROOT;
+let repoRootReady = false;
+let repoRootPromise = null;
+let repoRelocation = null;
+let repoRepairs = [];
+let lastRepoProbeResult = null;
+
 function toErrorMessage(error) {
   if (!error) {
     return '';
@@ -411,6 +420,280 @@ function logMirrorReport(status, label, rows, meta = {}) {
     }
   } catch (error) {
     // ignore group end errors
+  }
+}
+
+function safeAnalyzePath(instance, path) {
+  try {
+    const analysis = instance?.FS?.analyzePath?.(path);
+    if (analysis && typeof analysis === 'object') {
+      return analysis;
+    }
+  } catch (error) {
+    // ignore analyze errors and fall through to default
+  }
+  return { exists: false, name: path };
+}
+
+function describeFsError(error) {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+  const errno = typeof error.errno === 'number' ? error.errno : undefined;
+  const code = typeof error.code === 'string' && error.code ? error.code : undefined;
+  const message = typeof error.message === 'string' && error.message ? error.message : toErrorMessage(error);
+  if (typeof errno === 'undefined' && !code && !message) {
+    return null;
+  }
+  let label = '';
+  if (code) {
+    label = typeof errno === 'number' ? `${code}(${errno})` : code;
+  } else if (typeof errno === 'number') {
+    label = `errno(${errno})`;
+  } else if (message) {
+    label = message;
+  }
+  return { errno, code, message, label: label || 'FS error' };
+}
+
+function joinRepoPath(root, relativePath) {
+  if (!root) {
+    return `/${relativePath.replace(/^\/+/, '')}`;
+  }
+  const sanitizedRoot = root.endsWith('/') ? root.slice(0, -1) : root;
+  const sanitizedRelative = relativePath.startsWith('/') ? relativePath.slice(1) : relativePath;
+  return `${sanitizedRoot}/${sanitizedRelative}`;
+}
+
+async function runRepoFsProbe(instance) {
+  const nodesLiteral = JSON.stringify(REPO_PROBE_NODES);
+  const code = `import json, os, stat
+
+ROOT = ${JSON.stringify(DEFAULT_REPO_ROOT)}
+NODES = ${nodesLiteral}
+
+repo_exists = os.path.exists(ROOT)
+repo_isdir = os.path.isdir(ROOT)
+repo_writable = False
+write_error = None
+tmp_path = os.path.join(ROOT, '.fs_probe.tmp')
+
+if repo_exists and not repo_isdir:
+    # attempting to open below would raise, capture as enotdir via write_error
+    pass
+
+try:
+    with open(tmp_path, 'w', encoding='utf-8') as handle:
+        handle.write('probe')
+    repo_writable = True
+except Exception as exc:
+    write_error = f"{exc.__class__.__name__}: {exc}"
+else:
+    try:
+        os.remove(tmp_path)
+    except Exception as exc:
+        write_error = f"{exc.__class__.__name__}: {exc}"
+
+payload = {
+    'repo': {
+        'exists': bool(repo_exists),
+        'isdir': bool(repo_isdir),
+        'writable': bool(repo_writable),
+    },
+    'nodes': {},
+}
+
+if write_error is not None:
+    payload['repo']['write_error'] = write_error
+
+for name in NODES:
+    path = os.path.join(ROOT, name)
+    exists = os.path.exists(path)
+    isdir = os.path.isdir(path)
+    isfile = os.path.isfile(path)
+    entry = {
+        'exists': bool(exists),
+        'isdir': bool(isdir),
+        'isfile': bool(isfile),
+    }
+    if isfile:
+        try:
+            st = os.stat(path)
+        except Exception as exc:
+            entry['stat_error'] = f"{exc.__class__.__name__}: {exc}"
+        else:
+            entry['mode'] = stat.S_IFMT(st.st_mode)
+            entry['size'] = st.st_size
+    payload['nodes'][name] = entry
+
+json.dumps(payload)`;
+
+  let result;
+  try {
+    result = await instance.runPythonAsync(code);
+  } catch (error) {
+    throw createStageError('mirror', 'RepoProbeFailed', 'Failed to probe repository filesystem', error, {
+      details: { code: 'repo-probe' },
+    });
+  }
+
+  if (!result) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(result);
+  } catch (error) {
+    throw createStageError('mirror', 'RepoProbeFailed', 'Failed to parse repository probe response', error, {
+      details: { raw: result },
+    });
+  }
+}
+
+function generateRelocatedRepoRoot(instance) {
+  const baseSuffix = Date.now().toString(36);
+  const baseCandidate = `${DEFAULT_REPO_ROOT}_${baseSuffix}`;
+  let candidate = baseCandidate;
+  let counter = 1;
+  while (true) {
+    const analysis = safeAnalyzePath(instance, candidate);
+    if (!analysis?.exists) {
+      return candidate;
+    }
+    candidate = `${baseCandidate}_${counter}`;
+    counter += 1;
+  }
+}
+
+async function ensureRepoRoot(instance) {
+  if (repoRootReady && repoRoot) {
+    return { repoRoot, relocation: repoRelocation, repairs: [...repoRepairs], probe: lastRepoProbeResult };
+  }
+
+  if (repoRootPromise) {
+    return repoRootPromise;
+  }
+
+  repoRootPromise = (async () => {
+    repoRepairs = [];
+    let probe = await runRepoFsProbe(instance);
+    lastRepoProbeResult = probe;
+    let repoStatus = probe?.repo || {};
+
+    if (!repoStatus.exists) {
+      try {
+        instance.FS.mkdirTree(DEFAULT_REPO_ROOT);
+      } catch (error) {
+        // if mkdirTree fails because the path exists as a file, we'll handle below via relocation
+      }
+      probe = await runRepoFsProbe(instance);
+      lastRepoProbeResult = probe;
+      repoStatus = probe?.repo || {};
+    }
+
+    let relocationReason = null;
+    if (!repoStatus.isdir) {
+      relocationReason = 'enotdir';
+    } else if (!repoStatus.writable) {
+      relocationReason = 'not_writable';
+    }
+
+    if (relocationReason) {
+      const target = generateRelocatedRepoRoot(instance);
+      repoRoot = target;
+      repoRelocation = {
+        stage: 'fs',
+        type: 'RepoRelocated',
+        from: DEFAULT_REPO_ROOT,
+        to: repoRoot,
+        reason: relocationReason,
+      };
+      startupWarnings.push({ ...repoRelocation });
+    } else {
+      repoRoot = DEFAULT_REPO_ROOT;
+      repoRelocation = null;
+    }
+
+    try {
+      instance.FS.mkdirTree(repoRoot);
+    } catch (error) {
+      throw createStageError('mirror', 'MirrorSetupFailed', 'Failed to prepare /repo directory', error, {
+        manifestSize: lastManifestSize,
+        sysPath: getCurrentSysPathForPayload(),
+        base: manifestState?.base,
+        repoRoot,
+        relocation: repoRelocation || undefined,
+        fsProbe: lastRepoProbeResult || undefined,
+      });
+    }
+
+    if (!repoRelocation) {
+      const nodes = (lastRepoProbeResult && lastRepoProbeResult.nodes) || {};
+      for (const [name, entry] of Object.entries(nodes)) {
+        if (!entry || !entry.isfile) {
+          continue;
+        }
+        const targetPath = joinRepoPath(repoRoot, name);
+        try {
+          instance.FS.unlink(targetPath);
+        } catch (error) {
+          const fsError = describeFsError(error);
+          throw createStageError('mirror', 'MirrorSetupFailed', 'Failed to clear conflicting repository node', error, {
+            manifestSize: lastManifestSize,
+            sysPath: getCurrentSysPathForPayload(),
+            base: manifestState?.base,
+            repoRoot,
+            relocation: repoRelocation || undefined,
+            fsProbe: lastRepoProbeResult || undefined,
+            conflict: { path: targetPath, node: { ...entry } },
+            fsError: fsError || undefined,
+          });
+        }
+        try {
+          instance.FS.mkdirTree(targetPath);
+        } catch (error) {
+          const fsError = describeFsError(error);
+          throw createStageError('mirror', 'MirrorSetupFailed', 'Failed to repair repository node directory', error, {
+            manifestSize: lastManifestSize,
+            sysPath: getCurrentSysPathForPayload(),
+            base: manifestState?.base,
+            repoRoot,
+            relocation: repoRelocation || undefined,
+            fsProbe: lastRepoProbeResult || undefined,
+            conflict: { path: targetPath, node: { ...entry } },
+            fsError: fsError || undefined,
+          });
+        }
+        const repairRecord = {
+          stage: 'fs',
+          type: 'RepoRepaired',
+          path: targetPath,
+          action: 'RecreatedDirectory',
+          previous: {
+            isfile: true,
+            mode: typeof entry.mode !== 'undefined' ? entry.mode : undefined,
+            size: typeof entry.size !== 'undefined' ? entry.size : undefined,
+            statError: entry.stat_error || undefined,
+          },
+        };
+        repoRepairs.push(repairRecord);
+      }
+    }
+
+    if (repoRepairs.length > 0) {
+      startupWarnings.push({ stage: 'fs', type: 'RepoRepairs', repairs: repoRepairs.map((repair) => ({ ...repair })) });
+    }
+
+    repoRootReady = true;
+    return { repoRoot, relocation: repoRelocation, repairs: [...repoRepairs], probe: lastRepoProbeResult };
+  })();
+
+  try {
+    const result = await repoRootPromise;
+    return result;
+  } catch (error) {
+    repoRootPromise = null;
+    throw error;
   }
 }
 
@@ -1018,15 +1301,8 @@ async function mirrorRepoFiles(instance) {
   const manifestEntries = Array.isArray(manifest?.files) ? manifest.files : [];
   lastManifestSize = manifestEntries.length;
 
-  try {
-    instance.FS.mkdirTree('/repo');
-  } catch (error) {
-    throw createStageError('mirror', 'MirrorSetupFailed', 'Failed to prepare /repo directory', error, {
-      manifestSize: lastManifestSize,
-      sysPath: getCurrentSysPathForPayload(),
-      base: state?.base,
-    });
-  }
+  const repoInfo = await ensureRepoRoot(instance);
+  const targetRepoRoot = repoInfo?.repoRoot || repoRoot || DEFAULT_REPO_ROOT;
 
   const reports = [];
   const failures = [];
@@ -1034,7 +1310,7 @@ async function mirrorRepoFiles(instance) {
 
   for (const entry of manifestEntries) {
     const { path, bytes } = entry;
-    const repoTargetPath = `/repo/${path}`;
+    const repoTargetPath = joinRepoPath(targetRepoRoot, path);
     const baseUrl = state?.base ? new URL(path, state.base).toString() : createAssetUrl(path);
     const url = baseUrl;
     let cached = state.cachedFiles?.get(path);
@@ -1125,7 +1401,12 @@ async function mirrorRepoFiles(instance) {
       });
       okCount += 1;
     } catch (error) {
-      const failureMessage = toErrorMessage(error) || 'Unknown mirror failure';
+      const fsError = describeFsError(error);
+      let failureMessage = toErrorMessage(error) || 'Unknown mirror failure';
+      if (fsError && fsError.label) {
+        const detailMessage = fsError.message && fsError.message !== fsError.label ? fsError.message : '';
+        failureMessage = detailMessage ? `${fsError.label}: ${detailMessage}` : fsError.label;
+      }
       const failureEntry = {
         path,
         repoPath: repoTargetPath,
@@ -1138,6 +1419,13 @@ async function mirrorRepoFiles(instance) {
         error: failureMessage,
         reason: failureMessage,
       };
+      if (fsError) {
+        failureEntry.fsError = {
+          errno: typeof fsError.errno === 'number' ? fsError.errno : undefined,
+          code: fsError.code || undefined,
+          message: fsError.message || undefined,
+        };
+      }
       reports.push({ ...failureEntry, ok: false });
       failures.push(failureEntry);
     }
@@ -1150,6 +1438,10 @@ async function mirrorRepoFiles(instance) {
     failCount,
     files: reports,
     base: state?.base,
+    repoRoot: targetRepoRoot,
+    repoRelocation: repoInfo?.relocation || undefined,
+    repairs: Array.isArray(repoInfo?.repairs) && repoInfo.repairs.length > 0 ? [...repoInfo.repairs] : undefined,
+    fsProbe: repoInfo?.probe || undefined,
   };
 
   const totalCount = Array.isArray(manifestEntries) ? manifestEntries.length : okCount + failCount;
@@ -1183,6 +1475,10 @@ async function mirrorRepoFiles(instance) {
       report: reports,
       sysPath: getCurrentSysPathForPayload(),
       base: state?.base,
+      repoRoot: targetRepoRoot,
+      repoRelocation: repoInfo?.relocation || undefined,
+      repairs: Array.isArray(repoInfo?.repairs) && repoInfo.repairs.length > 0 ? [...repoInfo.repairs] : undefined,
+      fsProbe: repoInfo?.probe || undefined,
     });
     throw errorPayload;
   }
@@ -1217,14 +1513,27 @@ async function initializeRepo(instance) {
   repoInitializationPromise = (async () => {
     let result;
     try {
+      const repoPathLiteral = JSON.stringify(repoRoot || DEFAULT_REPO_ROOT);
+      const defaultRepoLiteral = JSON.stringify(DEFAULT_REPO_ROOT);
+      const relocatedFlagLiteral = repoRelocation ? '"1"' : '"0"';
       result = await instance.runPythonAsync(`
 import json, os, sys
 
-REPO = "/repo"
-if REPO not in sys.path:
-    sys.path.insert(0, REPO)
+REPO = ${repoPathLiteral}
+DEFAULT_REPO = ${defaultRepoLiteral}
+
+try:
+    sys.path.remove(REPO)
+except ValueError:
+    pass
+sys.path.insert(0, REPO)
+
+if DEFAULT_REPO not in sys.path:
+    sys.path.append(DEFAULT_REPO)
 
 os.environ["WYRD_REPO_READY"] = "1"
+os.environ["WYRD_REPO_ROOT"] = REPO
+os.environ["WYRD_REPO_RELOCATED"] = ${relocatedFlagLiteral}
 
 json.dumps({"sys_path": list(sys.path)})
       `);
@@ -1390,6 +1699,13 @@ async function ensurePyodide() {
     currentSysPathSnapshot = null;
     lastMirrorReport = null;
     lastManifestSize = null;
+    repoRoot = DEFAULT_REPO_ROOT;
+    repoRootReady = false;
+    repoRootPromise = null;
+    repoRelocation = null;
+    repoRepairs = [];
+    lastRepoProbeResult = null;
+    startupWarnings.length = 0;
     throw error;
   }
 }
@@ -1428,9 +1744,19 @@ self.onmessage = async (event) => {
         commit: manifestState?.manifest?.commit ?? null,
         base: manifestState?.base ?? resolveAssetsBase(),
         sysPath: getCurrentSysPathForPayload(),
+        repoRoot,
       };
       if (manifestState?.manifest?.generatedAt) {
         payload.generatedAt = manifestState.manifest.generatedAt;
+      }
+      if (lastRepoProbeResult) {
+        payload.fsProbe = { ...lastRepoProbeResult };
+      }
+      if (repoRelocation) {
+        payload.repoRelocation = { ...repoRelocation };
+      }
+      if (repoRepairs.length > 0) {
+        payload.repairs = repoRepairs.map((repair) => ({ ...repair }));
       }
       if (startupWarnings.length > 0) {
         payload.warnings = startupWarnings.map((warning) => ({ ...warning }));
@@ -1495,6 +1821,18 @@ self.onmessage = async (event) => {
         }
         if ('base' in error) {
           payload.base = error.base;
+        }
+        if ('repoRoot' in error) {
+          payload.repoRoot = error.repoRoot;
+        }
+        if ('repoRelocation' in error) {
+          payload.repoRelocation = error.repoRelocation;
+        }
+        if ('repairs' in error) {
+          payload.repairs = error.repairs;
+        }
+        if ('fsProbe' in error) {
+          payload.fsProbe = error.fsProbe;
         }
         if ('probeURL' in error) {
           payload.probeURL = error.probeURL;
