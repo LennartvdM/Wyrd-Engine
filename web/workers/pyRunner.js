@@ -1,5 +1,3 @@
-import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.mjs';
-
 const ALLOWED_FUNCTIONS = new Set(['mk1_run', 'mk2_run_calendar', 'mk2_run_workforce']);
 const FN_DISPATCH = {
   mk1_run: 'mk1_run_web',
@@ -10,6 +8,7 @@ const FN_DISPATCH = {
 const RUN_TIMEOUT_MS = 30_000;
 
 let pyodide = null;
+let pyodideReadyPromise = null;
 let repoFilesMirrored = false;
 let runInFlight = false;
 
@@ -90,11 +89,24 @@ async function ensurePyodide() {
     return pyodide;
   }
 
+  if (!pyodideReadyPromise) {
+    pyodideReadyPromise = (async () => {
+      const { loadPyodide } = await import(
+        'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.mjs'
+      );
+      const instance = await loadPyodide({
+        indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/',
+      });
+      await mirrorRepoFiles(instance);
+      pyodide = instance;
+      return instance;
+    })();
+  }
+
   try {
-    pyodide = await loadPyodide({ indexURL: 'pyodide/' });
-    await mirrorRepoFiles(pyodide);
-    return pyodide;
+    return await pyodideReadyPromise;
   } catch (error) {
+    pyodideReadyPromise = null;
     pyodide = null;
     repoFilesMirrored = false;
     throw error;
