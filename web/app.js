@@ -519,6 +519,7 @@ const defaultStderrMessage = 'Error output will appear here.';
 
 let stdoutOutput;
 let stderrOutput;
+let jsonOutputElement;
 let initializeRuntimeButton;
 let generateButton;
 let runtimeReady = false;
@@ -673,6 +674,26 @@ function renderConsoleOutputs({ stdout, stderr }) {
     }
   }
   pendingAutoSwitch = false;
+}
+
+function appendConsoleLog(message) {
+  if (!stdoutOutput) {
+    return;
+  }
+  const logText = typeof message === 'string' ? message.trim() : String(message ?? '');
+  if (!logText) {
+    return;
+  }
+  const previousStdout =
+    stdoutOutput.textContent && stdoutOutput.textContent !== defaultStdoutMessage
+      ? stdoutOutput.textContent
+      : '';
+  const mergedStdout = previousStdout ? `${previousStdout}\n${logText}` : logText;
+  const previousStderr =
+    stderrOutput && stderrOutput.textContent !== defaultStderrMessage
+      ? stderrOutput.textContent
+      : '';
+  renderConsoleOutputs({ stdout: mergedStdout, stderr: previousStderr });
 }
 
 async function ensureRuntimeLoaded() {
@@ -1495,25 +1516,12 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
 
   if (initializeRuntimeButton) {
     styleRuntimeButton(initializeRuntimeButton);
-    initializeRuntimeButton.addEventListener('click', async () => {
-      if (runtimeReady) {
-        return;
-      }
-      initializeRuntimeButton.disabled = true;
-      initializeRuntimeButton.textContent = 'Initializing…';
-      if (generateButton) {
-        generateButton.disabled = true;
-        updateRuntimeButtonState(generateButton);
-      }
-      updateRuntimeButtonState(initializeRuntimeButton);
-      try {
-        await ensureRuntimeLoaded();
-        handleRuntimeLoadSuccess();
-      } catch (error) {
-        handleRuntimeLoadFailure(error);
-      }
-    });
+    initializeRuntimeButton.textContent = 'Runtime Ready';
+    initializeRuntimeButton.disabled = true;
+    updateRuntimeButtonState(initializeRuntimeButton);
   }
+
+  runtimeReady = true;
 
   if (generateButton) {
     styleRuntimeButton(generateButton);
@@ -1522,65 +1530,147 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     generateButton.addEventListener('click', async () => {
       generateButton.disabled = true;
       generateButton.textContent = 'Generating…';
-      if (initializeRuntimeButton) {
-        initializeRuntimeButton.disabled = true;
-        updateRuntimeButtonState(initializeRuntimeButton);
-      }
       updateRuntimeButtonState(generateButton);
 
-      try {
-        await ensureRuntimeLoaded();
-      } catch (error) {
-        handleRuntimeLoadFailure(error);
+      beginConsoleRun('Generating payload…');
+
+      const workerFnMap = {
+        'mk1:default': 'mk1_run',
+        'mk2:calendar': 'mk2_run_calendar',
+        'mk2:workforce': 'mk2_run_workforce',
+      };
+
+      const variantId = cfg.variant;
+      const rigId = cfg.rig[variantId];
+      if (!variantId || !rigId) {
+        const description = 'Select a variant and rig before generating.';
+        appendConsoleLog(`error: ${description}`);
+        dispatchIntent({
+          type: INTENT_TYPES.SHOW_TOAST,
+          payload: {
+            message: 'Generation unavailable',
+            description,
+            intent: 'error',
+            duration: 4000,
+          },
+        });
+        generateButton.disabled = false;
         generateButton.textContent = 'Generate';
         updateRuntimeButtonState(generateButton);
         return;
       }
 
-      beginConsoleRun('Running smoke test…');
+      const workerKey = `${variantId}:${rigId}`;
+      const fn = workerFnMap[workerKey] || workerFnMap['mk1:default'];
+
+      const numericSeed = Number.parseInt(calendarConfig.common.seed, 10);
+      const args = {
+        class: cfg.class,
+        variant: variantId,
+        rig: rigId,
+        archetype: calendarConfig.common.archetype,
+        week_start: calendarConfig.common.weekStart,
+      };
+
+      if (Number.isFinite(numericSeed)) {
+        args.seed = numericSeed;
+      } else if (calendarConfig.common.seed) {
+        args.seed = calendarConfig.common.seed;
+      }
+
+      if (variantId === 'mk2' && rigId === 'workforce') {
+        const rawBudget = calendarConfig.mk2.workforce.budgetText || '';
+        if (rawBudget.trim().length > 0) {
+          try {
+            args.workforce_budget = JSON.parse(rawBudget);
+          } catch (error) {
+            const description =
+              error instanceof Error ? error.message : 'Unable to parse workforce budget.';
+            appendConsoleLog(`error: ${description}`);
+            dispatchIntent({
+              type: INTENT_TYPES.SHOW_TOAST,
+              payload: {
+                message: 'Invalid workforce budget',
+                description,
+                intent: 'error',
+                duration: 5000,
+              },
+            });
+            const invalidBudgetError = new Error(description);
+            invalidBudgetError.code = 'INVALID_WORKFORCE_BUDGET';
+            throw invalidBudgetError;
+          }
+        }
+      }
+
+      appendConsoleLog(`run ${fn} ${JSON.stringify(args)}`);
 
       try {
-        const { stdout = '', stderr = '' } = await sendWorkerMessage('runPython', {
-          code: 'print("Pyodide OK")',
+        const { result, logs } = await sendWorkerMessage('run', { fn, args });
+
+        if (Array.isArray(logs)) {
+          logs.forEach((log) => {
+            if (typeof log === 'string' && log.trim()) {
+              appendConsoleLog(log);
+            }
+          });
+        } else if (typeof logs === 'string' && logs.trim()) {
+          appendConsoleLog(logs);
+        }
+
+        if (jsonOutputElement) {
+          const formatted = JSON.stringify(result ?? {}, null, 2);
+          jsonOutputElement.textContent = formatted;
+        }
+
+        dispatchIntent({
+          type: INTENT_TYPES.NAVIGATE_TAB,
+          payload: { tab: 'json' },
         });
-        renderConsoleOutputs({ stdout, stderr });
-        const hasErrorOutput =
-          typeof stderr === 'string' && stderr.trim().length > 0;
+
         dispatchIntent({
           type: INTENT_TYPES.SHOW_TOAST,
           payload: {
-            message: hasErrorOutput
-              ? 'Smoke test completed with warnings'
-              : 'Smoke test passed',
-            description: hasErrorOutput ? 'Check the console output for details.' : undefined,
-            intent: hasErrorOutput ? 'warning' : 'success',
-            duration: hasErrorOutput ? 5000 : 2800,
+            message: 'Generated',
+            intent: 'success',
+            duration: 2200,
           },
         });
       } catch (error) {
-        const stderrMessage =
+        if (error?.code === 'INVALID_WORKFORCE_BUDGET') {
+          return;
+        }
+        const description =
+          typeof error?.error === 'string' && error.error
+            ? error.error
+            : error instanceof Error && error.message
+            ? error.message
+            : 'Generation failed.';
+        const stdoutText =
+          stdoutOutput && stdoutOutput.textContent !== defaultStdoutMessage
+            ? stdoutOutput.textContent
+            : '';
+        const stderrText =
           typeof error?.stderr === 'string' && error.stderr
             ? error.stderr
-            : error?.error || 'Pyodide execution failed.';
-        renderConsoleOutputs({ stdout: error?.stdout || '', stderr: stderrMessage });
+            : stderrOutput && stderrOutput.textContent !== defaultStderrMessage
+            ? stderrOutput.textContent
+            : '';
+        renderConsoleOutputs({ stdout: stdoutText, stderr: stderrText });
+        appendConsoleLog(`error: ${description}`);
         dispatchIntent({
           type: INTENT_TYPES.SHOW_TOAST,
           payload: {
-            message: 'Smoke test failed',
-            description: stderrMessage,
+            message: 'Generation failed',
+            description,
             intent: 'error',
-            duration: 6000,
+            duration: 5000,
           },
         });
       } finally {
         generateButton.disabled = false;
         generateButton.textContent = 'Generate';
         updateRuntimeButtonState(generateButton);
-        if (initializeRuntimeButton && runtimeReady) {
-          initializeRuntimeButton.textContent = 'Runtime Ready';
-          initializeRuntimeButton.disabled = true;
-          updateRuntimeButtonState(initializeRuntimeButton);
-        }
       }
     });
   }
@@ -1643,11 +1733,11 @@ if (jsonPanel) {
 
   jsonToolbar.append(copyButton);
 
-  const jsonOutput = document.createElement('pre');
-  jsonOutput.className = 'json-output';
-  jsonOutput.textContent = '{\n  "data": "JSON payloads will render here."\n}';
+  jsonOutputElement = document.createElement('pre');
+  jsonOutputElement.className = 'json-output';
+  jsonOutputElement.textContent = '{\n  "data": "JSON payloads will render here."\n}';
 
-  jsonContainer.append(jsonToolbar, jsonOutput);
+  jsonContainer.append(jsonToolbar, jsonOutputElement);
   jsonPanel.append(jsonContainer);
 }
 
