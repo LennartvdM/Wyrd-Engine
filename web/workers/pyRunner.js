@@ -1,9 +1,17 @@
 import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.mjs';
 
 const ALLOWED_FUNCTIONS = new Set(['mk1_run', 'mk2_run_calendar', 'mk2_run_workforce']);
+const FN_DISPATCH = {
+  mk1_run: 'mk1_run_web',
+  mk2_run_calendar: 'mk2_run_calendar_web',
+  mk2_run_workforce: 'mk2_run_workforce_web',
+};
+
+const RUN_TIMEOUT_MS = 30_000;
 
 let pyodide = null;
 let repoFilesMirrored = false;
+let runInFlight = false;
 
 function mockCalendarResult(args) {
   return {
@@ -25,6 +33,7 @@ const PYTHON_SOURCE_FILES = [
   'engines/base.py',
   'engines/engine_mk1.py',
   'engines/engine_mk2.py',
+  'engines/web_adapter.py',
   'models.py',
   'modules/__init__.py',
   'modules/calendar_provider.py',
@@ -92,17 +101,13 @@ async function ensurePyodide() {
   }
 }
 
-async function tryImportEngines() {
+async function tryImportAdapter() {
   if (!pyodide) {
     return false;
   }
 
   try {
-    await pyodide.runPythonAsync(`
-import json
-import engines.engine_mk1 as mk1
-import engines.engine_mk2 as mk2
-    `);
+    await pyodide.runPythonAsync(`import engines.web_adapter`);
     return true;
   } catch (error) {
     return false;
@@ -151,14 +156,23 @@ self.onmessage = async (event) => {
       return;
     }
 
+    if (runInFlight) {
+      respond({ ok: false, error: 'Runtime busy' });
+      return;
+    }
+
+    runInFlight = true;
+
     let stdoutParts = [];
     let stderrParts = [];
     let previousStdout;
     let previousStderr;
+    let timeoutId;
+    let runPromise;
 
     try {
       const instance = await ensurePyodide();
-      const importsOK = await tryImportEngines();
+      const importsOK = await tryImportAdapter();
 
       if (!importsOK) {
         respond({
@@ -168,6 +182,12 @@ self.onmessage = async (event) => {
           stdout: stdoutParts.join(''),
           stderr: stderrParts.join(''),
         });
+        return;
+      }
+
+      const dispatchName = FN_DISPATCH[fn];
+      if (!dispatchName) {
+        respond({ ok: false, error: `No adapter configured for ${String(fn)}` });
         return;
       }
 
@@ -188,25 +208,49 @@ self.onmessage = async (event) => {
         },
       });
 
+      const argsJSON = JSON.stringify(args || {});
       const pyCode = `
 import json
-import engines.engine_mk1 as mk1
-import engines.engine_mk2 as mk2
+from engines.web_adapter import mk1_run_web, mk2_run_calendar_web, mk2_run_workforce_web
 
-args = json.loads("""${JSON.stringify(args)}""")
+ARGS_JSON = ${JSON.stringify(argsJSON)}
+ARGS = json.loads(ARGS_JSON)
 
-if "${fn}" == "mk1_run":
-    out = mk1.generate_schedule(args["archetype"], args["week_start"], args["seed"])
-elif "${fn}" == "mk2_run_calendar":
-    out = mk2.generate_calendar(args["archetype"], args["week_start"], args["seed"])
-elif "${fn}" == "mk2_run_workforce":
-    out = mk2.generate_workforce(args["archetype"], args["week_start"], args["seed"], args.get("yearly_budget"))
-else:
-    raise ValueError("Unknown function")
+_dispatch = {
+    "mk1_run": lambda: mk1_run_web(
+        ARGS.get("archetype", ""),
+        ARGS.get("week_start"),
+        ARGS.get("seed"),
+    ),
+    "mk2_run_calendar": lambda: mk2_run_calendar_web(
+        ARGS.get("archetype", ""),
+        ARGS.get("week_start"),
+        ARGS.get("seed"),
+    ),
+    "mk2_run_workforce": lambda: mk2_run_workforce_web(
+        ARGS.get("archetype", ""),
+        ARGS.get("week_start"),
+        ARGS.get("seed"),
+        ARGS.get("yearly_budget"),
+    ),
+}
 
-json.dumps(out)
+res = _dispatch["${fn}"]()
+print("")
+__out = json.dumps(res)
+__out
       `;
-      const resultJSON = await instance.runPythonAsync(pyCode);
+
+      runPromise = instance.runPythonAsync(pyCode);
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error('__timeout__'));
+        }, RUN_TIMEOUT_MS);
+      });
+
+      const resultJSON = await Promise.race([runPromise, timeoutPromise]);
+      clearTimeout(timeoutId);
+      await runPromise.catch(() => {});
       const parsed = resultJSON ? JSON.parse(resultJSON) : null;
 
       respond({
@@ -216,14 +260,28 @@ json.dumps(out)
         stderr: stderrParts.join(''),
       });
     } catch (error) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       respond({
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
-        trace: error?.stack || '',
+        error:
+          error instanceof Error && error.message === '__timeout__'
+            ? 'timeout'
+            : error instanceof Error
+            ? error.message
+            : String(error),
+        trace: error instanceof Error && error.message === '__timeout__' ? '' : error?.stack || '',
         stdout: stdoutParts.join(''),
         stderr: stderrParts.join(''),
       });
     } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      if (runPromise && typeof runPromise.catch === 'function') {
+        runPromise.catch(() => {});
+      }
       if (pyodide) {
         if (typeof previousStdout !== 'undefined') {
           pyodide.setStdout(previousStdout);
@@ -232,6 +290,7 @@ json.dumps(out)
           pyodide.setStderr(previousStderr);
         }
       }
+      runInFlight = false;
     }
     return;
   }

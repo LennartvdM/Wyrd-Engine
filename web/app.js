@@ -2201,7 +2201,7 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
 
         renderConsoleOutputs({ stdout, stderr });
         if (fallback) {
-          appendConsoleLog('⚠ Pyodide imports failed — using mock engine output');
+          appendConsoleLog('Pyodide import failed → mock used');
         }
 
         if (!result || typeof result !== 'object') {
