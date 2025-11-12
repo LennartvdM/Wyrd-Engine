@@ -24,7 +24,7 @@ function mockCalendarResult(args) {
     metadata: { engine: 'mock', variant: args?.variant || '', rig: args?.rig || '' },
   };
 }
-const PYTHON_SOURCE_FILES = [
+const DEFAULT_PYTHON_SOURCE_FILES = [
   'archetypes.py',
   'calendar_gen_v2.py',
   'calendar_layers.py',
@@ -47,6 +47,8 @@ const PYTHON_SOURCE_FILES = [
   'yearly_budget.py',
 ];
 
+let pythonSourceFilesPromise = null;
+
 function post(message) {
   self.postMessage(message);
 }
@@ -55,12 +57,39 @@ function resolveRepoUrl(path) {
   return new URL(`../${path}`, self.location).toString();
 }
 
+async function loadPythonSourceFiles() {
+  if (!pythonSourceFilesPromise) {
+    pythonSourceFilesPromise = (async () => {
+      try {
+        const response = await fetch(resolveRepoUrl('PY_MANIFEST'));
+        if (!response.ok) {
+          throw new Error(`Failed to fetch PY_MANIFEST: ${response.status}`);
+        }
+        const text = await response.text();
+        const entries = text
+          .split(/\r?\n/g)
+          .map((line) => line.trim())
+          .filter((line) => line && !line.startsWith('#'));
+        if (entries.length > 0) {
+          return entries;
+        }
+      } catch (error) {
+        console.warn('Falling back to default PY manifest', error);
+      }
+      return DEFAULT_PYTHON_SOURCE_FILES;
+    })();
+  }
+
+  return pythonSourceFilesPromise;
+}
+
 async function mirrorRepoFiles(instance) {
   if (repoFilesMirrored) {
     return;
   }
 
-  const tasks = PYTHON_SOURCE_FILES.map(async (path) => {
+  const manifest = await loadPythonSourceFiles();
+  const tasks = manifest.map(async (path) => {
     const response = await fetch(resolveRepoUrl(path));
     if (!response.ok) {
       throw new Error(`Failed to fetch ${path}: ${response.status} ${response.statusText}`);
