@@ -2147,146 +2147,76 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
 
   if (generateButton) {
     styleRuntimeButton(generateButton);
-    generateButton.disabled = !runtimeReady;
+    generateButton.disabled = false;
     updateRuntimeButtonState(generateButton);
-    generateButton.addEventListener('click', async () => {
-      if (!runtimeReady) {
-        const description = 'Initialize the runtime before generating a calendar.';
-        appendConsoleLog(`error: ${description}`);
-        dispatchIntent({
-          type: INTENT_TYPES.SHOW_TOAST,
-          payload: {
-            message: 'Runtime not ready',
-            description,
-            intent: 'error',
-            duration: 4000,
-          },
-        });
-        return;
-      }
+
+    const handleGenerate = async () => {
+      const snapshot = typeof getConfigSnapshot === 'function' ? getConfigSnapshot() : {};
+      const variantId = snapshot.variant || 'mk1';
+      const rigId = snapshot.rig || 'default';
+      const archetype = calendarConfig.common.archetype || '';
+      const weekStartValue = snapshot.week_start || '';
+      const seedValue = snapshot.seed || '';
+      const budgetText =
+        variantId === 'mk2' && rigId === 'workforce'
+          ? calendarConfig?.mk2?.workforce?.budgetText || ''
+          : '';
 
       generateButton.disabled = true;
       generateButton.textContent = 'Generating…';
       updateRuntimeButtonState(generateButton);
 
-      setJsonValidationBadge('clear');
       beginConsoleRun('Generating payload…');
 
-      const workerFnMap = {
-        'mk1:default': 'mk1_run',
-        'mk2:calendar': 'mk2_run_calendar',
-        'mk2:workforce': 'mk2_run_workforce',
-      };
-
-      const variantId = cfg.variant;
-      const rigId = cfg.rig[variantId];
-      if (!variantId || !rigId) {
-        const description = 'Select a variant and rig before generating.';
-        appendConsoleLog(`error: ${description}`);
-        dispatchIntent({
-          type: INTENT_TYPES.SHOW_TOAST,
-          payload: {
-            message: 'Generation unavailable',
-            description,
-            intent: 'error',
-            duration: 4000,
-          },
-        });
-        generateButton.disabled = false;
-        generateButton.textContent = 'Generate';
-        updateRuntimeButtonState(generateButton);
-        return;
-      }
-
-      const workerKey = `${variantId}:${rigId}`;
-      const fn = workerFnMap[workerKey] || workerFnMap['mk1:default'];
-
-      const numericSeed = Number.parseInt(calendarConfig.common.seed, 10);
-      const weekStartValue =
-        typeof calendarConfig.common.weekStart === 'string' && calendarConfig.common.weekStart
-          ? calendarConfig.common.weekStart
-          : null;
-      let seedValue = null;
-      if (Number.isFinite(numericSeed)) {
-        seedValue = numericSeed;
-      } else if (calendarConfig.common.seed && `${calendarConfig.common.seed}`.trim()) {
-        seedValue = calendarConfig.common.seed;
-      }
-
-      let yearlyBudget = null;
-      if (variantId === 'mk2' && rigId === 'workforce') {
-        const rawBudget = calendarConfig.mk2.workforce.budgetText || '';
-        if (rawBudget.trim().length > 0) {
-          try {
-            yearlyBudget = JSON.parse(rawBudget);
-          } catch (error) {
-            const description =
-              error instanceof Error ? error.message : 'Unable to parse workforce budget.';
-            appendConsoleLog(`error: ${description}`);
-            dispatchIntent({
-              type: INTENT_TYPES.SHOW_TOAST,
-              payload: {
-                message: 'Invalid workforce budget',
-                description,
-                intent: 'error',
-                duration: 5000,
-              },
-            });
-            const invalidBudgetError = new Error(description);
-            invalidBudgetError.code = 'INVALID_WORKFORCE_BUDGET';
-            throw invalidBudgetError;
-          }
-        }
-      }
-
-      const workerArgs = {
-        archetype: calendarConfig.common.archetype,
+      const args = {
+        class: 'calendar',
+        variant: variantId,
+        rig: rigId,
+        archetype,
         week_start: weekStartValue,
         seed: seedValue,
-        yearly_budget: yearlyBudget,
       };
-
-      appendConsoleLog(`run ${fn} ${JSON.stringify(workerArgs)}`);
+      if (budgetText && budgetText.trim()) {
+        args.budgetText = budgetText;
+      }
 
       try {
-        const { result, stdout, stderr } = await sendWorkerMessage('run', {
-          fn,
-          args: workerArgs,
+        const { result = null } = await sendWorkerMessage('run', {
+          fn: 'mock_run',
+          args,
         });
 
-        renderConsoleOutputs({ stdout, stderr });
+        if (!result || typeof result !== 'object') {
+          appendConsoleLog('error: No result returned from worker.');
+          dispatchIntent({
+            type: INTENT_TYPES.SHOW_TOAST,
+            payload: {
+              message: 'Generation failed',
+              description: 'No result returned from worker.',
+              intent: 'error',
+              duration: 4000,
+            },
+          });
+          return;
+        }
 
-        const resultPayload = result ?? {};
-        setJsonPayload(resultPayload, {
+        setJsonPayload(result, {
           variant: variantId,
           rig: rigId,
-          weekStart:
-            typeof resultPayload.week_start === 'string'
-              ? resultPayload.week_start
-              : weekStartValue || undefined,
+          weekStart: result.week_start || weekStartValue,
         });
+        updateJsonActionsState();
 
-        const validation = validateWebV1Calendar(resultPayload);
-        setJsonValidationBadge(validation.ok ? 'ok' : 'err');
-        if (!validation.ok) {
-          const issueCount = validation.errors.length;
-          const summary = `Validation failed: ${issueCount} issue${
-            issueCount === 1 ? '' : 's'
-          }.`;
-          appendConsoleLog(summary);
-        }
-
-        const eventsCount = Array.isArray(resultPayload.events)
-          ? resultPayload.events.length
-          : 0;
+        const eventsCount = Array.isArray(result.events) ? result.events.length : 0;
         const inputsSnapshot = {
-          archetype: calendarConfig.common.archetype,
-          week_start: weekStartValue || '',
-          seed: seedValue ?? '',
+          archetype,
+          week_start: weekStartValue,
+          seed: seedValue,
         };
-        if (yearlyBudget !== null && typeof yearlyBudget !== 'undefined') {
+        if (args.budgetText) {
           inputsSnapshot.budget = true;
         }
+
         addRunHistoryEntry({
           kind: 'generate',
           ts: Date.now(),
@@ -2294,11 +2224,11 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
           variant: variantId,
           rig: rigId,
           week_start:
-            typeof resultPayload.week_start === 'string'
-              ? resultPayload.week_start
-              : weekStartValue || '',
+            typeof result.week_start === 'string' && result.week_start
+              ? result.week_start
+              : weekStartValue,
           label: 'Generated schedule',
-          payload: resultPayload,
+          payload: result,
           inputs: inputsSnapshot,
           resultSummary: { events: eventsCount },
         });
@@ -2308,25 +2238,8 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
           payload: { tab: 'json' },
         });
 
-        dispatchIntent({
-          type: INTENT_TYPES.SHOW_TOAST,
-          payload: {
-            message: 'Generated',
-            intent: 'success',
-            duration: 2200,
-          },
-        });
+        appendConsoleLog('Run completed');
       } catch (error) {
-        if (error?.code === 'INVALID_WORKFORCE_BUDGET') {
-          return;
-        }
-        const stdoutText =
-          typeof error?.stdout === 'string' && error.stdout ? error.stdout : '';
-        const stderrText =
-          typeof error?.stderr === 'string' && error.stderr ? error.stderr : '';
-        if (stdoutText || stderrText) {
-          renderConsoleOutputs({ stdout: stdoutText, stderr: stderrText });
-        }
         const description =
           typeof error?.error === 'string' && error.error
             ? error.error
@@ -2334,9 +2247,7 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
             ? error.message
             : 'Generation failed.';
         appendConsoleLog(`error: ${description}`);
-        if (typeof error?.trace === 'string' && error.trace.trim()) {
-          appendConsoleLog(error.trace.trim());
-        }
+        console.error('Generation failed:', error);
         dispatchIntent({
           type: INTENT_TYPES.SHOW_TOAST,
           payload: {
@@ -2351,6 +2262,10 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
         generateButton.textContent = 'Generate';
         updateRuntimeButtonState(generateButton);
       }
+    };
+
+    generateButton.addEventListener('click', () => {
+      handleGenerate();
     });
   }
 

@@ -2,6 +2,19 @@ import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodi
 
 const PYODIDE_INDEX_URL = 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/';
 const ALLOWED_FUNCTIONS = new Set(['mk1_run', 'mk2_run_calendar', 'mk2_run_workforce']);
+
+function mockCalendarResult(args) {
+  return {
+    schema_version: 'web_v1_calendar',
+    week_start: args?.week_start || '',
+    events: [
+      { date: args?.week_start || '', start: '09:00', end: '11:00', label: 'Work', activity: 'work' },
+      { date: args?.week_start || '', start: '11:00', end: '12:00', label: 'Break', activity: 'misc' },
+    ],
+    issues: [],
+    metadata: { engine: 'mock', variant: args?.variant || '', rig: args?.rig || '' },
+  };
+}
 const PYTHON_SOURCE_FILES = [
   'archetypes.py',
   'calendar_gen_v2.py',
@@ -163,6 +176,10 @@ self.onmessage = async (event) => {
 
   if (type === 'run') {
     const { fn, args = {} } = message;
+    if (fn === 'mock_run') {
+      post({ id, ok: true, result: mockCalendarResult(args) });
+      return;
+    }
     if (!ALLOWED_FUNCTIONS.has(fn)) {
       respond({ ok: false, error: `Unknown worker function: ${String(fn)}` });
       return;
