@@ -1,4 +1,5 @@
 [build]
+  command = "node scripts/build_pyodide_manifest.mjs"
   publish = "web"
 
 [functions]
