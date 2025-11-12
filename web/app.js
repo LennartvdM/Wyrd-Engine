@@ -1,4 +1,5 @@
 import { DEBUG } from './debug.js';
+import { createRadialUrchin } from './ui/visuals/RadialUrchin.js';
 
 const tabButtons = Array.from(
   document.querySelectorAll('.tab[data-tab-scope="root"]')
@@ -28,6 +29,152 @@ let jsonSummaryElement;
 
 let currentJsonText = '';
 let currentJsonMetadata = { variant: '', rig: '', week: '', events: null };
+
+const VISUALS_LEGACY_FLAG = 'wyrd.visuals.legacy';
+const visualsState = {
+  container: null,
+  mount: null,
+  fallback: null,
+  fallbackImg: null,
+  fallbackMessage: null,
+  urchin: null,
+  useLegacy: false,
+};
+let lastVisualPayload = null;
+
+function readVisualsLegacyFlag() {
+  try {
+    return localStorage.getItem(VISUALS_LEGACY_FLAG) === '1';
+  } catch (error) {
+    return false;
+  }
+}
+
+function persistVisualsLegacyFlag(enabled) {
+  try {
+    if (enabled) {
+      localStorage.setItem(VISUALS_LEGACY_FLAG, '1');
+    } else {
+      localStorage.removeItem(VISUALS_LEGACY_FLAG);
+    }
+  } catch (error) {
+    // ignore storage failures
+  }
+}
+
+function syncVisualsVisibility() {
+  if (visualsState.mount) {
+    visualsState.mount.hidden = visualsState.useLegacy;
+  }
+  if (visualsState.fallback) {
+    visualsState.fallback.hidden = !visualsState.useLegacy;
+  }
+}
+
+function resolveLegacyPng(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+  const metadata = payload.metadata || {};
+  const candidates = [
+    metadata.preview_png,
+    metadata.preview_png_url,
+    metadata.calendar_png,
+    metadata.calendar_png_url,
+    payload.preview_png,
+    payload.preview_png_url,
+  ];
+  return candidates.find((value) => typeof value === 'string' && value.trim().length > 0) || '';
+}
+
+function updateVisuals(payload) {
+  lastVisualPayload = payload && typeof payload === 'object' ? payload : null;
+  if (visualsState.useLegacy) {
+    const src = resolveLegacyPng(lastVisualPayload);
+    if (visualsState.fallbackImg) {
+      if (src) {
+        visualsState.fallbackImg.src = src;
+        visualsState.fallbackImg.alt = 'Schedule preview (legacy PNG)';
+        visualsState.fallbackImg.hidden = false;
+        if (visualsState.fallbackMessage) {
+          visualsState.fallbackMessage.hidden = true;
+        }
+      } else {
+        visualsState.fallbackImg.removeAttribute('src');
+        visualsState.fallbackImg.alt = 'Legacy calendar preview unavailable';
+        visualsState.fallbackImg.hidden = true;
+        if (visualsState.fallbackMessage) {
+          visualsState.fallbackMessage.hidden = false;
+          visualsState.fallbackMessage.textContent = 'Legacy PNG preview unavailable. Run generator to produce a fresh export.';
+        }
+      }
+    }
+  }
+  if (visualsState.urchin) {
+    visualsState.urchin.update({ data: visualsState.useLegacy ? null : lastVisualPayload });
+  }
+}
+
+const visualsContainerElement =
+  document.querySelector('#visuals-container') || document.querySelector('#calendar-container');
+
+if (visualsContainerElement) {
+  visualsState.container = visualsContainerElement;
+  visualsState.useLegacy = readVisualsLegacyFlag();
+
+  const mount = document.createElement('div');
+  mount.className = 'visuals-mount';
+  visualsContainerElement.append(mount);
+  visualsState.mount = mount;
+
+  const fallback = document.createElement('div');
+  fallback.className = 'visuals-fallback-panel';
+  const fallbackImg = document.createElement('img');
+  fallbackImg.className = 'visuals-fallback-panel__image';
+  fallbackImg.alt = 'Legacy calendar preview unavailable';
+  fallbackImg.hidden = true;
+  const fallbackMessage = document.createElement('p');
+  fallbackMessage.className = 'visuals-fallback-panel__message';
+  fallbackMessage.textContent = 'Legacy PNG preview unavailable.';
+  fallbackMessage.hidden = true;
+  fallback.append(fallbackImg, fallbackMessage);
+  visualsContainerElement.append(fallback);
+  visualsState.fallback = fallback;
+  visualsState.fallbackImg = fallbackImg;
+  visualsState.fallbackMessage = fallbackMessage;
+
+  visualsState.urchin = createRadialUrchin(mount, {
+    data: null,
+    mode: 'day-rings',
+    onSelect(activity) {
+      if (!activity) {
+        return;
+      }
+      dispatchIntent({
+        type: INTENT_TYPES.SHOW_TOAST,
+        payload: {
+          message: activity.label || 'Activity selected',
+          description: `${activity.start || '?'} – ${activity.end || '?'}`,
+          intent: 'info',
+          duration: 1800,
+        },
+      });
+    },
+  });
+
+  syncVisualsVisibility();
+  updateVisuals(null);
+
+  if (typeof window !== 'undefined') {
+    window.WYRD_SET_VISUALS_LEGACY = (enabled) => {
+      const flag = Boolean(enabled);
+      visualsState.useLegacy = flag;
+      persistVisualsLegacyFlag(flag);
+      syncVisualsVisibility();
+      updateVisuals(lastVisualPayload);
+    };
+  }
+}
 
 let getConfigSnapshot = () => ({
   classId: 'calendar',
@@ -370,6 +517,7 @@ function setJsonPayload(payload, options = {}) {
   currentJsonMetadata = metadata;
   updateJsonActionsState();
   updateJsonSummaryDisplay();
+  updateVisuals(parsedPayload);
 }
 
 loadRunHistoryFromStorage();
@@ -940,7 +1088,7 @@ const paletteList = document.createElement('ul');
 paletteList.className = 'command-palette-actions';
 
 const paletteActions = [
-  { label: 'Go to Calendar', tab: 'calendar' },
+  { label: 'Go to Visuals', tab: 'calendar' },
   { label: 'Go to Config', tab: 'config' },
   { label: 'Go to Console', tab: 'console' },
   { label: 'Go to JSON', tab: 'json' },

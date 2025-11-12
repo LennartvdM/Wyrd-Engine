@@ -1,0 +1,1010 @@
+import {
+  computeUrchinLayout,
+  findNearestArc,
+  formatDuration,
+  minutesToTime,
+} from './useUrchinLayout.js';
+import { mapLabelToColor, resolveSurface, resolveStateLayer } from './palette.js';
+
+const FULL_DAY_MINUTES = 24 * 60;
+const TAU = Math.PI * 2;
+
+const MODE_LABELS = {
+  'day-rings': 'Ring by Day',
+  'agent-rings': 'Ring by Agent',
+};
+
+const SPEED_OPTIONS = [
+  { label: '0.5×', value: 0.5 },
+  { label: '1×', value: 1 },
+  { label: '2×', value: 2 },
+];
+
+const HOVER_DELAY = 180;
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function moduloMinutes(minutes) {
+  const wrapped = minutes % FULL_DAY_MINUTES;
+  return wrapped < 0 ? wrapped + FULL_DAY_MINUTES : wrapped;
+}
+
+function describeSegmentPath(cx, cy, innerR, outerR, startAngle, endAngle) {
+  const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
+  const startOuterX = cx + outerR * Math.cos(startAngle);
+  const startOuterY = cy + outerR * Math.sin(startAngle);
+  const endOuterX = cx + outerR * Math.cos(endAngle);
+  const endOuterY = cy + outerR * Math.sin(endAngle);
+  const startInnerX = cx + innerR * Math.cos(endAngle);
+  const startInnerY = cy + innerR * Math.sin(endAngle);
+  const endInnerX = cx + innerR * Math.cos(startAngle);
+  const endInnerY = cy + innerR * Math.sin(startAngle);
+
+  return [
+    'M',
+    startOuterX,
+    startOuterY,
+    'A',
+    outerR,
+    outerR,
+    0,
+    largeArc,
+    1,
+    endOuterX,
+    endOuterY,
+    'L',
+    startInnerX,
+    startInnerY,
+    'A',
+    innerR,
+    innerR,
+    0,
+    largeArc,
+    0,
+    endInnerX,
+    endInnerY,
+    'Z',
+  ].join(' ');
+}
+
+function ensureElement(parent, selector, factory) {
+  let element = parent.querySelector(selector);
+  if (!element) {
+    element = factory();
+    parent.append(element);
+  }
+  return element;
+}
+
+function createDemoData() {
+  const labels = ['Work', 'Break', 'Sleep', 'Exercise', 'Family'];
+  const events = [];
+  for (let day = 0; day < 7; day += 1) {
+    let cursor = 6 * 60; // start day at 6am
+    const date = new Date(Date.now() + day * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    events.push({ date, start: '00:00', end: '06:00', label: 'Sleep', activity: 'rest' });
+    while (cursor < 22 * 60) {
+      const label = labels[(day + cursor) % labels.length];
+      const duration = [60, 90, 120][(cursor / 30) % 3];
+      const end = cursor + duration;
+      const startTime = minutesToTime(cursor);
+      const endTime = minutesToTime(end % FULL_DAY_MINUTES);
+      events.push({
+        date,
+        start: startTime,
+        end: endTime,
+        label,
+        activity: label.toLowerCase(),
+        agent: day % 2 === 0 ? 'Agent A' : 'Agent B',
+      });
+      cursor = end;
+    }
+    events.push({ date, start: '22:00', end: '24:00', label: 'Sleep', activity: 'rest' });
+  }
+  return {
+    schema_version: 'web_v1_calendar',
+    week_start: new Date().toISOString().slice(0, 10),
+    events,
+    metadata: { demo: true },
+  };
+}
+
+function buildTooltipContent(arc) {
+  if (!arc) {
+    return '';
+  }
+  const startMinutes = moduloMinutes(arc.segmentStart ?? arc.startMinutes);
+  const endMinutes = moduloMinutes(startMinutes + (arc.segmentDuration ?? arc.duration));
+  const startTime = minutesToTime(startMinutes);
+  const endTime = minutesToTime(endMinutes);
+  const duration = formatDuration(Math.round((arc.segmentDuration ?? arc.duration)));
+  const lines = [`<strong>${arc.label}</strong>`, `${startTime} – ${endTime}`, `${duration}`];
+  if (arc.event?.activity && arc.event.activity !== arc.label) {
+    lines.push(`<span class="meta">Activity · ${arc.event.activity}</span>`);
+  }
+  if (arc.event?.agent) {
+    lines.push(`<span class="meta">Agent · ${arc.event.agent}</span>`);
+  } else if (arc.event?.metadata?.agent) {
+    lines.push(`<span class="meta">Agent · ${arc.event.metadata.agent}</span>`);
+  }
+  if (arc.event?.metadata?.note) {
+    lines.push(`<span class="meta">${arc.event.metadata.note}</span>`);
+  }
+  return lines.map((line) => `<p>${line}</p>`).join('');
+}
+
+function getElementRect(element) {
+  const rect = element.getBoundingClientRect();
+  return {
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+export class RadialUrchin {
+  constructor(root, props = {}) {
+    this.root = root;
+    this.props = { data: props.data ?? null, mode: props.mode ?? 'day-rings', selectedAgent: props.selectedAgent, onSelect: props.onSelect ?? (() => {}) };
+    this.state = {
+      hoverArc: null,
+      selectedArc: null,
+      focusArc: null,
+      scrubMinutes: 8 * 60,
+      playing: false,
+      playSpeed: 1,
+      zoomStart: 0,
+      zoomSpan: FULL_DAY_MINUTES,
+      highContrast: false,
+    };
+    this.hiddenLabels = new Set();
+    this.visibleArcs = [];
+    this.layout = null;
+    this.displayArcs = [];
+    this.hoverTimer = null;
+    this.lastPointer = null;
+    this.frameHandle = null;
+    this.lastTick = null;
+    this.contrastQuery = null;
+
+    this.handleResize = this.handleResize.bind(this);
+    this.handlePointerMove = this.handlePointerMove.bind(this);
+    this.handlePointerLeave = this.handlePointerLeave.bind(this);
+    this.handleClick = this.handleClick.bind(this);
+    this.handleKeyDown = this.handleKeyDown.bind(this);
+    this.handleWheel = this.handleWheel.bind(this);
+    this.handleContrastChange = this.handleContrastChange.bind(this);
+
+    this.setupDom();
+    this.update(this.props);
+  }
+
+  setupDom() {
+    this.root.classList.add('radial-urchin-root');
+    this.root.setAttribute('tabindex', '0');
+    this.root.addEventListener('keydown', this.handleKeyDown);
+
+    this.container = document.createElement('div');
+    this.container.className = 'radial-urchin';
+    this.root.append(this.container);
+
+    this.controlBar = document.createElement('div');
+    this.controlBar.className = 'radial-urchin__controls';
+    this.container.append(this.controlBar);
+
+    this.modeControl = document.createElement('div');
+    this.modeControl.className = 'radial-urchin__segmented';
+    this.controlBar.append(this.modeControl);
+
+    this.modeButtons = new Map();
+    Object.entries(MODE_LABELS).forEach(([mode, label]) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'radial-urchin__segment';
+      button.textContent = label;
+      button.dataset.mode = mode;
+      button.addEventListener('click', () => {
+        this.setMode(mode);
+      });
+      this.modeControl.append(button);
+      this.modeButtons.set(mode, button);
+    });
+
+    this.legendContainer = document.createElement('div');
+    this.legendContainer.className = 'radial-urchin__legend';
+    this.controlBar.append(this.legendContainer);
+
+    this.actionsContainer = document.createElement('div');
+    this.actionsContainer.className = 'radial-urchin__actions';
+    this.controlBar.append(this.actionsContainer);
+
+    this.playButton = document.createElement('button');
+    this.playButton.type = 'button';
+    this.playButton.className = 'radial-urchin__icon-button';
+    this.playButton.innerHTML = '<span class="icon">▶</span>';
+    this.playButton.setAttribute('aria-label', 'Play schedule replay');
+    this.playButton.addEventListener('click', () => {
+      this.togglePlayback();
+    });
+
+    this.speedGroup = document.createElement('div');
+    this.speedGroup.className = 'radial-urchin__speed';
+    SPEED_OPTIONS.forEach((option) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'radial-urchin__speed-option';
+      button.textContent = option.label;
+      button.dataset.speed = String(option.value);
+      button.addEventListener('click', () => {
+        this.setSpeed(option.value);
+      });
+      this.speedGroup.append(button);
+    });
+
+    this.scrubSlider = document.createElement('input');
+    this.scrubSlider.type = 'range';
+    this.scrubSlider.min = '0';
+    this.scrubSlider.max = String(FULL_DAY_MINUTES);
+    this.scrubSlider.value = String(this.state.scrubMinutes);
+    this.scrubSlider.className = 'radial-urchin__scrub';
+    this.scrubSlider.setAttribute('aria-label', 'Scrub through the day');
+    this.scrubSlider.addEventListener('input', () => {
+      const minutes = Number.parseInt(this.scrubSlider.value, 10);
+      if (Number.isFinite(minutes)) {
+        this.setScrub(minutes, { fromPlayback: false });
+      }
+    });
+
+    this.zoomResetButton = document.createElement('button');
+    this.zoomResetButton.type = 'button';
+    this.zoomResetButton.textContent = 'Reset zoom';
+    this.zoomResetButton.className = 'radial-urchin__reset';
+    this.zoomResetButton.addEventListener('click', () => {
+      this.resetZoom();
+    });
+
+    this.exportSvgButton = document.createElement('button');
+    this.exportSvgButton.type = 'button';
+    this.exportSvgButton.textContent = 'Export SVG';
+    this.exportSvgButton.className = 'radial-urchin__export';
+    this.exportSvgButton.addEventListener('click', () => {
+      const payload = this.exportSVG();
+      if (!payload) {
+        return;
+      }
+      const blob = new Blob([payload], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'schedule_visual.svg';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+    });
+
+    this.exportPngButton = document.createElement('button');
+    this.exportPngButton.type = 'button';
+    this.exportPngButton.textContent = 'Export PNG';
+    this.exportPngButton.className = 'radial-urchin__export';
+    this.exportPngButton.addEventListener('click', async () => {
+      const blob = await this.exportPNG();
+      if (!blob) {
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'schedule_visual.png';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+    });
+
+    this.actionsContainer.append(
+      this.playButton,
+      this.speedGroup,
+      this.scrubSlider,
+      this.zoomResetButton,
+      this.exportSvgButton,
+      this.exportPngButton,
+    );
+
+    this.canvasWrapper = document.createElement('div');
+    this.canvasWrapper.className = 'radial-urchin__stage';
+    this.container.append(this.canvasWrapper);
+
+    this.canvas = document.createElement('canvas');
+    this.canvas.className = 'radial-urchin__canvas';
+    this.canvasWrapper.append(this.canvas);
+
+    this.overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    this.overlay.setAttribute('class', 'radial-urchin__overlay');
+    this.canvasWrapper.append(this.overlay);
+
+    this.selectionPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    this.selectionPath.setAttribute('class', 'radial-urchin__selection');
+    this.overlay.append(this.selectionPath);
+
+    this.hoverPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    this.hoverPath.setAttribute('class', 'radial-urchin__hover');
+    this.overlay.append(this.hoverPath);
+
+    this.scrubLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    this.scrubLine.setAttribute('class', 'radial-urchin__scrub-line');
+    this.overlay.append(this.scrubLine);
+
+    this.tooltip = document.createElement('div');
+    this.tooltip.className = 'radial-urchin__tooltip';
+    this.tooltip.setAttribute('role', 'dialog');
+    this.tooltip.setAttribute('aria-live', 'polite');
+    this.tooltip.hidden = true;
+    this.canvasWrapper.append(this.tooltip);
+
+    this.tooltipMeta = ensureElement(this.tooltip, '.radial-urchin__tooltip-body', () => {
+      const body = document.createElement('div');
+      body.className = 'radial-urchin__tooltip-body';
+      return body;
+    });
+
+    this.tooltipActions = ensureElement(this.tooltip, '.radial-urchin__tooltip-actions', () => {
+      const actions = document.createElement('div');
+      actions.className = 'radial-urchin__tooltip-actions';
+      return actions;
+    });
+
+    this.tooltipPinButton = document.createElement('button');
+    this.tooltipPinButton.type = 'button';
+    this.tooltipPinButton.textContent = 'Select';
+    this.tooltipPinButton.addEventListener('click', () => {
+      if (this.state.hoverArc) {
+        this.setSelection(this.state.hoverArc);
+      }
+    });
+
+    this.tooltipActions.append(this.tooltipPinButton);
+
+    this.liveRegion = document.createElement('div');
+    this.liveRegion.className = 'radial-urchin__live';
+    this.liveRegion.setAttribute('aria-live', 'polite');
+    this.liveRegion.setAttribute('aria-atomic', 'true');
+    this.liveRegion.textContent = '';
+    this.container.append(this.liveRegion);
+
+    this.canvas.addEventListener('pointermove', this.handlePointerMove);
+    this.canvas.addEventListener('pointerleave', this.handlePointerLeave);
+    this.canvas.addEventListener('click', this.handleClick);
+    this.canvas.addEventListener('wheel', this.handleWheel, { passive: false });
+
+    this.resizeObserver = new ResizeObserver(this.handleResize);
+    this.resizeObserver.observe(this.canvasWrapper);
+
+    this.offscreen = document.createElement('canvas');
+
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      try {
+        this.contrastQuery = window.matchMedia('(prefers-contrast: more)');
+        this.state.highContrast = Boolean(this.contrastQuery.matches);
+        if (typeof this.contrastQuery.addEventListener === 'function') {
+          this.contrastQuery.addEventListener('change', this.handleContrastChange);
+        } else if (typeof this.contrastQuery.addListener === 'function') {
+          this.contrastQuery.addListener(this.handleContrastChange);
+        }
+      } catch (error) {
+        this.contrastQuery = null;
+      }
+    }
+  }
+
+  destroy() {
+    this.stopPlayback();
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+    }
+    if (this.contrastQuery) {
+      if (typeof this.contrastQuery.removeEventListener === 'function') {
+        this.contrastQuery.removeEventListener('change', this.handleContrastChange);
+      } else if (typeof this.contrastQuery.removeListener === 'function') {
+        this.contrastQuery.removeListener(this.handleContrastChange);
+      }
+    }
+    this.root.removeEventListener('keydown', this.handleKeyDown);
+  }
+
+  update(props = {}) {
+    this.props = { ...this.props, ...props };
+    if (!this.props.data || !Array.isArray(this.props.data.events) || this.props.data.events.length === 0) {
+      if (!this.demoData) {
+        this.demoData = createDemoData();
+      }
+      this.layout = computeUrchinLayout(this.demoData, { mode: this.state.mode ?? this.props.mode });
+    } else {
+      this.layout = computeUrchinLayout(this.props.data, { mode: this.state.mode ?? this.props.mode, includeLabels: (label) => !this.hiddenLabels.has(label), highContrast: this.state.highContrast });
+    }
+    this.updateLegend();
+    this.refreshModeButtons();
+    this.rebuildDisplayArcs();
+    this.render();
+  }
+
+  handleContrastChange(event) {
+    this.state.highContrast = Boolean(event.matches);
+    this.update({});
+  }
+
+  refreshModeButtons() {
+    this.modeButtons.forEach((button, mode) => {
+      const active = mode === this.getMode();
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    Array.from(this.speedGroup.children).forEach((button) => {
+      const speedValue = Number.parseFloat(button.dataset.speed || '1');
+      const active = Math.abs(speedValue - this.state.playSpeed) < 0.01;
+      button.classList.toggle('is-active', active);
+    });
+    this.playButton.classList.toggle('is-active', this.state.playing);
+    this.playButton.innerHTML = this.state.playing
+      ? '<span class="icon">❚❚</span>'
+      : '<span class="icon">▶</span>';
+  }
+
+  getMode() {
+    return this.state.mode || this.props.mode || 'day-rings';
+  }
+
+  setMode(mode) {
+    if (mode === this.getMode()) {
+      return;
+    }
+    this.state.mode = mode;
+    this.update({ mode });
+  }
+
+  updateLegend() {
+    this.legendContainer.innerHTML = '';
+    if (!this.layout?.totals?.length) {
+      const empty = document.createElement('p');
+      empty.className = 'radial-urchin__legend-empty';
+      empty.textContent = 'No activities available. Run generator to populate schedule.';
+      this.legendContainer.append(empty);
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    this.layout.totals.forEach(({ label, minutes }) => {
+      const chip = document.createElement('label');
+      chip.className = 'radial-urchin__chip';
+      chip.style.setProperty('--chip-color', mapLabelToColor(label, { highContrast: this.state.highContrast }));
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = !this.hiddenLabels.has(label);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) {
+          this.hiddenLabels.delete(label);
+        } else {
+          this.hiddenLabels.add(label);
+        }
+        this.update({});
+      });
+      const text = document.createElement('span');
+      text.textContent = `${label} · ${formatDuration(Math.round(minutes))}`;
+      chip.append(checkbox, text);
+      fragment.append(chip);
+    });
+    this.legendContainer.append(fragment);
+  }
+
+  rebuildDisplayArcs() {
+    if (!this.layout) {
+      this.displayArcs = [];
+      this.visibleArcs = [];
+      return;
+    }
+    const zoom = this.getZoom();
+    const scale = this.computeRadiusScale();
+    const visible = [];
+    const arcs = [];
+    this.layout.arcs.forEach((arc) => {
+      if (this.hiddenLabels.has(arc.label)) {
+        return;
+      }
+      const agentMatch = this.isAgentMatch(arc.event);
+      const segments = this.computeSegments(arc, zoom);
+      segments.forEach((segment, index) => {
+        const startAngle = this.mapMinutesToAngle(segment.startRelative);
+        const endAngle = this.mapMinutesToAngle(segment.startRelative + segment.duration);
+        const displayArc = {
+          ...arc,
+          id: index === 0 ? arc.id : `${arc.id}:${index}`,
+          startAngle,
+          endAngle,
+          segmentStart: moduloMinutes(segment.absoluteStart),
+          segmentDuration: segment.duration,
+          centerAngle: startAngle + (endAngle - startAngle) / 2,
+          agentMatch,
+          innerRadius: arc.innerRadius * scale,
+          outerRadius: arc.outerRadius * scale,
+        };
+        arcs.push(displayArc);
+        visible.push(displayArc);
+      });
+    });
+    this.displayArcs = arcs;
+    this.visibleArcs = visible.sort((a, b) => {
+      if (a.ringIndex === b.ringIndex) {
+        return a.startMinutes - b.startMinutes;
+      }
+      return a.ringIndex - b.ringIndex;
+    });
+    this.displayMaxRadius = (this.layout?.maxRadius || 160) * scale;
+  }
+
+  computeSegments(arc, zoom) {
+    const windowStart = zoom.start;
+    const windowEnd = zoom.start + zoom.span;
+    const baseOffsets = zoom.span >= FULL_DAY_MINUTES ? [0] : [-FULL_DAY_MINUTES, 0, FULL_DAY_MINUTES];
+    const segments = [];
+    baseOffsets.forEach((offset) => {
+      const start = arc.startMinutes + offset;
+      const end = start + arc.duration;
+      const clippedStart = Math.max(start, windowStart);
+      const clippedEnd = Math.min(end, windowEnd);
+      if (clippedEnd > clippedStart) {
+        segments.push({
+          absoluteStart: clippedStart,
+          absoluteEnd: clippedEnd,
+          startRelative: clippedStart - zoom.start,
+          duration: clippedEnd - clippedStart,
+        });
+      }
+    });
+    return segments;
+  }
+
+  mapMinutesToAngle(relativeMinutes) {
+    const zoom = this.getZoom();
+    if (zoom.span >= FULL_DAY_MINUTES) {
+      const normalized = moduloMinutes(relativeMinutes + zoom.start);
+      return (normalized / FULL_DAY_MINUTES) * TAU - Math.PI / 2;
+    }
+    const clamped = clamp(relativeMinutes, 0, zoom.span);
+    const angle = (clamped / zoom.span) * TAU - Math.PI / 2;
+    return angle;
+  }
+
+  computeRadiusScale() {
+    if (!this.layout) {
+      return 1;
+    }
+    if (!this.canvasRect) {
+      this.canvasRect = getElementRect(this.canvas);
+    }
+    const width = this.canvasRect?.width || this.canvas.width || 0;
+    const height = this.canvasRect?.height || this.canvas.height || 0;
+    const minSide = Math.min(width, height);
+    if (!minSide) {
+      return 1;
+    }
+    const maxRadius = this.layout.maxRadius || 160;
+    const padding = 32;
+    const usable = minSide / 2 - padding;
+    if (usable <= 0) {
+      return 1;
+    }
+    return usable / maxRadius;
+  }
+
+  getZoom() {
+    return { start: this.state.zoomStart ?? 0, span: this.state.zoomSpan ?? FULL_DAY_MINUTES };
+  }
+
+  resetZoom() {
+    this.state.zoomStart = 0;
+    this.state.zoomSpan = FULL_DAY_MINUTES;
+    this.rebuildDisplayArcs();
+    this.render();
+  }
+
+  handleWheel(event) {
+    if (!this.canvasRect) {
+      return;
+    }
+    event.preventDefault();
+    const { left, top, width, height } = this.canvasRect;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const x = event.clientX - left - centerX;
+    const y = event.clientY - top - centerY;
+    const angle = Math.atan2(y, x);
+
+    const current = this.getZoom();
+    let span = current.span * (1 + event.deltaY * 0.0015);
+    span = clamp(span, 120, FULL_DAY_MINUTES);
+
+    const angleRatio = (angle + Math.PI / 2) / TAU;
+    const focusMinutes = moduloMinutes((angleRatio < 0 ? angleRatio + 1 : angleRatio) * current.span + current.start);
+
+    const newStart = moduloMinutes(focusMinutes - span * 0.5);
+
+    this.state.zoomSpan = span;
+    this.state.zoomStart = newStart;
+    this.rebuildDisplayArcs();
+    this.render();
+  }
+
+  handleResize(entries) {
+    if (!entries || entries.length === 0) {
+      return;
+    }
+    const entry = entries[0];
+    const width = entry.contentRect?.width ?? this.canvasWrapper.clientWidth;
+    const height = entry.contentRect?.height ?? this.canvasWrapper.clientHeight;
+    const devicePixelRatio = window.devicePixelRatio || 1;
+    this.canvas.width = Math.round(width * devicePixelRatio);
+    this.canvas.height = Math.round(height * devicePixelRatio);
+    this.canvas.style.width = `${width}px`;
+    this.canvas.style.height = `${height}px`;
+    this.offscreen.width = this.canvas.width;
+    this.offscreen.height = this.canvas.height;
+    this.overlay.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    this.overlay.setAttribute('width', width);
+    this.overlay.setAttribute('height', height);
+    this.center = { x: width / 2, y: height / 2 };
+    this.canvasRect = getElementRect(this.canvas);
+    this.rebuildDisplayArcs();
+    this.render();
+  }
+
+  render() {
+    if (!this.canvas || !this.canvas.width) {
+      return;
+    }
+    const ctx = this.offscreen.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+    ctx.clearRect(0, 0, this.offscreen.width, this.offscreen.height);
+    const dpr = window.devicePixelRatio || 1;
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.translate(this.center.x, this.center.y);
+    ctx.lineWidth = 1;
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'round';
+
+    this.displayArcs.forEach((arc) => {
+      const color = arc.color || mapLabelToColor(arc.label, { highContrast: this.state.highContrast });
+      ctx.globalAlpha = arc.agentMatch ? 1 : 0.25;
+      ctx.beginPath();
+      ctx.fillStyle = resolveStateLayer(color, 0.24);
+      ctx.strokeStyle = color;
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, arc.outerRadius, arc.startAngle, arc.endAngle, false);
+      ctx.arc(0, 0, arc.innerRadius, arc.endAngle, arc.startAngle, true);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    });
+
+    ctx.restore();
+    ctx.globalAlpha = 1;
+
+    const mainCtx = this.canvas.getContext('2d');
+    if (!mainCtx) {
+      return;
+    }
+    mainCtx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    mainCtx.drawImage(this.offscreen, 0, 0);
+
+    this.updateSelectionOverlay();
+    this.updateScrubOverlay();
+  }
+
+  isAgentMatch(event) {
+    const target = typeof this.props.selectedAgent === 'string' ? this.props.selectedAgent.trim() : '';
+    if (!target) {
+      return true;
+    }
+    const normalized = target.toLowerCase();
+    const agent =
+      (typeof event?.agent === 'string' && event.agent) ||
+      (event?.metadata && typeof event.metadata.agent === 'string' ? event.metadata.agent : '');
+    if (!agent) {
+      return false;
+    }
+    return agent.toLowerCase() === normalized;
+  }
+
+  handlePointerMove(event) {
+    if (!this.canvasRect) {
+      this.canvasRect = getElementRect(this.canvas);
+    }
+    const { left, top, width, height } = this.canvasRect;
+    const x = event.clientX - left - width / 2;
+    const y = event.clientY - top - height / 2;
+    this.lastPointer = { x, y };
+    if (this.hoverTimer) {
+      window.clearTimeout(this.hoverTimer);
+      this.hoverTimer = null;
+    }
+    this.hoverTimer = window.setTimeout(() => {
+      this.processHoverAtPoint({ x, y });
+    }, HOVER_DELAY);
+  }
+
+  handlePointerLeave() {
+    if (this.hoverTimer) {
+      window.clearTimeout(this.hoverTimer);
+      this.hoverTimer = null;
+    }
+    this.state.hoverArc = null;
+    this.hoverPath.setAttribute('d', '');
+    this.hideTooltip();
+  }
+
+  processHoverAtPoint(point) {
+    if (!this.center) {
+      return;
+    }
+    const layout = {
+      arcs: this.displayArcs.map((arc) => ({
+        ...arc,
+        innerRadius: arc.innerRadius,
+        outerRadius: arc.outerRadius,
+      })),
+    };
+    const hovered = findNearestArc(layout, point, { tolerance: 12 });
+    if (!hovered) {
+      this.state.hoverArc = null;
+      this.hoverPath.setAttribute('d', '');
+      this.hideTooltip();
+      return;
+    }
+    this.state.hoverArc = hovered;
+    const path = describeSegmentPath(
+      this.center.x,
+      this.center.y,
+      hovered.innerRadius,
+      hovered.outerRadius,
+      hovered.startAngle,
+      hovered.endAngle,
+    );
+    this.hoverPath.setAttribute('d', path);
+    this.showTooltip(hovered);
+  }
+
+  handleClick() {
+    if (this.state.hoverArc) {
+      this.setSelection(this.state.hoverArc);
+    }
+  }
+
+  handleKeyDown(event) {
+    if (event.key === 'Escape') {
+      this.clearSelection();
+      return;
+    }
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    if (this.visibleArcs.length === 0) {
+      return;
+    }
+    const current = this.state.selectedArc || this.state.hoverArc || this.visibleArcs[0];
+    let target = current;
+    if (event.key === 'ArrowRight') {
+      target = this.findAdjacentArc(current, +1);
+    } else if (event.key === 'ArrowLeft') {
+      target = this.findAdjacentArc(current, -1);
+    } else if (event.key === 'ArrowUp') {
+      target = this.findRingShift(current, -1);
+    } else if (event.key === 'ArrowDown') {
+      target = this.findRingShift(current, +1);
+    }
+    if (target) {
+      this.setSelection(target);
+    }
+  }
+
+  findAdjacentArc(current, delta) {
+    if (!current) {
+      return null;
+    }
+    const arcs = this.visibleArcs.filter((arc) => arc.ringKey === current.ringKey);
+    const index = arcs.findIndex((arc) => arc.id === current.id);
+    if (index === -1) {
+      return arcs[0] || null;
+    }
+    const nextIndex = (index + delta + arcs.length) % arcs.length;
+    return arcs[nextIndex];
+  }
+
+  findRingShift(current, delta) {
+    if (!current) {
+      return null;
+    }
+    const rings = Array.from(new Set(this.visibleArcs.map((arc) => arc.ringKey)));
+    const ringIndex = rings.indexOf(current.ringKey);
+    if (ringIndex === -1) {
+      return null;
+    }
+    const nextRing = rings[clamp(ringIndex + delta, 0, rings.length - 1)];
+    const candidates = this.visibleArcs
+      .filter((arc) => arc.ringKey === nextRing)
+      .sort((a, b) => Math.abs(a.startMinutes - current.startMinutes) - Math.abs(b.startMinutes - current.startMinutes));
+    return candidates[0] || null;
+  }
+
+  setSelection(arc) {
+    this.state.selectedArc = arc;
+    if (typeof this.props.onSelect === 'function') {
+      this.props.onSelect(arc.event ?? null);
+    }
+    const message = arc
+      ? `${arc.label}, ${minutesToTime(arc.startMinutes)} to ${minutesToTime(arc.startMinutes + arc.duration)}`
+      : 'Selection cleared';
+    this.liveRegion.textContent = message;
+    this.updateSelectionOverlay();
+  }
+
+  clearSelection() {
+    this.state.selectedArc = null;
+    this.updateSelectionOverlay();
+  }
+
+  showTooltip(arc) {
+    if (!arc) {
+      this.hideTooltip();
+      return;
+    }
+    const html = buildTooltipContent(arc);
+    this.tooltipMeta.innerHTML = html;
+    this.tooltip.hidden = false;
+    const angle = arc.centerAngle;
+    const radius = (arc.innerRadius + arc.outerRadius) / 2;
+    const x = this.center.x + Math.cos(angle) * radius;
+    const y = this.center.y + Math.sin(angle) * radius;
+    this.tooltip.style.left = `${x + 12}px`;
+    this.tooltip.style.top = `${y + 12}px`;
+  }
+
+  hideTooltip() {
+    this.tooltip.hidden = true;
+  }
+
+  updateSelectionOverlay() {
+    const arc = this.state.selectedArc;
+    if (!arc) {
+      this.selectionPath.setAttribute('d', '');
+      return;
+    }
+    const path = describeSegmentPath(
+      this.center.x,
+      this.center.y,
+      arc.innerRadius,
+      arc.outerRadius,
+      arc.startAngle,
+      arc.endAngle,
+    );
+    this.selectionPath.setAttribute('d', path);
+  }
+
+  updateScrubOverlay() {
+    const minutes = this.state.scrubMinutes;
+    const angle = this.mapMinutesToAngle(minutes - this.getZoom().start);
+    const radius = this.displayMaxRadius ?? (this.layout?.maxRadius ?? 160);
+    const x2 = this.center.x + Math.cos(angle) * radius;
+    const y2 = this.center.y + Math.sin(angle) * radius;
+    this.scrubLine.setAttribute('x1', String(this.center.x));
+    this.scrubLine.setAttribute('y1', String(this.center.y));
+    this.scrubLine.setAttribute('x2', String(x2));
+    this.scrubLine.setAttribute('y2', String(y2));
+  }
+
+  setScrub(minutes, { fromPlayback = false } = {}) {
+    const normalized = moduloMinutes(minutes);
+    this.state.scrubMinutes = normalized;
+    this.scrubSlider.value = String(normalized);
+    this.updateScrubOverlay();
+    if (fromPlayback) {
+      const arc = this.findArcAtMinutes(normalized);
+      if (arc) {
+        this.showTooltip(arc);
+      }
+    }
+  }
+
+  findArcAtMinutes(minutes) {
+    return this.displayArcs.find((arc) => {
+      const start = moduloMinutes(arc.startMinutes);
+      const end = moduloMinutes(arc.startMinutes + arc.duration);
+      if (start <= end) {
+        return minutes >= start && minutes <= end;
+      }
+      return minutes >= start || minutes <= end;
+    });
+  }
+
+  togglePlayback() {
+    if (this.state.playing) {
+      this.stopPlayback();
+    } else {
+      this.startPlayback();
+    }
+  }
+
+  setSpeed(speed) {
+    this.state.playSpeed = speed;
+    this.refreshModeButtons();
+  }
+
+  startPlayback() {
+    this.state.playing = true;
+    this.refreshModeButtons();
+    this.lastTick = performance.now();
+    const tick = (timestamp) => {
+      if (!this.state.playing) {
+        return;
+      }
+      const deltaMs = timestamp - this.lastTick;
+      this.lastTick = timestamp;
+      const deltaMinutes = (deltaMs / 60000) * this.state.playSpeed * (this.getZoom().span / FULL_DAY_MINUTES);
+      this.setScrub(this.state.scrubMinutes + deltaMinutes, { fromPlayback: true });
+      this.frameHandle = window.requestAnimationFrame(tick);
+    };
+    this.frameHandle = window.requestAnimationFrame(tick);
+  }
+
+  stopPlayback() {
+    this.state.playing = false;
+    if (this.frameHandle) {
+      window.cancelAnimationFrame(this.frameHandle);
+      this.frameHandle = null;
+    }
+    this.refreshModeButtons();
+  }
+
+  exportSVG() {
+    if (!this.layout) {
+      return '';
+    }
+    const width = this.canvasRect?.width || 512;
+    const height = this.canvasRect?.height || 512;
+    const cx = width / 2;
+    const cy = height / 2;
+    const arcs = this.displayArcs
+      .map((arc) => {
+        const path = describeSegmentPath(cx, cy, arc.innerRadius, arc.outerRadius, arc.startAngle, arc.endAngle);
+        const fill = resolveStateLayer(
+          arc.color || mapLabelToColor(arc.label, { highContrast: this.state.highContrast }),
+          0.24,
+        );
+        const stroke = arc.color || mapLabelToColor(arc.label, { highContrast: this.state.highContrast });
+        return `<path d="${path}" fill="${fill}" stroke="${stroke}" stroke-width="1" />`;
+      })
+      .join('');
+    return `<?xml version="1.0" encoding="UTF-8"?><svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${resolveSurface(false)}"/>${arcs}</svg>`;
+  }
+
+  async exportPNG() {
+    if (!this.canvas) {
+      return null;
+    }
+    return new Promise((resolve) => {
+      this.canvas.toBlob((blob) => {
+        resolve(blob);
+      }, 'image/png');
+    });
+  }
+}
+
+export function createRadialUrchin(root, props) {
+  return new RadialUrchin(root, props);
+}
