@@ -1,4 +1,10 @@
+# Domain models and shared utilities
 archetypes.py
+models.py
+unique_days.py
+yearly_budget.py
+
+# Engine and adapter implementations
 calendar_gen_v2.py
 calendar_layers.py
 engines/__init__.py
@@ -6,15 +12,16 @@ engines/base.py
 engines/engine_mk1.py
 engines/engine_mk2.py
 engines/web_adapter.py
-models.py
+
+# Module packages consumed by the engines
 modules/__init__.py
 modules/calendar_provider.py
 modules/friction_model.py
 modules/unique_events.py
 modules/validation.py
+
+# Rig compositions used by the web adapter
 rigs/__init__.py
 rigs/calendar_rig.py
 rigs/simple_rig.py
 rigs/workforce_rig.py
-unique_days.py
-yearly_budget.py
