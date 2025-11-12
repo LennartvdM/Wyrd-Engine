@@ -1,286 +1,53 @@
-import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.mjs";
-
-let pyodideInstance;
-let pyodideReady;
-let loadingError;
-
-self.onmessage = async (event) => {
-  const { id, type, ...payload } = event.data || {};
-
-  if (typeof id === "undefined") {
-    return;
-  }
-
-  try {
-    if (type === "load") {
-      const pyodide = await ensurePyodide();
-      const files = Array.isArray(payload.files) ? payload.files : [];
-      if (files.length) {
-        writeRepoFilesToPyodide(pyodide, files);
-      }
-      ensurePythonImportPath(pyodide);
-      respond(id, { ok: true, event: "load" });
-      return;
-    }
-
-    if (type === "runPython") {
-      const response = await executePython(payload);
-      respond(id, { ok: true, event: "runPython", ...response });
-      return;
-    }
-
-    respond(id, {
-      ok: false,
-      event: type,
-      error: `Unknown message type: ${String(type)}`,
-    });
-  } catch (error) {
-    respond(id, {
-      ok: false,
-      event: type,
-      error: stringifyError(error),
-      stack: error?.stack,
-      stdout: error?.stdout || "",
-      stderr: error?.stderr || "",
-      resultJSON: error?.resultJSON,
-    });
-  }
+const respond = (id, data) => {
+  self.postMessage({ id, ...data });
 };
 
-function respond(id, data) {
-  self.postMessage({ id, ...data });
-}
-
-async function ensurePyodide() {
-  if (pyodideInstance) {
-    return pyodideInstance;
-  }
-
-  if (loadingError) {
-    throw loadingError;
-  }
-
-  if (!pyodideReady) {
-    pyodideReady = (async () => {
-      const instance = await loadPyodide({
-        indexURL: "https://cdn.jsdelivr.net/pyodide/v0.24.1/full/",
-      });
-      disableNetworkAccess(instance);
-      return instance;
-    })();
-  }
-
-  try {
-    pyodideInstance = await pyodideReady;
-    return pyodideInstance;
-  } catch (error) {
-    loadingError = error;
-    pyodideReady = undefined;
-    throw error;
-  }
-}
-
-async function executePython({ code, context }) {
-  if (!code || typeof code !== "string") {
-    throw new Error("Python source code is required");
-  }
-
-  const pyodide = await ensurePyodide();
-
-  const stdoutChunks = [];
-  const stderrChunks = [];
-  const stdoutWriter = { batched: (text) => stdoutChunks.push(text) };
-  const stderrWriter = { batched: (text) => stderrChunks.push(text) };
-  const previousStdout = pyodide.setStdout(stdoutWriter);
-  const previousStderr = pyodide.setStderr(stderrWriter);
-
-  let globals;
-  let payloadProxy;
-  let runnerInputProxy;
-  let result;
-
-  try {
-    globals = pyodide.globals.get("dict")();
-    const builtins = pyodide.globals.get("__builtins__");
-    globals.set("__builtins__", builtins);
-    builtins.destroy();
-
-    const { payloadValue, runnerInputValue } = normalizeExecutionContext(context);
-
-    payloadProxy = pyodide.toPy(payloadValue);
-    globals.set("payload", payloadProxy);
-
-    runnerInputProxy = pyodide.toPy(runnerInputValue);
-    globals.set("__runner_input__", runnerInputProxy);
-
-    result = await pyodide.runPythonAsync(code, { globals });
-
-    const jsResult = convertResult(result);
-    return {
-      stdout: stdoutChunks.join(""),
-      stderr: stderrChunks.join(""),
-      resultJSON: safeStringify(jsResult),
-    };
-  } catch (error) {
-    throw enrichError(error, stdoutChunks, stderrChunks);
-  } finally {
-    pyodide.setStdout(previousStdout);
-    pyodide.setStderr(previousStderr);
-
-    if (result && typeof result.destroy === "function") {
-      result.destroy();
-    }
-
-    if (payloadProxy && typeof payloadProxy.destroy === "function") {
-      payloadProxy.destroy();
-    }
-
-    if (runnerInputProxy && typeof runnerInputProxy.destroy === "function") {
-      runnerInputProxy.destroy();
-    }
-
-    if (globals && typeof globals.destroy === "function") {
-      globals.destroy();
-    }
-  }
-}
-
-function normalizeExecutionContext(context) {
-  if (!context) {
-    return { payloadValue: {}, runnerInputValue: {} };
-  }
-
-  if (typeof context === "object" && context !== null && "runnerInput" in context) {
-    const payload = context.payload;
-    const runnerInput = context.runnerInput;
-    return {
-      payloadValue: typeof payload === "undefined" ? {} : payload,
-      runnerInputValue:
-        runnerInput && typeof runnerInput === "object" ? runnerInput : {},
-    };
-  }
-
-  return {
-    payloadValue: context,
-    runnerInputValue: {},
-  };
-}
-
-function enrichError(error, stdoutChunks, stderrChunks) {
-  if (error && typeof error === "object") {
-    const stdout = stdoutChunks.join("");
-    const stderr = stderrChunks.join("");
-    error.stdout = stdout;
-    error.stderr = stderr;
-    error.resultJSON = safeStringify({ error: stringifyError(error) });
-  }
-  return error;
-}
-
-function convertResult(result) {
-  if (!result) {
-    return result;
-  }
-
-  if (typeof result.toJs === "function") {
-    return result.toJs({ create_proxy: false });
-  }
-
-  return result;
-}
-
-function disableNetworkAccess(pyodide) {
-  const errorFactory = () =>
-    new Error("Network access from the sandboxed Python runtime is disabled.");
-
-  const blockAsync = () => Promise.reject(errorFactory());
-  const blockSync = () => {
-    throw errorFactory();
-  };
-
-  self.fetch = blockAsync;
-  self.XMLHttpRequest = function XMLHttpRequest() {
-    blockSync();
-  };
-  self.WebSocket = function WebSocket() {
-    blockSync();
-  };
-  self.EventSource = function EventSource() {
-    blockSync();
-  };
-
-  if (typeof pyodide.loadPackage === "function") {
-    pyodide.loadPackage = async () => {
-      throw errorFactory();
-    };
-  }
-}
-
-function writeRepoFilesToPyodide(pyodide, files) {
-  files.forEach((file) => {
-    if (!file || typeof file.path !== "string") {
-      return;
-    }
-    const targetPath = normalizePyodidePath(file.path);
-    ensureParentDirectories(pyodide, targetPath);
-    const content =
-      typeof file.content === "string" ? file.content : String(file.content ?? "");
-    pyodide.FS.writeFile(targetPath, content, { encoding: "utf8" });
-  });
-}
-
-function ensureParentDirectories(pyodide, filePath) {
-  const segments = filePath.split("/").filter(Boolean);
-  if (segments.length <= 1) {
+self.onmessage = (event) => {
+  const message = event?.data || {};
+  const { id, type } = message;
+  if (typeof id === 'undefined') {
     return;
   }
-  let currentPath = "";
-  for (let index = 0; index < segments.length - 1; index += 1) {
-    currentPath += `/${segments[index]}`;
-    const pathInfo = pyodide.FS.analyzePath(currentPath);
-    if (!pathInfo.exists) {
-      pyodide.FS.mkdir(currentPath);
+
+  const post = (payload) => {
+    respond(id, payload);
+  };
+
+  if (type === 'load') {
+    post({ ok: true, event: 'load' });
+    return;
+  }
+
+  if (type === 'run') {
+    const { fn, args = {} } = message;
+    const mock = (label = 'Work') => ({
+      schema_version: 'web_v1_calendar',
+      week_start: args.week_start,
+      events: [
+        { date: args.week_start, start: '09:00', end: '11:00', label, activity: 'work' },
+        { date: args.week_start, start: '12:00', end: '13:00', label: 'Lunch', activity: 'meal' },
+        { date: args.week_start, start: '23:00', end: '07:00', label: 'Sleep', activity: 'sleep' },
+      ],
+      issues: [],
+      metadata: { engine: fn },
+    });
+
+    if (fn === 'mk1_run') {
+      post({ ok: true, result: mock('MK1 Work'), logs: [`mock run ${fn}`] });
+      return;
     }
-  }
-}
+    if (fn === 'mk2_run_calendar') {
+      post({ ok: true, result: mock('MK2 Work'), logs: [`mock run ${fn}`] });
+      return;
+    }
+    if (fn === 'mk2_run_workforce') {
+      post({ ok: true, result: mock('MK2 Workforce Work'), logs: [`mock run ${fn}`] });
+      return;
+    }
 
-function normalizePyodidePath(path) {
-  const value = typeof path === "string" ? path.trim() : "";
-  if (!value) {
-    throw new Error("Invalid file path provided to Pyodide writer");
+    post({ ok: false, error: `Unknown worker function: ${String(fn)}` });
+    return;
   }
-  const sanitized = value.replace(/\\/g, "/");
-  if (sanitized.startsWith("/")) {
-    return sanitized;
-  }
-  const trimmed = sanitized.replace(/^\/+/, "");
-  if (trimmed.startsWith("home/pyodide/")) {
-    return `/${trimmed}`;
-  }
-  return `/home/pyodide/${trimmed}`;
-}
 
-function ensurePythonImportPath(pyodide) {
-  pyodide.runPython(
-    "import sys\nroot = '/home/pyodide'\nif root not in sys.path:\n    sys.path.insert(0, root)",
-  );
-}
-
-function safeStringify(value) {
-  try {
-    const json = JSON.stringify(value, null, 2);
-    return typeof json === "undefined" ? "null" : json;
-  } catch (error) {
-    return JSON.stringify({ error: stringifyError(error) });
-  }
-}
-
-function stringifyError(error) {
-  if (!error) {
-    return "Unknown error";
-  }
-  if (typeof error === "string") {
-    return error;
-  }
-  return error.message || error.name || "Unknown error";
-}
+  post({ ok: false, event: type, error: `Unknown message type: ${String(type)}` });
+};
