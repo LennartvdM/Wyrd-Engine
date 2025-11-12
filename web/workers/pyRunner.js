@@ -12,6 +12,7 @@ let pyodideReadyPromise = null;
 let repoFilesMirrored = false;
 let runInFlight = false;
 let importProbeComplete = false;
+let currentSysPathSnapshot = null;
 
 function mockCalendarResult(args) {
   return {
@@ -90,27 +91,69 @@ async function mirrorRepoFiles(instance) {
   }
 
   const manifest = await loadPythonSourceFiles();
-  const tasks = manifest.map(async (path) => {
-    const response = await fetch(resolveRepoUrl(path));
-    if (!response.ok) {
-      throw new Error(`Failed to fetch ${path}: ${response.status} ${response.statusText}`);
-    }
-    const source = await response.text();
-    const directory = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
-    if (directory) {
-      try {
-        instance.FS.mkdirTree(directory);
-      } catch (error) {
-        // Ignore EEXIST style errors from mkdirTree.
-        if (!/exists/i.test(String(error?.message || ''))) {
-          throw error;
+  const failures = [];
+  const successes = [];
+
+  for (const path of manifest) {
+    let status;
+    try {
+      const response = await fetch(resolveRepoUrl(path));
+      status = response?.status;
+      if (!response.ok) {
+        const statusText = response.statusText ? ` ${response.statusText}` : '';
+        throw new Error(`HTTP ${response.status}${statusText}`.trim());
+      }
+
+      const source = await response.text();
+      const directory = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+      if (directory) {
+        try {
+          instance.FS.mkdirTree(directory);
+        } catch (error) {
+          // Ignore EEXIST style errors from mkdirTree.
+          if (!/exists/i.test(String(error?.message || ''))) {
+            throw error;
+          }
         }
       }
-    }
-    instance.FS.writeFile(path, source);
-  });
 
-  await Promise.all(tasks);
+      instance.FS.writeFile(path, source);
+      successes.push({ path, ok: true, size: source.length });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : error && typeof error === 'object' && 'message' in error
+          ? String(error.message)
+          : String(error);
+      const failure = { path, ok: false, error: message };
+      const inferredStatus =
+        typeof status === 'number'
+          ? status
+          : typeof error?.status === 'number'
+          ? error.status
+          : undefined;
+      if (typeof inferredStatus === 'number' && Number.isFinite(inferredStatus)) {
+        failure.status = inferredStatus;
+      }
+      failures.push(failure);
+    }
+  }
+
+  if (failures.length > 0) {
+    throw {
+      message: 'Failed to mirror repository files',
+      stage: 'mirror',
+      type: 'MirrorFailed',
+      failures,
+      okCount: successes.length,
+      failCount: failures.length,
+      sysPath: Array.isArray(currentSysPathSnapshot)
+        ? [...currentSysPathSnapshot]
+        : currentSysPathSnapshot,
+    };
+  }
+
   repoFilesMirrored = true;
 }
 
