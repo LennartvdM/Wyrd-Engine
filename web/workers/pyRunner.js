@@ -340,6 +340,7 @@ let repoRootPromise = null;
 let repoRelocation = null;
 let repoRepairs = [];
 let lastRepoProbeResult = null;
+let repoCommonParentsPrepared = false;
 
 function toErrorMessage(error) {
   if (!error) {
@@ -433,6 +434,107 @@ function safeAnalyzePath(instance, path) {
     // ignore analyze errors and fall through to default
   }
   return { exists: false, name: path };
+}
+
+function createRecursivePath(instance, targetPath) {
+  if (!instance?.FS?.createPath || !targetPath || typeof targetPath !== 'string') {
+    return;
+  }
+  const isAbsolute = targetPath.startsWith('/');
+  const base = isAbsolute ? '/' : '.';
+  const relative = isAbsolute ? targetPath.slice(1) : targetPath;
+  if (!relative && isAbsolute) {
+    return;
+  }
+  instance.FS.createPath(base, relative, true, true);
+}
+
+function getParentDirectory(targetPath) {
+  if (typeof targetPath !== 'string') {
+    return '';
+  }
+  const slashIndex = targetPath.lastIndexOf('/');
+  if (slashIndex < 0) {
+    return '';
+  }
+  if (slashIndex === 0) {
+    return '/';
+  }
+  return targetPath.slice(0, slashIndex);
+}
+
+function ensureParentDirectory(instance, destPath, relPath) {
+  if (!instance?.FS || typeof destPath !== 'string') {
+    return { parent: '', analysis: null };
+  }
+  const parent = getParentDirectory(destPath);
+  if (parent && parent !== '/') {
+    try {
+      createRecursivePath(instance, parent);
+    } catch (error) {
+      throw createStageError('mirror', 'ParentDirCreateFailed', 'Failed to create parent directory', error, {
+        parent,
+        destPath,
+        forPath: relPath,
+      });
+    }
+  } else if (parent === '/') {
+    // Root directory always exists in the virtual FS, nothing to create.
+  }
+
+  let analysis = null;
+  try {
+    analysis = instance.FS.analyzePath(parent || '.');
+  } catch (error) {
+    analysis = safeAnalyzePath(instance, parent || '.');
+  }
+  const exists = analysis?.exists === true;
+  const isFolder = analysis?.object?.isFolder === true;
+  const normalizedAnalysis =
+    analysis && typeof analysis === 'object' ? { ...analysis, exists: !!analysis.exists, isFolder } : null;
+  if (!exists || !isFolder) {
+    const parentError = {
+      stage: 'mirror',
+      type: 'ParentDirMissing',
+      message: `Parent directory missing for ${relPath}`,
+      parent,
+      forPath: relPath,
+    };
+    if (normalizedAnalysis) {
+      parentError.analysis = normalizedAnalysis;
+    }
+    throw parentError;
+  }
+  return { parent, analysis: normalizedAnalysis || analysis };
+}
+
+function prepareRepoCommonParents(instance, rootPath) {
+  if (repoCommonParentsPrepared || !instance?.FS?.createPath) {
+    return;
+  }
+
+  const targets = ['/repo/engines', '/repo/modules', '/repo/rigs'];
+  try {
+    for (const target of targets) {
+      try {
+        createRecursivePath(instance, target);
+      } catch (error) {
+        // If creation fails we still want to surface on verification during writes.
+      }
+    }
+    if (rootPath && rootPath !== '/repo') {
+      for (const segment of ['engines', 'modules', 'rigs']) {
+        try {
+          const relocated = joinRepoPath(rootPath, segment);
+          createRecursivePath(instance, relocated);
+        } catch (error) {
+          // Ignore relocated creation errors; they'll be handled later if relevant.
+        }
+      }
+    }
+  } finally {
+    repoCommonParentsPrepared = true;
+  }
 }
 
 function describeFsError(error) {
@@ -582,9 +684,9 @@ async function ensureRepoRoot(instance) {
 
     if (!repoStatus.exists) {
       try {
-        instance.FS.mkdirTree(DEFAULT_REPO_ROOT);
+        createRecursivePath(instance, DEFAULT_REPO_ROOT);
       } catch (error) {
-        // if mkdirTree fails because the path exists as a file, we'll handle below via relocation
+        // if createPath fails because the path exists as a file, we'll handle below via relocation
       }
       probe = await runRepoFsProbe(instance);
       lastRepoProbeResult = probe;
@@ -615,7 +717,7 @@ async function ensureRepoRoot(instance) {
     }
 
     try {
-      instance.FS.mkdirTree(repoRoot);
+      createRecursivePath(instance, repoRoot);
     } catch (error) {
       throw createStageError('mirror', 'MirrorSetupFailed', 'Failed to prepare /repo directory', error, {
         manifestSize: lastManifestSize,
@@ -626,6 +728,8 @@ async function ensureRepoRoot(instance) {
         fsProbe: lastRepoProbeResult || undefined,
       });
     }
+
+    prepareRepoCommonParents(instance, repoRoot);
 
     if (!repoRelocation) {
       const nodes = (lastRepoProbeResult && lastRepoProbeResult.nodes) || {};
@@ -650,7 +754,7 @@ async function ensureRepoRoot(instance) {
           });
         }
         try {
-          instance.FS.mkdirTree(targetPath);
+          createRecursivePath(instance, targetPath);
         } catch (error) {
           const fsError = describeFsError(error);
           throw createStageError('mirror', 'MirrorSetupFailed', 'Failed to repair repository node directory', error, {
@@ -1319,6 +1423,8 @@ async function mirrorRepoFiles(instance) {
     let sourceText = typeof cached?.text === 'string' ? cached.text : undefined;
     let actualBytes = typeof cached?.bytes === 'number' ? cached.bytes : 0;
 
+    let lastWriteContext = null;
+
     try {
       if (!cached) {
         const response = await fetch(url, { cache: 'no-store' });
@@ -1361,32 +1467,26 @@ async function mirrorRepoFiles(instance) {
         throw new Error('ByteMismatch');
       }
 
-      const directory = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
-      if (directory) {
-        try {
-          instance.FS.mkdirTree(directory);
-        } catch (error) {
-          if (!/exists/i.test(String(error?.message || ''))) {
-            throw error;
-          }
-        }
-      }
-
+      const cacheParentPath = getParentDirectory(path);
+      lastWriteContext = {
+        destPath: path,
+        relPath: path,
+        parent: cacheParentPath || '',
+        analysis: null,
+      };
+      const cacheParentInfo = ensureParentDirectory(instance, path, path);
+      lastWriteContext.analysis = cacheParentInfo?.analysis || null;
       instance.FS.writeFile(path, sourceText);
 
-      const repoDirectory = repoTargetPath.includes('/')
-        ? repoTargetPath.slice(0, repoTargetPath.lastIndexOf('/'))
-        : '';
-      if (repoDirectory) {
-        try {
-          instance.FS.mkdirTree(repoDirectory);
-        } catch (error) {
-          if (!/exists/i.test(String(error?.message || ''))) {
-            throw error;
-          }
-        }
-      }
-
+      const repoParentPath = getParentDirectory(repoTargetPath);
+      lastWriteContext = {
+        destPath: repoTargetPath,
+        relPath: path,
+        parent: repoParentPath || '',
+        analysis: null,
+      };
+      const repoParentInfo = ensureParentDirectory(instance, repoTargetPath, path);
+      lastWriteContext.analysis = repoParentInfo?.analysis || null;
       instance.FS.writeFile(repoTargetPath, sourceText);
 
       reports.push({
@@ -1402,6 +1502,19 @@ async function mirrorRepoFiles(instance) {
       okCount += 1;
     } catch (error) {
       const fsError = describeFsError(error);
+      const writeContext = (error && error.mirrorWriteContext) || lastWriteContext;
+      let parentAnalysis = writeContext?.analysis || null;
+      if (!parentAnalysis && error && typeof error === 'object' && error.analysis) {
+        parentAnalysis = error.analysis;
+      }
+      if (!parentAnalysis && writeContext?.parent) {
+        parentAnalysis = safeAnalyzePath(instance, writeContext.parent);
+      }
+      const parentExists = parentAnalysis?.exists === true;
+      const parentIsFolder =
+        parentAnalysis?.object?.isFolder === true || parentAnalysis?.isFolder === true;
+      const failedDestPath = writeContext?.destPath || repoTargetPath;
+
       let failureMessage = toErrorMessage(error) || 'Unknown mirror failure';
       if (fsError && fsError.label) {
         const detailMessage = fsError.message && fsError.message !== fsError.label ? fsError.message : '';
@@ -1410,7 +1523,7 @@ async function mirrorRepoFiles(instance) {
       const failureEntry = {
         path,
         repoPath: repoTargetPath,
-        destPath: repoTargetPath,
+        destPath: failedDestPath,
         url,
         status: typeof status === 'number' ? status : undefined,
         bytes: actualBytes,
@@ -1418,6 +1531,13 @@ async function mirrorRepoFiles(instance) {
         finalURL: finalUrl !== url ? finalUrl : undefined,
         error: failureMessage,
         reason: failureMessage,
+        parent: writeContext?.parent || undefined,
+        parentAnalysis: parentAnalysis
+          ? {
+              exists: parentExists,
+              isFolder: parentIsFolder,
+            }
+          : undefined,
       };
       if (fsError) {
         failureEntry.fsError = {
