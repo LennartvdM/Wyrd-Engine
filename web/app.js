@@ -7,7 +7,31 @@ const tabPanels = Array.from(
 const tabOrder = ['calendar', 'config', 'console', 'json', 'fixtures', 'logs'];
 const consoleTabButton = tabButtons.find((button) => button.dataset.tab === 'console');
 const jsonTabButton = tabButtons.find((button) => button.dataset.tab === 'json');
+const fixturesTabButton = tabButtons.find((button) => button.dataset.tab === 'fixtures');
 let jsonTabBadge;
+let fixturesTabBadge;
+
+const RUN_HISTORY_STORAGE_KEY = 'runHistory';
+const RUN_HISTORY_LIMIT = 10;
+
+let runHistory = [];
+let runHistoryListElement;
+let copyJsonButton;
+let saveJsonButton;
+let jsonSummaryElement;
+
+let currentJsonText = '';
+let currentJsonMetadata = { variant: '', rig: '', week: '', events: null };
+
+let getConfigSnapshot = () => ({
+  classId: 'calendar',
+  variant: '',
+  rig: '',
+  archetype: '',
+  week_start: '',
+  seed: '',
+  hasBudget: false,
+});
 
 const DEFAULT_JSON_PLACEHOLDER = '{\n  "data": "JSON payloads will render here."\n}';
 
@@ -44,6 +68,405 @@ function setJsonValidationBadge(status) {
 }
 
 window.setJsonValidationBadge = setJsonValidationBadge;
+
+function ensureFixturesTabBadge() {
+  if (!fixturesTabButton) {
+    return null;
+  }
+  if (!fixturesTabBadge) {
+    fixturesTabBadge = document.createElement('span');
+    fixturesTabBadge.className = 'tab-badge';
+    fixturesTabBadge.hidden = true;
+    fixturesTabBadge.setAttribute('aria-hidden', 'true');
+    fixturesTabButton.classList.add('fixtures-tab');
+    fixturesTabButton.append(fixturesTabBadge);
+  }
+  return fixturesTabBadge;
+}
+
+function setFixturesHistoryBadgeVisible(isVisible) {
+  const badge = ensureFixturesTabBadge();
+  if (!badge) {
+    return;
+  }
+  badge.classList.remove('tab-badge--notice');
+  if (isVisible) {
+    badge.hidden = false;
+    badge.classList.add('tab-badge--notice');
+  } else {
+    badge.hidden = true;
+  }
+}
+
+function generateHistoryId() {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch (error) {
+    // ignore
+  }
+  const random = Math.random().toString(16).slice(2);
+  return `hist-${Date.now()}-${random}`;
+}
+
+function loadRunHistoryFromStorage() {
+  try {
+    const raw = localStorage.getItem(RUN_HISTORY_STORAGE_KEY);
+    if (!raw) {
+      runHistory = [];
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      runHistory = [];
+      return;
+    }
+    runHistory = parsed
+      .filter((entry) => entry && typeof entry === 'object')
+      .map((entry) => ({
+        ...entry,
+        id: entry.id || generateHistoryId(),
+      }))
+      .slice(0, RUN_HISTORY_LIMIT);
+  } catch (error) {
+    console.warn('Unable to load run history:', error);
+    runHistory = [];
+  }
+}
+
+function persistRunHistory() {
+  try {
+    localStorage.setItem(RUN_HISTORY_STORAGE_KEY, JSON.stringify(runHistory));
+  } catch (error) {
+    console.warn('Unable to persist run history:', error);
+  }
+}
+
+function renderRunHistory() {
+  if (!runHistoryListElement) {
+    return;
+  }
+
+  runHistoryListElement.innerHTML = '';
+  if (runHistory.length === 0) {
+    const emptyItem = document.createElement('li');
+    emptyItem.className = 'run-history-empty';
+    emptyItem.textContent = 'No runs recorded yet.';
+    runHistoryListElement.append(emptyItem);
+    return;
+  }
+
+  runHistory.forEach((entry) => {
+    const item = document.createElement('li');
+    item.className = 'run-history-item';
+
+    const details = document.createElement('div');
+    details.className = 'run-history-details';
+
+    const label = document.createElement('span');
+    label.className = 'run-history-label';
+    const variantText = [entry.variant, entry.rig].filter(Boolean).join('/') || 'calendar';
+    const sourceLabel = entry.kind === 'generate' ? 'Generated' : entry.label || 'Fixture';
+    label.textContent = `${sourceLabel} • ${variantText}`;
+
+    const meta = document.createElement('span');
+    meta.className = 'run-history-meta';
+    const timestamp = Number.isFinite(entry.ts)
+      ? new Date(entry.ts).toLocaleString()
+      : 'Unknown time';
+    const week = typeof entry.week_start === 'string' && entry.week_start ? entry.week_start : '—';
+    const eventCount =
+      entry.resultSummary && Number.isFinite(entry.resultSummary.events)
+        ? entry.resultSummary.events
+        : null;
+    const eventText =
+      eventCount === null
+        ? ''
+        : `${eventCount} event${eventCount === 1 ? '' : 's'}`;
+    const metaParts = [`${timestamp}`, `Week: ${week}`];
+    if (eventText) {
+      metaParts.push(eventText);
+    }
+    meta.textContent = metaParts.join(' • ');
+
+    details.append(label, meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'run-history-actions';
+
+    const openButton = document.createElement('button');
+    openButton.type = 'button';
+    openButton.className = 'run-history-button';
+    openButton.textContent = 'Open';
+    openButton.addEventListener('click', () => {
+      const payload = entry.payload && typeof entry.payload === 'object' ? entry.payload : null;
+      if (!payload) {
+        return;
+      }
+      setJsonPayload(payload, {
+        variant: entry.variant,
+        rig: entry.rig,
+        weekStart: entry.week_start,
+      });
+      const validation = validateWebV1Calendar(payload);
+      setJsonValidationBadge(validation.ok ? 'ok' : 'err');
+      dispatchIntent({
+        type: INTENT_TYPES.NAVIGATE_TAB,
+        payload: { tab: 'json' },
+      });
+    });
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'run-history-button run-history-button--danger';
+    deleteButton.textContent = 'Delete';
+    deleteButton.addEventListener('click', () => {
+      runHistory = runHistory.filter((item) => item.id !== entry.id);
+      persistRunHistory();
+      renderRunHistory();
+    });
+
+    actions.append(openButton, deleteButton);
+    item.append(details, actions);
+    runHistoryListElement.append(item);
+  });
+}
+
+function clonePayload(payload) {
+  try {
+    return JSON.parse(JSON.stringify(payload ?? {}));
+  } catch (error) {
+    console.warn('Unable to clone payload for history:', error);
+    return null;
+  }
+}
+
+function addRunHistoryEntry(entry) {
+  if (!entry) {
+    return;
+  }
+  const normalized = {
+    id: entry.id || generateHistoryId(),
+    ts: Number.isFinite(entry.ts) ? entry.ts : Date.now(),
+    kind: entry.kind || 'generate',
+    class: entry.class || 'calendar',
+    variant: entry.variant || '',
+    rig: entry.rig || '',
+    week_start: typeof entry.week_start === 'string' ? entry.week_start : '',
+    label: entry.label || '',
+    payload: clonePayload(entry.payload) || entry.payload || {},
+    inputs: entry.inputs ? clonePayload(entry.inputs) || entry.inputs : null,
+    resultSummary: entry.resultSummary
+      ? clonePayload(entry.resultSummary) || entry.resultSummary
+      : null,
+  };
+  runHistory = [normalized, ...runHistory].slice(0, RUN_HISTORY_LIMIT);
+  persistRunHistory();
+  renderRunHistory();
+  if (currentTab !== 'fixtures') {
+    setFixturesHistoryBadgeVisible(true);
+  }
+}
+
+function hasJsonContent() {
+  const trimmed = (currentJsonText || '').trim();
+  if (!trimmed) {
+    return false;
+  }
+  return trimmed !== DEFAULT_JSON_PLACEHOLDER.trim();
+}
+
+function updateJsonActionsState() {
+  const hasContent = hasJsonContent();
+  if (copyJsonButton) {
+    copyJsonButton.disabled = !hasContent;
+  }
+  if (saveJsonButton) {
+    saveJsonButton.disabled = !hasContent;
+  }
+}
+
+function updateJsonSummaryDisplay() {
+  if (!jsonSummaryElement) {
+    return;
+  }
+  const parts = [];
+  const variantRig = [currentJsonMetadata.variant, currentJsonMetadata.rig]
+    .filter(Boolean)
+    .join('/');
+  if (variantRig) {
+    parts.push(variantRig);
+  }
+  if (currentJsonMetadata.week) {
+    parts.push(currentJsonMetadata.week);
+  }
+  if (typeof currentJsonMetadata.events === 'number') {
+    parts.push(`${currentJsonMetadata.events} event${currentJsonMetadata.events === 1 ? '' : 's'}`);
+  }
+  if (parts.length === 0) {
+    jsonSummaryElement.textContent = '';
+    jsonSummaryElement.hidden = true;
+    return;
+  }
+  jsonSummaryElement.textContent = parts.join(' · ');
+  jsonSummaryElement.hidden = false;
+}
+
+function setJsonPayload(payload, options = {}) {
+  if (!jsonOutputElement) {
+    return;
+  }
+
+  let formatted = DEFAULT_JSON_PLACEHOLDER;
+  let parsedPayload = null;
+  if (typeof payload === 'string') {
+    formatted = payload;
+    try {
+      parsedPayload = JSON.parse(payload);
+    } catch (error) {
+      parsedPayload = null;
+    }
+  } else if (payload && typeof payload === 'object') {
+    parsedPayload = payload;
+    try {
+      formatted = JSON.stringify(payload, null, 2);
+    } catch (error) {
+      formatted = DEFAULT_JSON_PLACEHOLDER;
+    }
+  } else {
+    parsedPayload = null;
+  }
+
+  jsonOutputElement.textContent = formatted;
+  currentJsonText = formatted;
+
+  const snapshot = typeof getConfigSnapshot === 'function' ? getConfigSnapshot() : {};
+  const metadata = {
+    variant: options.variant ?? snapshot.variant ?? '',
+    rig: options.rig ?? snapshot.rig ?? '',
+    week: '',
+    events: null,
+  };
+
+  const weekFromOptions =
+    typeof options.weekStart === 'string' && options.weekStart
+      ? options.weekStart
+      : parsedPayload && typeof parsedPayload.week_start === 'string'
+      ? parsedPayload.week_start
+      : snapshot.week_start || '';
+  metadata.week = weekFromOptions;
+
+  if (parsedPayload && Array.isArray(parsedPayload.events)) {
+    metadata.events = parsedPayload.events.length;
+  }
+
+  currentJsonMetadata = metadata;
+  updateJsonActionsState();
+  updateJsonSummaryDisplay();
+}
+
+loadRunHistoryFromStorage();
+
+async function copyCurrentJsonToClipboard() {
+  if (!hasJsonContent()) {
+    return;
+  }
+  const text = currentJsonText;
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'absolute';
+      textarea.style.left = '-9999px';
+      document.body.append(textarea);
+      textarea.select();
+      const successful = document.execCommand ? document.execCommand('copy') : false;
+      textarea.remove();
+      if (!successful) {
+        throw new Error('Copy command was rejected.');
+      }
+    }
+    dispatchIntent({
+      type: INTENT_TYPES.SHOW_TOAST,
+      payload: {
+        message: 'JSON copied',
+        intent: 'success',
+        duration: 2000,
+      },
+    });
+  } catch (error) {
+    dispatchIntent({
+      type: INTENT_TYPES.SHOW_TOAST,
+      payload: {
+        message: 'Copy failed',
+        description:
+          error && error.message ? error.message : 'Unable to copy JSON to clipboard.',
+        intent: 'error',
+        duration: 4000,
+      },
+    });
+  }
+}
+
+function sanitizeFileSegment(value, fallback) {
+  if (!value) {
+    return fallback;
+  }
+  const normalized = String(value).trim().replace(/\s+/g, '-');
+  const cleaned = normalized.replace(/[^a-z0-9_-]/gi, '');
+  return cleaned || fallback;
+}
+
+function saveCurrentJsonToFile() {
+  if (!hasJsonContent()) {
+    return;
+  }
+  const snapshot = typeof getConfigSnapshot === 'function' ? getConfigSnapshot() : {};
+  const variant = currentJsonMetadata.variant || snapshot.variant || 'calendar';
+  const rig = currentJsonMetadata.rig || snapshot.rig || 'rig';
+  const week = currentJsonMetadata.week || snapshot.week_start || 'week';
+  const fileName = `schedule_${sanitizeFileSegment(variant, 'calendar')}_${sanitizeFileSegment(
+    rig,
+    'rig',
+  )}_${sanitizeFileSegment(week, 'week')}.json`;
+
+  try {
+    const blob = new Blob([currentJsonText], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 0);
+    dispatchIntent({
+      type: INTENT_TYPES.SHOW_TOAST,
+      payload: {
+        message: 'JSON saved',
+        description: fileName,
+        intent: 'success',
+        duration: 2200,
+      },
+    });
+  } catch (error) {
+    dispatchIntent({
+      type: INTENT_TYPES.SHOW_TOAST,
+      payload: {
+        message: 'Save failed',
+        description: error && error.message ? error.message : 'Unable to download JSON.',
+        intent: 'error',
+        duration: 4000,
+      },
+    });
+  }
+}
 
 const INTENT_TYPES = {
   NAVIGATE_TAB: 'NAVIGATE_TAB',
@@ -424,6 +847,9 @@ function applyActiveTab(targetTab) {
   });
 
   currentTab = normalizedTarget;
+  if (normalizedTarget === 'fixtures') {
+    setFixturesHistoryBadgeVisible(false);
+  }
   if (normalizedTarget === 'console') {
     dispatchIntent({
       type: INTENT_TYPES.APP_STATUS,
@@ -1670,6 +2096,32 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     });
   });
 
+  getConfigSnapshot = () => {
+    const activeVariant = cfg.variant || '';
+    const activeRig = activeVariant ? cfg.rig[activeVariant] || '' : '';
+    const weekValue = calendarConfig.common.weekStart || '';
+    let seedValue = '';
+    if (typeof calendarConfig.common.seed === 'number') {
+      seedValue = String(calendarConfig.common.seed);
+    } else if (calendarConfig.common.seed) {
+      seedValue = String(calendarConfig.common.seed);
+    }
+    const hasBudget =
+      activeVariant === 'mk2' &&
+      activeRig === 'workforce' &&
+      typeof calendarConfig.mk2.workforce.budgetText === 'string' &&
+      calendarConfig.mk2.workforce.budgetText.trim().length > 0;
+    return {
+      classId: cfg.class || 'calendar',
+      variant: activeVariant,
+      rig: activeRig,
+      archetype: calendarConfig.common.archetype || '',
+      week_start: weekValue || '',
+      seed: seedValue,
+      hasBudget,
+    };
+  };
+
   applyClass(cfg.class, { updateStorage: false });
 
   if (initializeRuntimeButton) {
@@ -1804,12 +2256,17 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
 
         renderConsoleOutputs({ stdout, stderr });
 
-        if (jsonOutputElement) {
-          const formatted = JSON.stringify(result ?? {}, null, 2);
-          jsonOutputElement.textContent = formatted;
-        }
+        const resultPayload = result ?? {};
+        setJsonPayload(resultPayload, {
+          variant: variantId,
+          rig: rigId,
+          weekStart:
+            typeof resultPayload.week_start === 'string'
+              ? resultPayload.week_start
+              : weekStartValue || undefined,
+        });
 
-        const validation = validateWebV1Calendar(result ?? {});
+        const validation = validateWebV1Calendar(resultPayload);
         setJsonValidationBadge(validation.ok ? 'ok' : 'err');
         if (!validation.ok) {
           const issueCount = validation.errors.length;
@@ -1818,6 +2275,33 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
           }.`;
           appendConsoleLog(summary);
         }
+
+        const eventsCount = Array.isArray(resultPayload.events)
+          ? resultPayload.events.length
+          : 0;
+        const inputsSnapshot = {
+          archetype: calendarConfig.common.archetype,
+          week_start: weekStartValue || '',
+          seed: seedValue ?? '',
+        };
+        if (yearlyBudget !== null && typeof yearlyBudget !== 'undefined') {
+          inputsSnapshot.budget = true;
+        }
+        addRunHistoryEntry({
+          kind: 'generate',
+          ts: Date.now(),
+          class: 'calendar',
+          variant: variantId,
+          rig: rigId,
+          week_start:
+            typeof resultPayload.week_start === 'string'
+              ? resultPayload.week_start
+              : weekStartValue || '',
+          label: 'Generated schedule',
+          payload: resultPayload,
+          inputs: inputsSnapshot,
+          resultSummary: { events: eventsCount },
+        });
 
         dispatchIntent({
           type: INTENT_TYPES.NAVIGATE_TAB,
@@ -1962,13 +2446,27 @@ if (jsonPanel) {
 
   const jsonToolbar = document.createElement('div');
   jsonToolbar.className = 'json-toolbar';
+  jsonSummaryElement = document.createElement('span');
+  jsonSummaryElement.className = 'json-summary';
+  jsonSummaryElement.hidden = true;
 
-  const copyButton = document.createElement('button');
-  copyButton.type = 'button';
-  copyButton.className = 'json-copy';
-  copyButton.textContent = 'Copy';
+  const jsonActions = document.createElement('div');
+  jsonActions.className = 'json-actions';
 
-  jsonToolbar.append(copyButton);
+  copyJsonButton = document.createElement('button');
+  copyJsonButton.type = 'button';
+  copyJsonButton.className = 'json-button';
+  copyJsonButton.textContent = 'Copy';
+  copyJsonButton.disabled = true;
+
+  saveJsonButton = document.createElement('button');
+  saveJsonButton.type = 'button';
+  saveJsonButton.className = 'json-button';
+  saveJsonButton.textContent = 'Save';
+  saveJsonButton.disabled = true;
+
+  jsonActions.append(copyJsonButton, saveJsonButton);
+  jsonToolbar.append(jsonSummaryElement, jsonActions);
 
   jsonOutputElement = document.createElement('pre');
   jsonOutputElement.className = 'json-output';
@@ -1976,6 +2474,17 @@ if (jsonPanel) {
 
   jsonContainer.append(jsonToolbar, jsonOutputElement);
   jsonPanel.append(jsonContainer);
+
+  updateJsonActionsState();
+  updateJsonSummaryDisplay();
+
+  copyJsonButton.addEventListener('click', () => {
+    copyCurrentJsonToClipboard();
+  });
+
+  saveJsonButton.addEventListener('click', () => {
+    saveCurrentJsonToFile();
+  });
 }
 
 setJsonValidationBadge('clear');
@@ -1984,31 +2493,119 @@ if (fixturesPanel) {
   const fixturesContainer = document.createElement('div');
   fixturesContainer.className = 'fixtures-pane';
 
-  const fixturesList = document.createElement('ul');
-  fixturesList.className = 'fixtures-list';
-
-  const placeholderItem = document.createElement('li');
-  placeholderItem.textContent = 'No fixtures loaded. Add fixtures to see them listed here.';
-
-  fixturesList.append(placeholderItem);
-
   const fixturesActions = document.createElement('div');
   fixturesActions.className = 'fixtures-actions';
 
-  const loadButton = document.createElement('button');
-  loadButton.type = 'button';
-  loadButton.textContent = 'Load';
-  loadButton.disabled = true;
+  const loadFixtureButton = document.createElement('button');
+  loadFixtureButton.type = 'button';
+  loadFixtureButton.className = 'fixtures-load';
+  loadFixtureButton.textContent = 'Load fixture';
 
-  const saveButton = document.createElement('button');
-  saveButton.type = 'button';
-  saveButton.textContent = 'Save';
-  saveButton.disabled = true;
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.json,application/json';
+  fileInput.hidden = true;
 
-  fixturesActions.append(loadButton, saveButton);
+  fixturesActions.append(loadFixtureButton);
 
-  fixturesContainer.append(fixturesList, fixturesActions);
+  const historySection = document.createElement('section');
+  historySection.className = 'run-history-section';
+
+  const historyTitle = document.createElement('h3');
+  historyTitle.className = 'run-history-heading';
+  historyTitle.textContent = 'Run History';
+
+  runHistoryListElement = document.createElement('ul');
+  runHistoryListElement.className = 'run-history-list';
+
+  historySection.append(historyTitle, runHistoryListElement);
+
+  fixturesContainer.append(fixturesActions, historySection, fileInput);
   fixturesPanel.append(fixturesContainer);
+
+  loadFixtureButton.addEventListener('click', () => {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', () => {
+    const [file] = fileInput.files || [];
+    if (!file) {
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener('load', () => {
+      try {
+        const text =
+          typeof reader.result === 'string'
+            ? reader.result
+            : String(reader.result ?? '');
+        const parsed = JSON.parse(text);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('Fixture JSON must be an object.');
+        }
+        const snapshot = typeof getConfigSnapshot === 'function' ? getConfigSnapshot() : {};
+        setJsonPayload(parsed, {
+          variant: snapshot.variant,
+          rig: snapshot.rig,
+          weekStart: typeof parsed.week_start === 'string' ? parsed.week_start : undefined,
+        });
+        const validation = validateWebV1Calendar(parsed);
+        setJsonValidationBadge(validation.ok ? 'ok' : 'err');
+        dispatchIntent({
+          type: INTENT_TYPES.NAVIGATE_TAB,
+          payload: { tab: 'json' },
+        });
+        dispatchIntent({
+          type: INTENT_TYPES.SHOW_TOAST,
+          payload: {
+            message: 'Fixture loaded',
+            description: file.name || undefined,
+            intent: 'success',
+            duration: 2200,
+          },
+        });
+        const eventCount = Array.isArray(parsed.events) ? parsed.events.length : 0;
+        addRunHistoryEntry({
+          kind: 'fixture',
+          ts: Date.now(),
+          class: 'calendar',
+          variant: snapshot.variant || '',
+          rig: snapshot.rig || '',
+          week_start: typeof parsed.week_start === 'string' ? parsed.week_start : '',
+          label: file.name || 'Fixture',
+          payload: parsed,
+          resultSummary: { events: eventCount },
+        });
+      } catch (error) {
+        setJsonValidationBadge('err');
+        dispatchIntent({
+          type: INTENT_TYPES.SHOW_TOAST,
+          payload: {
+            message: 'Invalid fixture',
+            description:
+              error && error.message ? error.message : 'Unable to parse JSON fixture.',
+            intent: 'error',
+            duration: 4000,
+          },
+        });
+      }
+    });
+    reader.addEventListener('error', () => {
+      dispatchIntent({
+        type: INTENT_TYPES.SHOW_TOAST,
+        payload: {
+          message: 'Fixture load failed',
+          description: reader.error?.message || 'Unable to read fixture file.',
+          intent: 'error',
+          duration: 4000,
+        },
+      });
+    });
+    reader.readAsText(file);
+    fileInput.value = '';
+  });
+
+  renderRunHistory();
 }
 
 if (logsPanel) {
