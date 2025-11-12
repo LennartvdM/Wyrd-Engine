@@ -1,5 +1,3 @@
-import { calendarFoundation } from './classes/calendar/foundation.js';
-
 const tabButtons = Array.from(
   document.querySelectorAll('.tab[data-tab-scope="root"]')
 );
@@ -108,6 +106,28 @@ function initializeNestedTabScopes() {
 }
 
 initializeNestedTabScopes();
+
+function currentMondayISO(referenceDate = new Date()) {
+  const date = new Date(referenceDate);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const dayOfMonth = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dayOfMonth}`;
+}
+
+function deterministicSeed(input) {
+  if (typeof input !== 'string' || input.length === 0) {
+    return 0;
+  }
+  let hash = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    hash = (hash * 31 + input.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+}
 
 let toastContainer;
 let toastIdCounter = 0;
@@ -770,6 +790,12 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
   const VARIANT_STORAGE_KEY = 'config.variant';
   const RIG_STORAGE_PREFIX = 'config.rig.';
   const LEGACY_RIG_STORAGE_KEY = 'config.rig';
+  const CALENDAR_COMMON_STORAGE_KEY = 'cfg.calendar.common';
+  const CALENDAR_MK2_CALENDAR_STORAGE_KEY = 'cfg.calendar.mk2.calendar';
+  const CALENDAR_MK2_WORKFORCE_STORAGE_KEY = 'cfg.calendar.mk2.workforce';
+  const MK2_WORKFORCE_DEFAULT_TEXT =
+    '{"hours":{"work":1800,"sleep":2800,"caregiving":250,"vacation":120,"sick":40}}';
+  const VALID_ARCHETYPES = new Set(['Office', 'Parent', 'Freelancer']);
 
   const summaryLabels = {
     class: 'Class',
@@ -778,10 +804,6 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     archetype: 'Archetype',
     weekStart: 'Week Start',
     seed: 'Seed',
-  };
-
-  const foundationByClass = {
-    calendar: calendarFoundation,
   };
 
   const configActions = configPanel.querySelector('.config-actions');
@@ -844,6 +866,21 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     });
   }
 
+  const calendarCommonSection = calendarPanel
+    ? calendarPanel.querySelector('[data-calendar="common"]')
+    : null;
+  const archetypeSelect = calendarCommonSection?.querySelector('#cal-arch') || null;
+  const weekStartInput = calendarCommonSection?.querySelector('#cal-week') || null;
+  const seedInput = calendarCommonSection?.querySelector('#cal-seed') || null;
+  const seedResetButton = calendarCommonSection?.querySelector('#seed-reset') || null;
+  const seedRandomButton = calendarCommonSection?.querySelector('#seed-random') || null;
+
+  const mk2CalendarCompressToggle = calendarPanel?.querySelector('#mk2cal-compress') || null;
+  const mk2CalendarConflictsToggle = calendarPanel?.querySelector('#mk2cal-conflicts') || null;
+  const mk2WorkforceTextarea = calendarPanel?.querySelector('#mk2wf-budget') || null;
+  const mk2WorkforceDefaultButton = calendarPanel?.querySelector('#mk2wf-default') || null;
+  const mk2WorkforceValidateButton = calendarPanel?.querySelector('#mk2wf-validate') || null;
+
   const variantRigs = {};
   const defaultRigByVariant = {};
   rigButtonsByVariant.forEach((buttons, variantId) => {
@@ -901,12 +938,22 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     seed: '',
   };
 
-  variantIds.forEach((variantId) => {
-    const defaultRig = defaultRigByVariant[variantId] || variantRigs[variantId]?.[0];
-    if (defaultRig) {
-      cfg.rig[variantId] = defaultRig;
-    }
-  });
+  const calendarConfig = {
+    common: {
+      archetype: 'Office',
+      weekStart: currentMondayISO(),
+      seed: '',
+    },
+    mk2: {
+      calendar: { compress: false, conflicts: false },
+      workforce: { budgetText: '' },
+    },
+  };
+
+  let commonSeedUserEdited = false;
+  let shouldPersistInitialCommon = false;
+
+  const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 
   const readStorageValue = (key) => {
     try {
@@ -928,6 +975,78 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
       console.warn(`Unable to persist value for ${key}:`, error);
     }
   };
+
+  const readJsonStorage = (key) => {
+    const raw = readStorageValue(key);
+    if (typeof raw !== 'string' || raw.length === 0) {
+      return undefined;
+    }
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      console.warn(`Unable to parse stored value for ${key}:`, error);
+      return undefined;
+    }
+  };
+
+  const persistJsonStorage = (key, value) => {
+    if (!key) {
+      return;
+    }
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+      console.warn(`Unable to persist JSON value for ${key}:`, error);
+    }
+  };
+
+  const storedCommon = readJsonStorage(CALENDAR_COMMON_STORAGE_KEY);
+  if (storedCommon) {
+    if (
+      typeof storedCommon.archetype === 'string' &&
+      VALID_ARCHETYPES.has(storedCommon.archetype)
+    ) {
+      calendarConfig.common.archetype = storedCommon.archetype;
+    }
+    if (
+      typeof storedCommon.weekStart === 'string' &&
+      isoDatePattern.test(storedCommon.weekStart)
+    ) {
+      calendarConfig.common.weekStart = storedCommon.weekStart;
+    }
+    if (typeof storedCommon.seed === 'number') {
+      calendarConfig.common.seed = String(storedCommon.seed);
+      commonSeedUserEdited = true;
+    } else if (
+      typeof storedCommon.seed === 'string' &&
+      storedCommon.seed.trim().length > 0
+    ) {
+      const parsedSeed = Number.parseInt(storedCommon.seed, 10);
+      if (Number.isFinite(parsedSeed)) {
+        calendarConfig.common.seed = String(parsedSeed);
+        commonSeedUserEdited = true;
+      }
+    }
+  }
+  shouldPersistInitialCommon = !storedCommon;
+
+  const storedMk2Calendar = readJsonStorage(CALENDAR_MK2_CALENDAR_STORAGE_KEY);
+  if (storedMk2Calendar) {
+    calendarConfig.mk2.calendar.compress = Boolean(storedMk2Calendar.compress);
+    calendarConfig.mk2.calendar.conflicts = Boolean(storedMk2Calendar.conflicts);
+  }
+
+  const storedMk2Workforce = readJsonStorage(CALENDAR_MK2_WORKFORCE_STORAGE_KEY);
+  if (storedMk2Workforce && typeof storedMk2Workforce.budgetText === 'string') {
+    calendarConfig.mk2.workforce.budgetText = storedMk2Workforce.budgetText;
+  }
+
+  variantIds.forEach((variantId) => {
+    const defaultRig = defaultRigByVariant[variantId] || variantRigs[variantId]?.[0];
+    if (defaultRig) {
+      cfg.rig[variantId] = defaultRig;
+    }
+  });
 
   const storedClass = readStorageValue(CLASS_STORAGE_KEY);
   if (storedClass && classPanels.has(storedClass)) {
@@ -981,34 +1100,237 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     });
   };
 
-  const updateDerivedFromFoundation = () => {
-    const foundation = foundationByClass[cfg.class];
-    if (!foundation || typeof foundation.defaults !== 'function') {
+  const syncCommonStateToChips = () => {
+    cfg.archetype = calendarConfig.common.archetype || '';
+    cfg.weekStart = calendarConfig.common.weekStart || '';
+    cfg.seed = calendarConfig.common.seed ? String(calendarConfig.common.seed) : '';
+    renderSummaryChips();
+  };
+
+  const computeDeterministicSeed = () => {
+    const activeVariant = cfg.variant || '';
+    const activeRig = cfg.rig[activeVariant] || '';
+    const weekStartValue = calendarConfig.common.weekStart || currentMondayISO();
+    return String(deterministicSeed(`${activeVariant}:${activeRig}:${weekStartValue}`));
+  };
+
+  const syncCommonInputs = () => {
+    if (archetypeSelect) {
+      const target = calendarConfig.common.archetype || 'Office';
+      if (VALID_ARCHETYPES.has(target)) {
+        archetypeSelect.value = target;
+      } else {
+        archetypeSelect.value = 'Office';
+      }
+    }
+    if (weekStartInput) {
+      weekStartInput.value = calendarConfig.common.weekStart || currentMondayISO();
+    }
+    if (seedInput) {
+      seedInput.value = calendarConfig.common.seed || computeDeterministicSeed();
+    }
+  };
+
+  const persistCalendarCommon = () => {
+    shouldPersistInitialCommon = false;
+    const numericSeed = Number.parseInt(calendarConfig.common.seed, 10);
+    const payload = {
+      archetype: calendarConfig.common.archetype,
+      weekStart: calendarConfig.common.weekStart,
+      seed: Number.isFinite(numericSeed) ? numericSeed : calendarConfig.common.seed,
+    };
+    persistJsonStorage(CALENDAR_COMMON_STORAGE_KEY, payload);
+  };
+
+  const persistCalendarMk2Calendar = () => {
+    persistJsonStorage(CALENDAR_MK2_CALENDAR_STORAGE_KEY, {
+      compress: Boolean(calendarConfig.mk2.calendar.compress),
+      conflicts: Boolean(calendarConfig.mk2.calendar.conflicts),
+    });
+  };
+
+  const persistCalendarMk2Workforce = () => {
+    persistJsonStorage(CALENDAR_MK2_WORKFORCE_STORAGE_KEY, {
+      budgetText: calendarConfig.mk2.workforce.budgetText || '',
+    });
+  };
+
+  const syncMk2CalendarControls = () => {
+    if (mk2CalendarCompressToggle) {
+      mk2CalendarCompressToggle.checked = Boolean(calendarConfig.mk2.calendar.compress);
+    }
+    if (mk2CalendarConflictsToggle) {
+      mk2CalendarConflictsToggle.checked = Boolean(calendarConfig.mk2.calendar.conflicts);
+    }
+  };
+
+  const syncMk2WorkforceControls = () => {
+    if (mk2WorkforceTextarea) {
+      mk2WorkforceTextarea.value = calendarConfig.mk2.workforce.budgetText || '';
+    }
+  };
+
+  const updateDerivedFromFoundation = ({ persistCommon = false } = {}) => {
+    if (cfg.class !== 'calendar') {
       cfg.archetype = '';
       cfg.weekStart = '';
       cfg.seed = '';
       renderSummaryChips();
       return;
     }
-    try {
-      const activeVariant = cfg.variant;
-      const activeRig = cfg.rig[activeVariant];
-      const defaults = foundation.defaults({ variant: activeVariant, rig: activeRig });
-      cfg.archetype = defaults?.archetype || '';
-      cfg.weekStart = defaults?.weekStart || '';
-      const seedValue = defaults?.seed;
-      cfg.seed =
-        typeof seedValue === 'number' || typeof seedValue === 'string'
-          ? String(seedValue)
-          : '';
-    } catch (error) {
-      console.warn(`Unable to compute defaults for class ${cfg.class}:`, error);
-      cfg.archetype = '';
-      cfg.weekStart = '';
-      cfg.seed = '';
+    if (!VALID_ARCHETYPES.has(calendarConfig.common.archetype)) {
+      calendarConfig.common.archetype = 'Office';
     }
-    renderSummaryChips();
+    if (!calendarConfig.common.weekStart || !isoDatePattern.test(calendarConfig.common.weekStart)) {
+      calendarConfig.common.weekStart = currentMondayISO();
+    }
+    if (!calendarConfig.common.seed || !commonSeedUserEdited) {
+      calendarConfig.common.seed = computeDeterministicSeed();
+      commonSeedUserEdited = false;
+    }
+    syncCommonInputs();
+    syncCommonStateToChips();
+    if (persistCommon || shouldPersistInitialCommon) {
+      persistCalendarCommon();
+    }
   };
+
+  syncCommonInputs();
+  syncMk2CalendarControls();
+  syncMk2WorkforceControls();
+
+  if (archetypeSelect) {
+    archetypeSelect.addEventListener('change', () => {
+      const value = archetypeSelect.value;
+      if (!VALID_ARCHETYPES.has(value)) {
+        calendarConfig.common.archetype = 'Office';
+        archetypeSelect.value = 'Office';
+      } else {
+        calendarConfig.common.archetype = value;
+      }
+      persistCalendarCommon();
+      updateDerivedFromFoundation();
+    });
+  }
+
+  if (weekStartInput) {
+    weekStartInput.addEventListener('change', () => {
+      const value = weekStartInput.value;
+      if (value && isoDatePattern.test(value)) {
+        calendarConfig.common.weekStart = value;
+      } else {
+        const fallback = currentMondayISO();
+        calendarConfig.common.weekStart = fallback;
+        weekStartInput.value = fallback;
+      }
+      if (!commonSeedUserEdited) {
+        calendarConfig.common.seed = computeDeterministicSeed();
+      }
+      persistCalendarCommon();
+      updateDerivedFromFoundation();
+    });
+  }
+
+  if (seedInput) {
+    seedInput.addEventListener('change', () => {
+      const value = seedInput.value.trim();
+      if (!value) {
+        commonSeedUserEdited = false;
+        calendarConfig.common.seed = computeDeterministicSeed();
+        seedInput.value = calendarConfig.common.seed;
+      } else {
+        const numericSeed = Number.parseInt(value, 10);
+        if (!Number.isFinite(numericSeed)) {
+          seedInput.value = calendarConfig.common.seed || computeDeterministicSeed();
+          return;
+        }
+        calendarConfig.common.seed = String(numericSeed);
+        commonSeedUserEdited = true;
+      }
+      persistCalendarCommon();
+      updateDerivedFromFoundation();
+    });
+  }
+
+  if (seedResetButton) {
+    seedResetButton.addEventListener('click', () => {
+      commonSeedUserEdited = false;
+      calendarConfig.common.seed = computeDeterministicSeed();
+      persistCalendarCommon();
+      updateDerivedFromFoundation();
+    });
+  }
+
+  if (seedRandomButton) {
+    seedRandomButton.addEventListener('click', () => {
+      const randomSeed = Math.floor(Math.random() * 1_000_000_000);
+      calendarConfig.common.seed = String(randomSeed);
+      commonSeedUserEdited = true;
+      persistCalendarCommon();
+      updateDerivedFromFoundation();
+    });
+  }
+
+  if (mk2CalendarCompressToggle) {
+    mk2CalendarCompressToggle.addEventListener('change', () => {
+      calendarConfig.mk2.calendar.compress = mk2CalendarCompressToggle.checked;
+      persistCalendarMk2Calendar();
+    });
+  }
+
+  if (mk2CalendarConflictsToggle) {
+    mk2CalendarConflictsToggle.addEventListener('change', () => {
+      calendarConfig.mk2.calendar.conflicts = mk2CalendarConflictsToggle.checked;
+      persistCalendarMk2Calendar();
+    });
+  }
+
+  if (mk2WorkforceTextarea) {
+    mk2WorkforceTextarea.addEventListener('input', () => {
+      calendarConfig.mk2.workforce.budgetText = mk2WorkforceTextarea.value;
+      persistCalendarMk2Workforce();
+    });
+  }
+
+  if (mk2WorkforceDefaultButton) {
+    mk2WorkforceDefaultButton.addEventListener('click', () => {
+      if (mk2WorkforceTextarea) {
+        mk2WorkforceTextarea.value = MK2_WORKFORCE_DEFAULT_TEXT;
+      }
+      calendarConfig.mk2.workforce.budgetText = MK2_WORKFORCE_DEFAULT_TEXT;
+      persistCalendarMk2Workforce();
+      syncMk2WorkforceControls();
+    });
+  }
+
+  if (mk2WorkforceValidateButton) {
+    mk2WorkforceValidateButton.addEventListener('click', () => {
+      const raw = mk2WorkforceTextarea?.value ?? '';
+      try {
+        JSON.parse(raw);
+        dispatchIntent({
+          type: INTENT_TYPES.SHOW_TOAST,
+          payload: {
+            message: 'Workforce budget valid',
+            intent: 'success',
+            duration: 2400,
+          },
+        });
+      } catch (error) {
+        const description =
+          error instanceof Error ? error.message : 'Unable to parse JSON input.';
+        dispatchIntent({
+          type: INTENT_TYPES.SHOW_TOAST,
+          payload: {
+            message: 'Invalid workforce budget',
+            description,
+            intent: 'error',
+            duration: 5000,
+          },
+        });
+      }
+    });
+  }
 
   const syncClassUI = () => {
     classButtons.forEach((button) => {
@@ -1077,8 +1399,7 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     if (variantId === cfg.variant) {
       syncRigUI();
       syncRigPanels();
-      renderSummaryChips();
-      updateDerivedFromFoundation();
+      updateDerivedFromFoundation({ persistCommon: !commonSeedUserEdited });
     }
     if (updateStorage) {
       persistStorageValue(rigStorageKey(variantId), rigId);
@@ -1101,8 +1422,9 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     syncVariantUI();
     syncRigUI();
     syncRigPanels();
-    renderSummaryChips();
-    updateDerivedFromFoundation();
+    updateDerivedFromFoundation({
+      persistCommon: !commonSeedUserEdited || shouldPersistInitialCommon,
+    });
     if (updateStorage) {
       persistStorageValue(VARIANT_STORAGE_KEY, cfg.variant);
       const activeRig = cfg.rig[variantId];
@@ -1127,8 +1449,9 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
     if (targetVariant && variantRigs[targetVariant]) {
       applyVariant(targetVariant, { updateStorage });
     } else {
-      renderSummaryChips();
-      updateDerivedFromFoundation();
+      updateDerivedFromFoundation({
+        persistCommon: !commonSeedUserEdited || shouldPersistInitialCommon,
+      });
     }
     if (updateStorage) {
       persistStorageValue(CLASS_STORAGE_KEY, classId);
