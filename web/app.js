@@ -2168,23 +2168,41 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
 
       beginConsoleRun('Generating payload…');
 
-      const args = {
+      const runnerFnMap = {
+        mk1: { default: 'mk1_run' },
+        mk2: { calendar: 'mk2_run_calendar', workforce: 'mk2_run_workforce' },
+      };
+      const selectedFn = runnerFnMap[variantId]?.[rigId] || null;
+      const seedNumber = Number.parseInt(seedValue, 10);
+      const normalizedSeed = Number.isFinite(seedNumber) ? seedNumber : seedValue;
+
+      const workerArgs = {
         class: 'calendar',
         variant: variantId,
         rig: rigId,
         archetype,
         week_start: weekStartValue,
-        seed: seedValue,
+        seed: normalizedSeed,
       };
       if (budgetText && budgetText.trim()) {
-        args.budgetText = budgetText;
+        try {
+          workerArgs.yearly_budget = JSON.parse(budgetText);
+        } catch (parseError) {
+          throw { error: 'Invalid yearly budget JSON.', stdout: '', stderr: '' };
+        }
       }
 
       try {
-        const { result = null } = await sendWorkerMessage('run', {
-          fn: 'mock_run',
-          args,
-        });
+        const { result = null, stdout = '', stderr = '', fallback = false } =
+          await sendWorkerMessage('run', {
+            fn: selectedFn || 'mock_run',
+            args: workerArgs,
+          });
+
+        renderConsoleOutputs({ stdout, stderr });
+        if (fallback) {
+          appendConsoleLog('⚠ Pyodide imports failed — using mock engine output');
+        }
 
         if (!result || typeof result !== 'object') {
           appendConsoleLog('error: No result returned from worker.');
@@ -2213,7 +2231,7 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
           week_start: weekStartValue,
           seed: seedValue,
         };
-        if (args.budgetText) {
+        if (workerArgs.yearly_budget) {
           inputsSnapshot.budget = true;
         }
 
@@ -2240,6 +2258,10 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
 
         appendConsoleLog('Run completed');
       } catch (error) {
+        renderConsoleOutputs({
+          stdout: error?.stdout || '',
+          stderr: error?.stderr || '',
+        });
         const description =
           typeof error?.error === 'string' && error.error
             ? error.error
