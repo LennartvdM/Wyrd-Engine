@@ -464,6 +464,121 @@ body {
   padding: 10px;
 }
 
+.console-structured {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #1f2128;
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.console-structured-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.console-structured-summary {
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e5e7eb;
+  word-break: break-word;
+}
+
+.console-structured-copy {
+  background: #2b2f3b;
+  color: #d0d5e2;
+  border: 1px solid #3a3f4f;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, opacity 0.2s ease;
+}
+
+.console-structured-copy:hover:enabled {
+  background: #3a3f4f;
+  color: #ffffff;
+}
+
+.console-structured-copy:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.console-structured-details {
+  border: 1px solid #2a2d35;
+  border-radius: 4px;
+  background: #16171d;
+}
+
+.console-structured-details[hidden] {
+  display: none;
+}
+
+.console-structured-details > summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.console-structured-details > summary::marker {
+  color: #64748b;
+}
+
+.console-structured-table {
+  padding: 8px 12px 12px;
+  overflow-x: auto;
+}
+
+.console-structured-table-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  color: #e5e7eb;
+}
+
+.console-structured-table-grid th {
+  text-align: left;
+  font-weight: 600;
+  color: #cbd0df;
+  border-bottom: 1px solid #2a2d35;
+  padding: 6px 8px;
+}
+
+.console-structured-table-grid td {
+  padding: 6px 8px;
+  border-top: 1px solid #2a2d35;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.console-structured-syspath {
+  list-style: none;
+  margin: 0;
+  padding: 8px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  color: #cbd0df;
+}
+
+.console-structured-syspath li {
+  word-break: break-word;
+}
+
 .tab-panel[data-tab="config"] {
   display: none;
 }

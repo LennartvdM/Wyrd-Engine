@@ -1,3 +1,5 @@
+import { DEBUG } from './debug.js';
+
 const tabButtons = Array.from(
   document.querySelectorAll('.tab[data-tab-scope="root"]')
 );
@@ -10,6 +12,10 @@ const jsonTabButton = tabButtons.find((button) => button.dataset.tab === 'json')
 const fixturesTabButton = tabButtons.find((button) => button.dataset.tab === 'fixtures');
 let jsonTabBadge;
 let fixturesTabBadge;
+
+if (typeof window !== 'undefined') {
+  window.WYRD_DEBUG = DEBUG;
+}
 
 const RUN_HISTORY_STORAGE_KEY = 'runHistory';
 const RUN_HISTORY_LIMIT = 10;
@@ -368,28 +374,36 @@ function setJsonPayload(payload, options = {}) {
 
 loadRunHistoryFromStorage();
 
+async function copyTextToClipboard(text) {
+  const payload = typeof text === 'string' ? text : String(text ?? '');
+  if (!payload) {
+    throw new Error('Nothing to copy.');
+  }
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    await navigator.clipboard.writeText(payload);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = payload;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'absolute';
+  textarea.style.left = '-9999px';
+  document.body.append(textarea);
+  textarea.select();
+  const successful = document.execCommand ? document.execCommand('copy') : false;
+  textarea.remove();
+  if (!successful) {
+    throw new Error('Copy command was rejected.');
+  }
+}
+
 async function copyCurrentJsonToClipboard() {
   if (!hasJsonContent()) {
     return;
   }
-  const text = currentJsonText;
   try {
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      await navigator.clipboard.writeText(text);
-    } else {
-      const textarea = document.createElement('textarea');
-      textarea.value = text;
-      textarea.setAttribute('readonly', '');
-      textarea.style.position = 'absolute';
-      textarea.style.left = '-9999px';
-      document.body.append(textarea);
-      textarea.select();
-      const successful = document.execCommand ? document.execCommand('copy') : false;
-      textarea.remove();
-      if (!successful) {
-        throw new Error('Copy command was rejected.');
-      }
-    }
+    await copyTextToClipboard(currentJsonText);
     dispatchIntent({
       type: INTENT_TYPES.SHOW_TOAST,
       payload: {
@@ -1063,9 +1077,20 @@ let runtimeLoadingPromise;
 let runtimeStatus = 'idle';
 let hasShownRuntimeReadyToast = false;
 
+let consoleStructuredContainer;
+let consoleStructuredSummary;
+let consoleStructuredCopyButton;
+let consoleStructuredFailuresDetails;
+let consoleStructuredFailuresBody;
+let consoleStructuredSysPathDetails;
+let consoleStructuredSysPathList;
+let currentStructuredConsolePayload = null;
+
 let pyWorker;
 try {
-  pyWorker = new Worker('workers/pyRunner.js', { type: 'module' });
+  const workerUrl = new URL('./workers/pyRunner.js', import.meta.url);
+  workerUrl.searchParams.set('debug', DEBUG ? '1' : '0');
+  pyWorker = new Worker(workerUrl, { type: 'module' });
 } catch (error) {
   console.error('Failed to initialize runtime worker:', error);
 }
@@ -1076,7 +1101,18 @@ const workerPendingRequests = new Map();
 if (pyWorker) {
   pyWorker.addEventListener('message', (event) => {
     const { data } = event;
-    if (!data || typeof data.id === 'undefined') {
+    if (!data) {
+      return;
+    }
+    if (data.type === 'worker-log') {
+      handleWorkerLogMessage(data);
+      return;
+    }
+    if (data.type === 'worker-unhandled') {
+      handleWorkerUnhandledMessage(data);
+      return;
+    }
+    if (typeof data.id === 'undefined') {
       return;
     }
     const pending = workerPendingRequests.get(data.id);
@@ -1173,6 +1209,7 @@ function beginConsoleRun(message) {
   if (stderrOutput) {
     stderrOutput.textContent = defaultStderrMessage;
   }
+  updateConsoleStructuredPayload(null);
   setJsonValidationBadge('clear');
   if (currentTab === 'console') {
     dispatchIntent({
@@ -1182,27 +1219,43 @@ function beginConsoleRun(message) {
   }
 }
 
-function renderConsoleOutputs({ stdout, stderr }) {
+function renderConsoleOutputs({ stdout, stderr, structured } = {}) {
+  const structuredPayload = structured && typeof structured === 'object' ? structured : null;
+  const summary = structuredPayload ? formatStructuredErrorSummary(structuredPayload) : '';
+
+  const stdoutText = typeof stdout === 'string' && stdout ? stdout : '';
   if (stdoutOutput) {
-    const stdoutText = typeof stdout === 'string' && stdout ? stdout : '';
     stdoutOutput.textContent = stdoutText || defaultStdoutMessage;
     stdoutOutput.scrollTop = stdoutOutput.scrollHeight;
   }
+
+  let stderrText = typeof stderr === 'string' && stderr ? stderr : '';
+  if (structuredPayload) {
+    const fallback = summary
+      || (typeof structuredPayload.message === 'string' && structuredPayload.message)
+      || (typeof structuredPayload.error === 'string' && structuredPayload.error)
+      || '';
+    if (!stderrText && fallback) {
+      stderrText = fallback;
+    }
+  }
+
   if (stderrOutput) {
-    const stderrText = typeof stderr === 'string' && stderr ? stderr : '';
     stderrOutput.textContent = stderrText || defaultStderrMessage;
     stderrOutput.scrollTop = stderrOutput.scrollHeight;
   }
 
+  updateConsoleStructuredPayload(structuredPayload);
+
   if (currentTab !== 'console') {
-    const hasOutput = Boolean(stdout) || Boolean(stderr);
+    const hasOutput = Boolean(stdoutText) || Boolean(stderrText) || Boolean(structuredPayload);
     dispatchIntent({
       type: INTENT_TYPES.APP_STATUS,
       payload: { channel: 'console-indicator', visible: hasOutput },
     });
   }
 
-  if ((stdout && stdout.length > 0) || (stderr && stderr.length > 0)) {
+  if ((stdoutText && stdoutText.length > 0) || (stderrText && stderrText.length > 0) || structuredPayload) {
     if (pendingAutoSwitch && currentTab !== 'console') {
       dispatchIntent({
         type: INTENT_TYPES.NAVIGATE_TAB,
@@ -1231,6 +1284,329 @@ function appendConsoleLog(message) {
       ? stderrOutput.textContent
       : '';
   renderConsoleOutputs({ stdout: mergedStdout, stderr: previousStderr });
+}
+
+function formatStructuredErrorSummary(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+  const parts = [];
+  const stage = typeof payload.stage === 'string' && payload.stage ? payload.stage : '';
+  const type = typeof payload.type === 'string' && payload.type ? payload.type : '';
+  const failCount = Number.isFinite(payload.failCount)
+    ? payload.failCount
+    : Array.isArray(payload.failures)
+    ? payload.failures.length
+    : null;
+  const okCount = Number.isFinite(payload.okCount) ? payload.okCount : null;
+  const manifestSize = Number.isFinite(payload.manifestSize) ? payload.manifestSize : null;
+  const total = Number.isFinite(manifestSize)
+    ? manifestSize
+    : Number.isFinite(okCount) && Number.isFinite(failCount)
+    ? okCount + failCount
+    : null;
+
+  if (stage) {
+    parts.push(stage);
+  } else if (type) {
+    parts.push(type);
+  }
+
+  if (Number.isFinite(failCount)) {
+    let failSummary = `${failCount} failed`;
+    if (Number.isFinite(total)) {
+      failSummary += ` of ${total}`;
+    }
+    parts.push(failSummary);
+  } else if (typeof payload.message === 'string' && payload.message) {
+    parts.push(payload.message);
+  }
+
+  if (payload.base) {
+    parts.push(`base=${payload.base}`);
+  }
+
+  if (!stage && type) {
+    parts.push(type);
+  }
+
+  return parts.join(' • ');
+}
+
+function updateConsoleStructuredPayload(payload) {
+  if (!consoleStructuredContainer) {
+    currentStructuredConsolePayload = null;
+    return;
+  }
+
+  const structured = payload && typeof payload === 'object' ? payload : null;
+  currentStructuredConsolePayload = structured;
+
+  if (!structured) {
+    consoleStructuredContainer.hidden = true;
+    if (consoleStructuredSummary) {
+      consoleStructuredSummary.textContent = '';
+    }
+    if (consoleStructuredCopyButton) {
+      consoleStructuredCopyButton.disabled = true;
+    }
+    if (consoleStructuredFailuresDetails) {
+      consoleStructuredFailuresDetails.hidden = true;
+      consoleStructuredFailuresDetails.open = false;
+    }
+    if (consoleStructuredFailuresBody) {
+      consoleStructuredFailuresBody.innerHTML = '';
+    }
+    if (consoleStructuredSysPathDetails) {
+      consoleStructuredSysPathDetails.hidden = true;
+      consoleStructuredSysPathDetails.open = false;
+    }
+    if (consoleStructuredSysPathList) {
+      consoleStructuredSysPathList.innerHTML = '';
+    }
+    return;
+  }
+
+  consoleStructuredContainer.hidden = false;
+
+  const summary = formatStructuredErrorSummary(structured);
+  if (consoleStructuredSummary) {
+    const fallbackMessage =
+      summary || structured.message || structured.error || 'Runtime error encountered.';
+    consoleStructuredSummary.textContent = fallbackMessage;
+  }
+
+  if (consoleStructuredCopyButton) {
+    consoleStructuredCopyButton.disabled = false;
+  }
+
+  if (consoleStructuredFailuresDetails && consoleStructuredFailuresBody) {
+    if (Array.isArray(structured.failures) && structured.failures.length > 0) {
+      consoleStructuredFailuresDetails.hidden = false;
+      consoleStructuredFailuresBody.innerHTML = '';
+
+      const table = document.createElement('table');
+      table.className = 'console-structured-table-grid';
+
+      const thead = document.createElement('thead');
+      const headerRow = document.createElement('tr');
+      ['Path', 'Status', 'URL', 'Error'].forEach((label) => {
+        const th = document.createElement('th');
+        th.scope = 'col';
+        th.textContent = label;
+        headerRow.append(th);
+      });
+      thead.append(headerRow);
+
+      const tbody = document.createElement('tbody');
+      structured.failures.forEach((failure) => {
+        if (!failure || typeof failure !== 'object') {
+          return;
+        }
+        const row = document.createElement('tr');
+
+        const pathCell = document.createElement('td');
+        pathCell.textContent = failure.path || '';
+        row.append(pathCell);
+
+        const statusCell = document.createElement('td');
+        const statusValue =
+          typeof failure.status === 'number'
+            ? String(failure.status)
+            : typeof failure.status === 'string'
+            ? failure.status
+            : '';
+        statusCell.textContent = statusValue;
+        row.append(statusCell);
+
+        const urlCell = document.createElement('td');
+        urlCell.textContent = failure.finalURL || failure.url || '';
+        row.append(urlCell);
+
+        const errorCell = document.createElement('td');
+        errorCell.textContent = failure.error || failure.reason || '';
+        row.append(errorCell);
+
+        tbody.append(row);
+      });
+
+      table.append(thead, tbody);
+      consoleStructuredFailuresBody.append(table);
+    } else {
+      consoleStructuredFailuresDetails.hidden = true;
+      consoleStructuredFailuresDetails.open = false;
+      consoleStructuredFailuresBody.innerHTML = '';
+    }
+  }
+
+  if (consoleStructuredSysPathDetails && consoleStructuredSysPathList) {
+    const sysEntries = Array.isArray(structured.sysPath)
+      ? structured.sysPath
+      : Array.isArray(structured.sys_path)
+      ? structured.sys_path
+      : [];
+
+    if (sysEntries.length > 0) {
+      consoleStructuredSysPathDetails.hidden = false;
+      consoleStructuredSysPathList.innerHTML = '';
+      sysEntries.forEach((entry) => {
+        const item = document.createElement('li');
+        item.textContent = typeof entry === 'string' ? entry : String(entry ?? '');
+        consoleStructuredSysPathList.append(item);
+      });
+    } else {
+      consoleStructuredSysPathDetails.hidden = true;
+      consoleStructuredSysPathDetails.open = false;
+      consoleStructuredSysPathList.innerHTML = '';
+    }
+  }
+}
+
+async function handleCopyStructuredPayload() {
+  if (!currentStructuredConsolePayload) {
+    return;
+  }
+
+  try {
+    await copyTextToClipboard(JSON.stringify(currentStructuredConsolePayload, null, 2));
+    dispatchIntent({
+      type: INTENT_TYPES.SHOW_TOAST,
+      payload: {
+        message: 'Details copied',
+        intent: 'success',
+        duration: 2200,
+      },
+    });
+  } catch (error) {
+    dispatchIntent({
+      type: INTENT_TYPES.SHOW_TOAST,
+      payload: {
+        message: 'Copy failed',
+        description:
+          error && error.message ? error.message : 'Unable to copy details to clipboard.',
+        intent: 'error',
+        duration: 4000,
+      },
+    });
+  }
+}
+
+function deserializeWorkerLogArg(value) {
+  if (!value || typeof value !== 'object') {
+    if (typeof value === 'bigint') {
+      return `${value.toString()}n`;
+    }
+    return value;
+  }
+
+  if ('__error' in value) {
+    const error = new Error(value.message || '');
+    error.name = typeof value.name === 'string' && value.name ? value.name : 'Error';
+    if (typeof value.stack === 'string' && value.stack) {
+      error.stack = value.stack;
+    }
+    return error;
+  }
+
+  if (value.__type === 'function') {
+    return `[Function ${value.name || 'anonymous'}]`;
+  }
+
+  if (value.__type === 'symbol') {
+    const description = typeof value.description === 'string' ? value.description : '';
+    return description ? `Symbol(${description})` : 'Symbol()';
+  }
+
+  if (value.__type === 'bigint') {
+    return `${value.value || '0'}n`;
+  }
+
+  return value;
+}
+
+function handleWorkerLogMessage(message) {
+  if (!DEBUG) {
+    return;
+  }
+  const level = typeof message?.level === 'string' ? message.level : 'log';
+  const args = Array.isArray(message?.args)
+    ? message.args.map((arg) => deserializeWorkerLogArg(arg))
+    : [];
+
+  if (level === 'groupEnd') {
+    if (typeof console.groupEnd === 'function') {
+      console.groupEnd();
+    }
+    return;
+  }
+
+  if (level === 'group' || level === 'groupCollapsed') {
+    const fn =
+      level === 'groupCollapsed'
+        ? typeof console.groupCollapsed === 'function'
+          ? console.groupCollapsed
+          : console.group
+        : typeof console.group === 'function'
+        ? console.group
+        : console.log;
+    try {
+      fn.apply(console, args);
+    } catch (error) {
+      console.log(...args);
+    }
+    return;
+  }
+
+  if (level === 'table') {
+    if (typeof console.table === 'function') {
+      console.table(...args);
+    } else {
+      console.log(...args);
+    }
+    return;
+  }
+
+  const target = typeof console[level] === 'function' ? console[level] : console.log;
+  try {
+    target.apply(console, args);
+  } catch (error) {
+    console.log(...args);
+  }
+}
+
+function handleWorkerUnhandledMessage(message) {
+  if (!DEBUG) {
+    return;
+  }
+
+  const level = message?.kind === 'error' ? 'error' : 'warn';
+  const payload = {
+    kind: message?.kind || 'error',
+    message: message?.message || '',
+  };
+
+  if (typeof message?.filename === 'string' && message.filename) {
+    payload.filename = message.filename;
+  }
+  if (typeof message?.lineno === 'number') {
+    payload.lineno = message.lineno;
+  }
+  if (typeof message?.colno === 'number') {
+    payload.colno = message.colno;
+  }
+  if (message?.error) {
+    payload.error = deserializeWorkerLogArg(message.error);
+  }
+  if (message?.reason) {
+    payload.reason = deserializeWorkerLogArg(message.reason);
+  }
+
+  const target = typeof console[level] === 'function' ? console[level] : console.log;
+  try {
+    target.call(console, '[worker]', payload);
+  } catch (error) {
+    console.log('[worker]', payload);
+  }
 }
 
 async function ensureRuntimeLoaded() {
@@ -1352,15 +1728,13 @@ function handleRuntimeLoadFailure(error) {
     updateRuntimeButtonState(generateButton);
   }
   hasShownRuntimeReadyToast = false;
+  const summary = formatStructuredErrorSummary(error);
   const stderrMessage =
     typeof error?.stderr === 'string' && error.stderr
       ? error.stderr
-      : error?.error || 'Failed to initialize Pyodide runtime.';
-  renderConsoleOutputs({ stdout: error?.stdout || '', stderr: stderrMessage });
-  const toastDescription =
-    typeof error?.error === 'string' && error.error !== stderrMessage
-      ? error.error
-      : stderrMessage;
+      : summary || error?.error || 'Failed to initialize Pyodide runtime.';
+  renderConsoleOutputs({ stdout: error?.stdout || '', stderr: stderrMessage, structured: error });
+  const toastDescription = summary || (typeof error?.error === 'string' ? error.error : stderrMessage);
   dispatchIntent({
     type: INTENT_TYPES.SHOW_TOAST,
     payload: {
@@ -2258,17 +2632,20 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
 
         appendConsoleLog('Run completed');
       } catch (error) {
+        const summary = formatStructuredErrorSummary(error);
         renderConsoleOutputs({
           stdout: error?.stdout || '',
-          stderr: error?.stderr || '',
+          stderr: error?.stderr || summary,
+          structured: error,
         });
         const description =
-          typeof error?.error === 'string' && error.error
+          summary && summary.length > 0
+            ? summary
+            : typeof error?.error === 'string' && error.error
             ? error.error
             : error instanceof Error && error.message
             ? error.message
             : 'Generation failed.';
-        appendConsoleLog(`error: ${description}`);
         console.error('Generation failed:', error);
         dispatchIntent({
           type: INTENT_TYPES.SHOW_TOAST,
@@ -2373,8 +2750,55 @@ if (consolePanel) {
 
   stderrSection.append(stderrHeader, stderrOutput);
 
-  consoleContainer.append(stdoutSection, stderrSection);
+  consoleStructuredContainer = document.createElement('section');
+  consoleStructuredContainer.className = 'console-structured';
+  consoleStructuredContainer.hidden = true;
+
+  const structuredHeader = document.createElement('div');
+  structuredHeader.className = 'console-structured-header';
+
+  consoleStructuredSummary = document.createElement('div');
+  consoleStructuredSummary.className = 'console-structured-summary';
+  consoleStructuredSummary.textContent = '';
+
+  consoleStructuredCopyButton = document.createElement('button');
+  consoleStructuredCopyButton.type = 'button';
+  consoleStructuredCopyButton.className = 'console-structured-copy';
+  consoleStructuredCopyButton.textContent = 'Copy details';
+  consoleStructuredCopyButton.disabled = true;
+  consoleStructuredCopyButton.addEventListener('click', () => {
+    handleCopyStructuredPayload();
+  });
+
+  structuredHeader.append(consoleStructuredSummary, consoleStructuredCopyButton);
+
+  consoleStructuredFailuresDetails = document.createElement('details');
+  consoleStructuredFailuresDetails.className = 'console-structured-details';
+  consoleStructuredFailuresDetails.hidden = true;
+  const failuresSummary = document.createElement('summary');
+  failuresSummary.textContent = 'Failures';
+  consoleStructuredFailuresBody = document.createElement('div');
+  consoleStructuredFailuresBody.className = 'console-structured-table';
+  consoleStructuredFailuresDetails.append(failuresSummary, consoleStructuredFailuresBody);
+
+  consoleStructuredSysPathDetails = document.createElement('details');
+  consoleStructuredSysPathDetails.className = 'console-structured-details';
+  consoleStructuredSysPathDetails.hidden = true;
+  const sysPathSummary = document.createElement('summary');
+  sysPathSummary.textContent = 'sys.path';
+  consoleStructuredSysPathList = document.createElement('ul');
+  consoleStructuredSysPathList.className = 'console-structured-syspath';
+  consoleStructuredSysPathDetails.append(sysPathSummary, consoleStructuredSysPathList);
+
+  consoleStructuredContainer.append(
+    structuredHeader,
+    consoleStructuredFailuresDetails,
+    consoleStructuredSysPathDetails
+  );
+
+  consoleContainer.append(stdoutSection, stderrSection, consoleStructuredContainer);
   consolePanel.append(consoleContainer);
+  updateConsoleStructuredPayload(null);
 }
 
 if (jsonPanel) {
