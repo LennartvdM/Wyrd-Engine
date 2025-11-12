@@ -13,6 +13,7 @@ let repoFilesMirrored = false;
 let runInFlight = false;
 let importProbeComplete = false;
 let currentSysPathSnapshot = null;
+let repoInitializationPromise = null;
 
 function mockCalendarResult(args) {
   return {
@@ -94,6 +95,19 @@ async function mirrorRepoFiles(instance) {
   const failures = [];
   const successes = [];
 
+  try {
+    instance.FS.mkdir('/repo');
+  } catch (error) {
+    if (!/exists/i.test(String(error?.message || ''))) {
+      throw {
+        message: 'Failed to prepare /repo directory',
+        stage: 'mirror',
+        type: 'MirrorFailed',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   for (const path of manifest) {
     let status;
     try {
@@ -118,6 +132,22 @@ async function mirrorRepoFiles(instance) {
       }
 
       instance.FS.writeFile(path, source);
+
+      const repoTargetPath = `/repo/${path}`;
+      const repoDirectory = repoTargetPath.includes('/')
+        ? repoTargetPath.slice(0, repoTargetPath.lastIndexOf('/'))
+        : '';
+      if (repoDirectory) {
+        try {
+          instance.FS.mkdirTree(repoDirectory);
+        } catch (error) {
+          if (!/exists/i.test(String(error?.message || ''))) {
+            throw error;
+          }
+        }
+      }
+
+      instance.FS.writeFile(repoTargetPath, source);
       successes.push({ path, ok: true, size: source.length });
     } catch (error) {
       const message =
@@ -155,6 +185,67 @@ async function mirrorRepoFiles(instance) {
   }
 
   repoFilesMirrored = true;
+}
+
+async function initializeRepo(instance) {
+  if (repoInitializationPromise) {
+    return repoInitializationPromise;
+  }
+
+  repoInitializationPromise = (async () => {
+    let result;
+    try {
+      result = await instance.runPythonAsync(`
+import sys, os, json
+REPO = "/repo"
+if REPO not in sys.path:
+    sys.path.insert(0, REPO)
+os.environ["WYRD_REPO_READY"] = "1"
+_guard_payload = {"sys_path": list(sys.path)}
+print(_guard_payload)
+json.dumps(_guard_payload)
+      `);
+    } catch (error) {
+      throw {
+        message: 'Failed to execute repository initialization guard',
+        stage: 'repo-init',
+        type: 'RepoInitFailed',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    let parsed;
+    try {
+      parsed = result ? JSON.parse(result) : null;
+    } catch (error) {
+      throw {
+        message: 'Failed to parse repository guard response',
+        stage: 'repo-init',
+        type: 'RepoInitFailed',
+        error: error instanceof Error ? error.message : String(error),
+        raw: result,
+      };
+    }
+
+    if (!parsed || !Array.isArray(parsed.sys_path)) {
+      throw {
+        message: 'Repository guard returned invalid payload',
+        stage: 'repo-init',
+        type: 'RepoInitFailed',
+        raw: parsed,
+      };
+    }
+
+    currentSysPathSnapshot = [...parsed.sys_path];
+    return currentSysPathSnapshot;
+  })();
+
+  try {
+    return await repoInitializationPromise;
+  } catch (error) {
+    repoInitializationPromise = null;
+    throw error;
+  }
 }
 
 async function probeImports(instance) {
@@ -221,6 +312,7 @@ async function ensurePyodide() {
         indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/',
       });
       await mirrorRepoFiles(instance);
+      await initializeRepo(instance);
       await probeImports(instance);
       pyodide = instance;
       return instance;
@@ -234,6 +326,8 @@ async function ensurePyodide() {
     pyodide = null;
     repoFilesMirrored = false;
     importProbeComplete = false;
+    repoInitializationPromise = null;
+    currentSysPathSnapshot = null;
     throw error;
   }
 }
@@ -291,6 +385,11 @@ self.onmessage = async (event) => {
         if ('hint' in error) {
           payload.hint = error.hint;
         }
+      }
+      if (Array.isArray(currentSysPathSnapshot)) {
+        payload.sysPath = [...currentSysPathSnapshot];
+      } else if (currentSysPathSnapshot) {
+        payload.sysPath = currentSysPathSnapshot;
       }
       respond(payload);
     }
@@ -452,6 +551,11 @@ __out
         if ('hint' in error) {
           payload.hint = error.hint;
         }
+      }
+      if (Array.isArray(currentSysPathSnapshot)) {
+        payload.sysPath = [...currentSysPathSnapshot];
+      } else if (currentSysPathSnapshot) {
+        payload.sysPath = currentSysPathSnapshot;
       }
       respond(payload);
     } finally {
