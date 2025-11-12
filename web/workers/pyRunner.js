@@ -465,6 +465,23 @@ self.onmessage = async (event) => {
         },
       });
 
+      try {
+        await instance.runPythonAsync(
+          "import engines.web_adapter as ew\nprint('EW_OK')"
+        );
+        await instance.runPythonAsync(
+          `from engines.web_adapter import ${dispatchName} as _entry\nprint('ENTRY_OK')`
+        );
+      } catch (error) {
+        throw {
+          message: 'Failed to import engines.web_adapter entrypoint',
+          stage: 'run',
+          type: 'EntrypointImportFailed',
+          error: error instanceof Error ? error.message : String(error),
+          cause: error,
+        };
+      }
+
       const argsJSON = JSON.stringify(args || {});
       const pyCode = `
 import json
