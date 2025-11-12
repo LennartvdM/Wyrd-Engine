@@ -11,6 +11,7 @@ let pyodide = null;
 let pyodideReadyPromise = null;
 let repoFilesMirrored = false;
 let runInFlight = false;
+let importProbeComplete = false;
 
 function mockCalendarResult(args) {
   return {
@@ -113,6 +114,56 @@ async function mirrorRepoFiles(instance) {
   repoFilesMirrored = true;
 }
 
+async function probeImports(instance) {
+  if (importProbeComplete) {
+    return;
+  }
+
+  const result = await instance.runPythonAsync(`
+import importlib, json
+required = [
+    "engines.web_adapter",
+    "engines.engine_mk1",
+    "engines.engine_mk2",
+    "modules.validation",
+    "modules.unique_events",
+    "modules.friction_model",
+    "modules.calendar_provider",
+    "rigs.simple_rig",
+    "rigs.workforce_rig",
+]
+missing = [m for m in required if importlib.util.find_spec(m) is None]
+print(json.dumps({"missing": missing}))
+json.dumps({"missing": missing})
+  `);
+
+  let parsed;
+  try {
+    parsed = typeof result === 'string' ? JSON.parse(result) : {};
+  } catch (error) {
+    throw {
+      message: 'Failed to parse import probe response',
+      stage: 'import-probe',
+      type: 'ProbeFailed',
+      hint: 'Check PY_MANIFEST',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const { missing = [] } = parsed || {};
+  if (Array.isArray(missing) && missing.length > 0) {
+    throw {
+      message: `Missing Python modules: ${missing.join(', ')}`,
+      stage: 'import-probe',
+      type: 'MissingModules',
+      missing,
+      hint: 'Check PY_MANIFEST',
+    };
+  }
+
+  importProbeComplete = true;
+}
+
 async function ensurePyodide() {
   if (pyodide) {
     return pyodide;
@@ -127,6 +178,7 @@ async function ensurePyodide() {
         indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.24.1/full/',
       });
       await mirrorRepoFiles(instance);
+      await probeImports(instance);
       pyodide = instance;
       return instance;
     })();
@@ -138,6 +190,7 @@ async function ensurePyodide() {
     pyodideReadyPromise = null;
     pyodide = null;
     repoFilesMirrored = false;
+    importProbeComplete = false;
     throw error;
   }
 }
@@ -171,11 +224,32 @@ self.onmessage = async (event) => {
       await ensurePyodide();
       respond({ ok: true, ready: true });
     } catch (error) {
-      respond({
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : error && typeof error === 'object' && 'message' in error
+          ? String(error.message)
+          : String(error);
+      const payload = {
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
-        trace: error?.stack || '',
-      });
+        error: errorMessage,
+        trace: error instanceof Error ? error.stack || '' : error?.stack || '',
+      };
+      if (error && typeof error === 'object') {
+        if ('stage' in error) {
+          payload.stage = error.stage;
+        }
+        if ('type' in error) {
+          payload.type = error.type;
+        }
+        if ('missing' in error) {
+          payload.missing = error.missing;
+        }
+        if ('hint' in error) {
+          payload.hint = error.hint;
+        }
+      }
+      respond(payload);
     }
     return;
   }
@@ -304,18 +378,39 @@ __out
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
-      respond({
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : error && typeof error === 'object' && 'message' in error
+          ? String(error.message)
+          : String(error);
+      const payload = {
         ok: false,
-        error:
+        error: errorMessage === '__timeout__' ? 'timeout' : errorMessage,
+        trace:
           error instanceof Error && error.message === '__timeout__'
-            ? 'timeout'
+            ? ''
             : error instanceof Error
-            ? error.message
-            : String(error),
-        trace: error instanceof Error && error.message === '__timeout__' ? '' : error?.stack || '',
+            ? error.stack || ''
+            : error?.stack || '',
         stdout: stdoutParts.join(''),
         stderr: stderrParts.join(''),
-      });
+      };
+      if (error && typeof error === 'object') {
+        if ('stage' in error) {
+          payload.stage = error.stage;
+        }
+        if ('type' in error) {
+          payload.type = error.type;
+        }
+        if ('missing' in error) {
+          payload.missing = error.missing;
+        }
+        if ('hint' in error) {
+          payload.hint = error.hint;
+        }
+      }
+      respond(payload);
     } finally {
       if (timeoutId) {
         clearTimeout(timeoutId);
