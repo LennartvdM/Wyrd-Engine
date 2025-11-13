@@ -94,9 +94,14 @@ body {
   color: #ffffff;
 }
 
+.root-tab {
+  opacity: 0.7;
+}
+
 .root-tab--active {
   background: #3a3f4f;
   color: #ffffff;
+  opacity: 1;
 }
 
 .tab-content {

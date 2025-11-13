@@ -8,9 +8,15 @@
 </head>
 <body>
   <div class="workbench">
-    <nav class="tab-bar" role="tablist" aria-label="Workbench tabs">
+    <nav
+      id="root-tab-bar"
+      class="tab-bar"
+      role="tablist"
+      aria-label="Workbench tabs"
+      data-root-tabs
+    >
       <button
-        class="tab root-tab root-tab--active active"
+        class="tab root-tab root-tab--active"
         type="button"
         id="tab-visuals"
         role="tab"
@@ -107,7 +113,6 @@
         aria-labelledby="tab-config"
         data-tab="config"
         data-root-panel="config"
-        hidden
         tabindex="-1"
       >
         <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Config</h2>
@@ -241,7 +246,6 @@
         aria-labelledby="tab-console"
         data-tab="console"
         data-root-panel="console"
-        hidden
         tabindex="-1"
       >
         <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Console</h2>
@@ -253,7 +257,6 @@
         aria-labelledby="tab-json"
         data-tab="json"
         data-root-panel="json"
-        hidden
         tabindex="-1"
       >
         <h2 class="tab-panel-title" data-tab-heading tabindex="-1">JSON</h2>
@@ -265,7 +268,6 @@
         aria-labelledby="tab-fixtures"
         data-tab="fixtures"
         data-root-panel="fixtures"
-        hidden
         tabindex="-1"
       >
         <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Fixtures</h2>
@@ -277,7 +279,6 @@
         aria-labelledby="tab-logs"
         data-tab="logs"
         data-root-panel="logs"
-        hidden
         tabindex="-1"
       >
         <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Logs</h2>

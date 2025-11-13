@@ -1,6 +1,8 @@
 import { DEBUG } from './debug.js';
 import { createRadialUrchin } from './ui/visuals/RadialUrchin.js';
 
+console.info('[app] app.js loaded');
+
 const tabList = document.querySelector('.tab-bar[role="tablist"]');
 if (tabList instanceof HTMLElement && !tabList.hasAttribute('aria-orientation')) {
   tabList.setAttribute('aria-orientation', 'horizontal');
@@ -1045,11 +1047,16 @@ let consoleIndicator;
 let pendingAutoSwitch = false;
 
 function focusTabPanel(targetTab) {
-  const panel = tabPanelMap.get(targetTab);
+  if (typeof targetTab !== 'string') {
+    return;
+  }
+  const normalized = targetTab.toLowerCase();
+  collectRootTabElements();
+  const panel = tabPanelMap.get(normalized);
   if (!panel) {
     return;
   }
-  const heading = tabHeadings.get(targetTab);
+  const heading = tabHeadings.get(normalized);
   const focusTarget = heading instanceof HTMLElement ? heading : panel;
   if (focusTarget && typeof focusTarget.focus === 'function') {
     try {
@@ -1060,19 +1067,23 @@ function focusTabPanel(targetTab) {
   }
 }
 
-function goToRootTab(targetTab, options = {}) {
-  console.info('[root-tabs] switching to', targetTab);
-  const { focusPanel = false } = options;
-  if (typeof targetTab !== 'string') {
+function goToRootTab(id) {
+  if (typeof id !== 'string' || !id) {
     return;
   }
-  const normalizedTarget = targetTab.toLowerCase();
+  console.info('[root-tabs] switching to', id);
+  const normalizedTarget = id.toLowerCase();
   if (!tabOrder.includes(normalizedTarget)) {
     return;
   }
 
-  tabButtons.forEach((button) => {
-    const buttonId = (button.dataset.rootTab || button.dataset.tab || '').toLowerCase();
+  collectRootTabElements();
+
+  const tabs = document.querySelectorAll('[data-root-tab]');
+  const panels = document.querySelectorAll('[data-root-panel]');
+
+  tabs.forEach((button) => {
+    const buttonId = (button.dataset.rootTab || '').toLowerCase();
     const isActive = buttonId === normalizedTarget;
     button.classList.toggle('active', isActive);
     button.classList.toggle('root-tab--active', isActive);
@@ -1080,8 +1091,8 @@ function goToRootTab(targetTab, options = {}) {
     button.setAttribute('tabindex', isActive ? '0' : '-1');
   });
 
-  tabPanels.forEach((panel) => {
-    const panelId = (panel.dataset.rootPanel || panel.dataset.tab || '').toLowerCase();
+  panels.forEach((panel) => {
+    const panelId = (panel.dataset.rootPanel || '').toLowerCase();
     const isActive = panelId === normalizedTarget;
     panel.classList.toggle('active', isActive);
     panel.classList.toggle('root-panel--active', isActive);
@@ -1101,61 +1112,68 @@ function goToRootTab(targetTab, options = {}) {
     });
     pendingAutoSwitch = false;
   }
-  if (focusPanel) {
-    focusTabPanel(normalizedTarget);
-  }
 }
 
 function initRootTabs() {
-  if (!document.body || document.body.dataset.rootTabsHydrated === '1') {
+  if (!document.body) {
     return;
   }
+  if (document.body.dataset.rootTabsHydrated === '1') {
+    console.info('[root-tabs] already hydrated');
+    return;
+  }
+  document.body.dataset.rootTabsHydrated = '1';
+
+  const bar = document.querySelector('[data-root-tabs]');
+  if (!bar) {
+    console.warn('[root-tabs] no [data-root-tabs] container found');
+    return;
+  }
+
+  console.info('[root-tabs] hydrating');
 
   collectRootTabElements();
 
-  const tabs = tabButtons;
-  const panels = tabPanels;
-
-  console.info(
-    '[root-tabs] found tabs:',
-    tabs.map((tab) => tab.dataset.rootTab || tab.dataset.tab || '')
-  );
-  console.info(
-    '[root-tabs] found panels:',
-    panels.map((panel) => panel.dataset.rootPanel || panel.dataset.tab || '')
-  );
-
-  document.body.dataset.rootTabsHydrated = '1';
-
-  if (tabs.length === 0 || panels.length === 0) {
-    return;
-  }
-
-  tabs.forEach((tab) => {
-    tab.addEventListener('click', (event) => {
-      console.info('[root-tabs] click on', tab.dataset.rootTab || tab.dataset.tab);
-      event.preventDefault();
-      const targetId = tab.dataset.rootTab || tab.dataset.tab;
-      if (targetId) {
-        goToRootTab(targetId, { focusPanel: true });
-      }
-    });
+  bar.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-root-tab]');
+    if (!btn) {
+      return;
+    }
+    event.preventDefault();
+    const id = btn.dataset.rootTab;
+    if (!id) {
+      return;
+    }
+    console.info('[root-tabs] click on', id);
+    goToRootTab(id);
+    focusTabPanel(id);
   });
 
-  const defaultTabButton =
-    tabs.find((button) => button.classList.contains('root-tab--active')) ||
-    tabs.find((button) => button.classList.contains('active')) ||
-    tabs[0];
+  tabButtons.forEach((button) => {
+    button.addEventListener('keydown', handleRootTabKeydown);
+  });
 
-  const defaultTarget =
-    defaultTabButton?.dataset.rootTab ||
-    defaultTabButton?.dataset.tab ||
-    tabOrder[0];
+  if (consoleTabButton) {
+    consoleTabButton.style.display = 'inline-flex';
+    consoleTabButton.style.alignItems = 'center';
+    consoleTabButton.style.justifyContent = 'center';
 
-  if (defaultTarget) {
-    goToRootTab(defaultTarget, { focusPanel: false });
-  } else if (tabOrder.length > 0) {
-    goToRootTab(tabOrder[0], { focusPanel: false });
+    consoleIndicator = document.createElement('span');
+    consoleIndicator.textContent = '•';
+    consoleIndicator.setAttribute('aria-hidden', 'true');
+    consoleIndicator.style.marginLeft = '4px';
+    consoleIndicator.style.fontSize = '10px';
+    consoleIndicator.style.color = '#22d3ee';
+    consoleIndicator.style.opacity = '0';
+    consoleIndicator.style.transition = 'opacity 0.2s ease';
+    consoleIndicator.style.pointerEvents = 'none';
+    consoleTabButton.append(consoleIndicator);
+  }
+
+  const firstActive = document.querySelector('[data-root-tab].root-tab--active');
+  const first = firstActive || document.querySelector('[data-root-tab]');
+  if (first && first.dataset.rootTab) {
+    goToRootTab(first.dataset.rootTab);
   }
 }
 
@@ -1164,28 +1182,16 @@ registerIntentHandler(INTENT_TYPES.NAVIGATE_TAB, (payload = {}) => {
   if (!target) {
     return;
   }
-  const shouldFocus = payload.focusPanel === true;
-  goToRootTab(target, { focusPanel: shouldFocus });
+  goToRootTab(target);
+  if (payload.focusPanel === true) {
+    focusTabPanel(target);
+  }
 });
 
-initRootTabs();
-
-if (consoleTabButton) {
-  consoleTabButton.style.display = 'inline-flex';
-  consoleTabButton.style.alignItems = 'center';
-  consoleTabButton.style.justifyContent = 'center';
-
-  consoleIndicator = document.createElement('span');
-  consoleIndicator.textContent = '•';
-  consoleIndicator.setAttribute('aria-hidden', 'true');
-  consoleIndicator.style.marginLeft = '4px';
-  consoleIndicator.style.fontSize = '10px';
-  consoleIndicator.style.color = '#22d3ee';
-  consoleIndicator.style.opacity = '0';
-  consoleIndicator.style.transition = 'opacity 0.2s ease';
-  consoleIndicator.style.pointerEvents = 'none';
-  consoleTabButton.append(consoleIndicator);
-}
+document.addEventListener('DOMContentLoaded', () => {
+  console.info('[app] DOMContentLoaded');
+  initRootTabs();
+});
 
 function handleRootTabKeydown(event) {
   const { key } = event;
@@ -1240,10 +1246,6 @@ function handleRootTabKeydown(event) {
     });
   }
 }
-
-tabButtons.forEach((button) => {
-  button.addEventListener('keydown', handleRootTabKeydown);
-});
 
 function tabFromShortcutKey(key) {
   const numericKey = Number.parseInt(key, 10);
