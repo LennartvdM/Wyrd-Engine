@@ -78,41 +78,6 @@ function ensureElement(parent, selector, factory) {
   return element;
 }
 
-function createDemoData() {
-  const labels = ['Work', 'Break', 'Sleep', 'Exercise', 'Family'];
-  const events = [];
-  for (let day = 0; day < 7; day += 1) {
-    let cursor = 6 * 60; // start day at 6am
-    const date = new Date(Date.now() + day * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10);
-    events.push({ date, start: '00:00', end: '06:00', label: 'Sleep', activity: 'rest' });
-    while (cursor < 22 * 60) {
-      const label = labels[(day + cursor) % labels.length];
-      const duration = [60, 90, 120][(cursor / 30) % 3];
-      const end = cursor + duration;
-      const startTime = minutesToTime(cursor);
-      const endTime = minutesToTime(end % FULL_DAY_MINUTES);
-      events.push({
-        date,
-        start: startTime,
-        end: endTime,
-        label,
-        activity: label.toLowerCase(),
-        agent: day % 2 === 0 ? 'Agent A' : 'Agent B',
-      });
-      cursor = end;
-    }
-    events.push({ date, start: '22:00', end: '24:00', label: 'Sleep', activity: 'rest' });
-  }
-  return {
-    schema_version: 'web_v1_calendar',
-    week_start: new Date().toISOString().slice(0, 10),
-    events,
-    metadata: { demo: true },
-  };
-}
-
 function buildTooltipContent(arc) {
   if (!arc) {
     return '';
@@ -171,6 +136,8 @@ export class RadialUrchin {
     this.frameHandle = null;
     this.lastTick = null;
     this.contrastQuery = null;
+    this.hasRenderableData = false;
+    this.didWarnNoData = false;
 
     this.handleResize = this.handleResize.bind(this);
     this.handlePointerMove = this.handlePointerMove.bind(this);
@@ -419,14 +386,37 @@ export class RadialUrchin {
 
   update(props = {}) {
     this.props = { ...this.props, ...props };
-    if (!this.props.data || !Array.isArray(this.props.data.events) || this.props.data.events.length === 0) {
-      if (!this.demoData) {
-        this.demoData = createDemoData();
-      }
-      this.layout = computeUrchinLayout(this.demoData, { mode: this.state.mode ?? this.props.mode });
-    } else {
-      this.layout = computeUrchinLayout(this.props.data, { mode: this.state.mode ?? this.props.mode, includeLabels: (label) => !this.hiddenLabels.has(label), highContrast: this.state.highContrast });
+    const payload = this.props.data;
+    const hasEvents =
+      payload &&
+      typeof payload === 'object' &&
+      Array.isArray(payload.events) &&
+      payload.events.length > 0;
+
+    if (!hasEvents) {
+      this.layout = null;
+      this.hasRenderableData = false;
+      this.rebuildDisplayArcs();
+      this.updateLegend();
+      this.refreshModeButtons();
+      this.render();
+      return;
     }
+
+    try {
+      this.layout = computeUrchinLayout(this.props.data, {
+        mode: this.state.mode ?? this.props.mode,
+        includeLabels: (label) => !this.hiddenLabels.has(label),
+        highContrast: this.state.highContrast,
+      });
+      this.hasRenderableData = true;
+      this.didWarnNoData = false;
+    } catch (error) {
+      console.error('[RadialUrchin] failed to compute layout:', error);
+      this.layout = null;
+      this.hasRenderableData = false;
+    }
+
     this.updateLegend();
     this.refreshModeButtons();
     this.rebuildDisplayArcs();
@@ -666,9 +656,23 @@ export class RadialUrchin {
       return;
     }
     const ctx = this.offscreen.getContext('2d');
-    if (!ctx) {
+    const mainCtx = this.canvas.getContext('2d');
+    if (!ctx || !mainCtx) {
       return;
     }
+
+    if (!this.hasRenderableData || !this.layout || !Array.isArray(this.layout.arcs) || this.layout.arcs.length === 0) {
+      ctx.clearRect(0, 0, this.offscreen.width, this.offscreen.height);
+      mainCtx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      if (!this.didWarnNoData) {
+        console.warn('[RadialUrchin] no data to render, skipping');
+        this.didWarnNoData = true;
+      }
+      this.updateSelectionOverlay();
+      this.updateScrubOverlay();
+      return;
+    }
+
     ctx.clearRect(0, 0, this.offscreen.width, this.offscreen.height);
     const dpr = window.devicePixelRatio || 1;
     ctx.save();
@@ -695,10 +699,6 @@ export class RadialUrchin {
     ctx.restore();
     ctx.globalAlpha = 1;
 
-    const mainCtx = this.canvas.getContext('2d');
-    if (!mainCtx) {
-      return;
-    }
     mainCtx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     mainCtx.drawImage(this.offscreen, 0, 0);
 
@@ -1005,6 +1005,31 @@ export class RadialUrchin {
   }
 }
 
+function hasRenderableEvents(data) {
+  return (
+    data &&
+    typeof data === 'object' &&
+    Array.isArray(data.events) &&
+    data.events.length > 0
+  );
+}
+
 export function createRadialUrchin(root, props) {
-  return new RadialUrchin(root, props);
+  if (!(root instanceof HTMLElement)) {
+    console.warn('[RadialUrchin] invalid mount element, skipping');
+    return null;
+  }
+
+  const payload = props?.data;
+  if (!hasRenderableEvents(payload)) {
+    console.info('[RadialUrchin] no data at create time, not rendering yet');
+    return null;
+  }
+
+  try {
+    return new RadialUrchin(root, props);
+  } catch (error) {
+    console.error('[RadialUrchin] failed to initialize:', error);
+    return null;
+  }
 }
