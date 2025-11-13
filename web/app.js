@@ -1,13 +1,32 @@
 import { DEBUG } from './debug.js';
 import { createRadialUrchin } from './ui/visuals/RadialUrchin.js';
 
+const tabList = document.querySelector('.tab-bar[role="tablist"]');
+if (tabList instanceof HTMLElement && !tabList.hasAttribute('aria-orientation')) {
+  tabList.setAttribute('aria-orientation', 'horizontal');
+}
 const tabButtons = Array.from(
   document.querySelectorAll('.tab[data-tab-scope="root"]')
 );
 const tabPanels = Array.from(
   document.querySelectorAll('.tab-panel[data-tab-scope="root"]')
 );
-const tabOrder = ['calendar', 'config', 'console', 'json', 'fixtures', 'logs'];
+const tabPanelMap = new Map();
+tabPanels.forEach((panel) => {
+  if (panel.dataset.tab) {
+    tabPanelMap.set(panel.dataset.tab, panel);
+  }
+});
+const tabHeadings = new Map();
+tabPanels.forEach((panel) => {
+  if (panel.dataset.tab) {
+    const heading = panel.querySelector('[data-tab-heading]');
+    if (heading instanceof HTMLElement) {
+      tabHeadings.set(panel.dataset.tab, heading);
+    }
+  }
+});
+const tabOrder = ['visuals', 'config', 'console', 'json', 'fixtures', 'logs'];
 const consoleTabButton = tabButtons.find((button) => button.dataset.tab === 'console');
 const jsonTabButton = tabButtons.find((button) => button.dataset.tab === 'json');
 const fixturesTabButton = tabButtons.find((button) => button.dataset.tab === 'fixtures');
@@ -101,11 +120,12 @@ function updateVisuals(payload) {
         }
       } else {
         visualsState.fallbackImg.removeAttribute('src');
-        visualsState.fallbackImg.alt = 'Legacy calendar preview unavailable';
+        visualsState.fallbackImg.alt = 'Legacy visuals preview unavailable';
         visualsState.fallbackImg.hidden = true;
         if (visualsState.fallbackMessage) {
           visualsState.fallbackMessage.hidden = false;
-          visualsState.fallbackMessage.textContent = 'Legacy PNG preview unavailable. Run generator to produce a fresh export.';
+          visualsState.fallbackMessage.textContent =
+            'Legacy visuals preview unavailable. Run generator to produce a fresh export.';
         }
       }
     }
@@ -115,8 +135,7 @@ function updateVisuals(payload) {
   }
 }
 
-const visualsContainerElement =
-  document.querySelector('#visuals-container') || document.querySelector('#calendar-container');
+const visualsContainerElement = document.querySelector('#visuals-container');
 
 if (visualsContainerElement) {
   visualsState.container = visualsContainerElement;
@@ -131,11 +150,11 @@ if (visualsContainerElement) {
   fallback.className = 'visuals-fallback-panel';
   const fallbackImg = document.createElement('img');
   fallbackImg.className = 'visuals-fallback-panel__image';
-  fallbackImg.alt = 'Legacy calendar preview unavailable';
+  fallbackImg.alt = 'Legacy visuals preview unavailable';
   fallbackImg.hidden = true;
   const fallbackMessage = document.createElement('p');
   fallbackMessage.className = 'visuals-fallback-panel__message';
-  fallbackMessage.textContent = 'Legacy PNG preview unavailable.';
+  fallbackMessage.textContent = 'Legacy visuals preview unavailable.';
   fallbackMessage.hidden = true;
   fallback.append(fallbackImg, fallbackMessage);
   visualsContainerElement.append(fallback);
@@ -366,7 +385,7 @@ function renderRunHistory() {
       setJsonValidationBadge(validation.ok ? 'ok' : 'err');
       dispatchIntent({
         type: INTENT_TYPES.NAVIGATE_TAB,
-        payload: { tab: 'json' },
+        payload: { tab: 'json', focusPanel: true },
       });
     });
 
@@ -989,7 +1008,24 @@ let currentTab =
 let consoleIndicator;
 let pendingAutoSwitch = false;
 
-function applyActiveTab(targetTab) {
+function focusTabPanel(targetTab) {
+  const panel = tabPanelMap.get(targetTab);
+  if (!panel) {
+    return;
+  }
+  const heading = tabHeadings.get(targetTab);
+  const focusTarget = heading instanceof HTMLElement ? heading : panel;
+  if (focusTarget && typeof focusTarget.focus === 'function') {
+    try {
+      focusTarget.focus({ preventScroll: true });
+    } catch (error) {
+      focusTarget.focus();
+    }
+  }
+}
+
+function applyActiveTab(targetTab, options = {}) {
+  const { focusPanel = false } = options;
   if (typeof targetTab !== 'string') {
     return;
   }
@@ -1001,11 +1037,15 @@ function applyActiveTab(targetTab) {
   tabButtons.forEach((button) => {
     const isActive = button.dataset.tab === normalizedTarget;
     button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    button.setAttribute('tabindex', isActive ? '0' : '-1');
   });
 
   tabPanels.forEach((panel) => {
     const isActive = panel.dataset.tab === normalizedTarget;
     panel.classList.toggle('active', isActive);
+    panel.toggleAttribute('hidden', !isActive);
+    panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
   });
 
   currentTab = normalizedTarget;
@@ -1019,6 +1059,9 @@ function applyActiveTab(targetTab) {
     });
     pendingAutoSwitch = false;
   }
+  if (focusPanel) {
+    focusTabPanel(normalizedTarget);
+  }
 }
 
 registerIntentHandler(INTENT_TYPES.NAVIGATE_TAB, (payload = {}) => {
@@ -1027,7 +1070,8 @@ registerIntentHandler(INTENT_TYPES.NAVIGATE_TAB, (payload = {}) => {
   if (!target) {
     return;
   }
-  applyActiveTab(target);
+  const shouldFocus = payload.focusPanel === true;
+  applyActiveTab(target, { focusPanel: shouldFocus });
 });
 
 if (consoleTabButton) {
@@ -1047,15 +1091,71 @@ if (consoleTabButton) {
   consoleTabButton.append(consoleIndicator);
 }
 
+function handleRootTabKeydown(event) {
+  const { key } = event;
+  if (event.altKey || event.ctrlKey || event.metaKey) {
+    return;
+  }
+  const button = event.currentTarget;
+  if (!(button instanceof HTMLElement)) {
+    return;
+  }
+  const tabKey = button.dataset.tab;
+  if (!tabKey) {
+    return;
+  }
+  if (key === 'ArrowRight' || key === 'ArrowLeft') {
+    event.preventDefault();
+    const currentIndex = tabOrder.indexOf(tabKey);
+    if (currentIndex === -1) {
+      return;
+    }
+    const delta = key === 'ArrowRight' ? 1 : -1;
+    const nextIndex = (currentIndex + delta + tabOrder.length) % tabOrder.length;
+    const nextTab = tabOrder[nextIndex];
+    dispatchIntent({
+      type: INTENT_TYPES.NAVIGATE_TAB,
+      payload: { tab: nextTab, focusPanel: true },
+    });
+    return;
+  }
+  if (key === 'Home') {
+    event.preventDefault();
+    dispatchIntent({
+      type: INTENT_TYPES.NAVIGATE_TAB,
+      payload: { tab: tabOrder[0], focusPanel: true },
+    });
+    return;
+  }
+  if (key === 'End') {
+    event.preventDefault();
+    dispatchIntent({
+      type: INTENT_TYPES.NAVIGATE_TAB,
+      payload: { tab: tabOrder[tabOrder.length - 1], focusPanel: true },
+    });
+    return;
+  }
+  if (key === 'Enter' || key === ' ') {
+    event.preventDefault();
+    dispatchIntent({
+      type: INTENT_TYPES.NAVIGATE_TAB,
+      payload: { tab: tabKey, focusPanel: true },
+    });
+  }
+}
+
 tabButtons.forEach((button) => {
   button.addEventListener('click', () => {
     const targetTab = button.dataset.tab;
     dispatchIntent({
       type: INTENT_TYPES.NAVIGATE_TAB,
-      payload: { tab: targetTab },
+      payload: { tab: targetTab, focusPanel: true },
     });
   });
+  button.addEventListener('keydown', handleRootTabKeydown);
 });
+
+applyActiveTab(currentTab, { focusPanel: false });
 
 function tabFromShortcutKey(key) {
   const numericKey = Number.parseInt(key, 10);
@@ -1088,7 +1188,7 @@ const paletteList = document.createElement('ul');
 paletteList.className = 'command-palette-actions';
 
 const paletteActions = [
-  { label: 'Go to Visuals', tab: 'calendar' },
+  { label: 'Go to Visuals', tab: 'visuals' },
   { label: 'Go to Config', tab: 'config' },
   { label: 'Go to Console', tab: 'console' },
   { label: 'Go to JSON', tab: 'json' },
@@ -1113,7 +1213,7 @@ paletteActions.forEach((action) => {
     button.addEventListener('click', () => {
       dispatchIntent({
         type: INTENT_TYPES.NAVIGATE_TAB,
-        payload: { tab: action.tab },
+        payload: { tab: action.tab, focusPanel: true },
       });
       closePalette();
     });
@@ -1190,7 +1290,7 @@ document.addEventListener('keydown', (event) => {
       event.preventDefault();
       dispatchIntent({
         type: INTENT_TYPES.NAVIGATE_TAB,
-        payload: { tab: targetTab },
+        payload: { tab: targetTab, focusPanel: true },
       });
       if (isPaletteOpen) {
         closePalette();
@@ -3062,7 +3162,7 @@ if (fixturesPanel) {
         setJsonValidationBadge(validation.ok ? 'ok' : 'err');
         dispatchIntent({
           type: INTENT_TYPES.NAVIGATE_TAB,
-          payload: { tab: 'json' },
+          payload: { tab: 'json', focusPanel: true },
         });
         dispatchIntent({
           type: INTENT_TYPES.SHOW_TOAST,
