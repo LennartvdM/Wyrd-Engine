@@ -5,25 +5,35 @@ const tabList = document.querySelector('.tab-bar[role="tablist"]');
 if (tabList instanceof HTMLElement && !tabList.hasAttribute('aria-orientation')) {
   tabList.setAttribute('aria-orientation', 'horizontal');
 }
-const tabButtons = Array.from(
-  document.querySelectorAll('.tab[data-tab-scope="root"]')
-);
-const tabPanels = Array.from(
-  document.querySelectorAll('.tab-panel[data-tab-scope="root"]')
-);
+const tabButtons = Array.from(document.querySelectorAll('[data-root-tab]'));
+const tabPanels = Array.from(document.querySelectorAll('[data-root-panel]'));
+
+tabButtons.forEach((button) => {
+  const tabId = button.dataset.rootTab;
+  if (tabId && !button.dataset.tab) {
+    button.dataset.tab = tabId;
+  }
+});
 const tabPanelMap = new Map();
 tabPanels.forEach((panel) => {
-  if (panel.dataset.tab) {
-    tabPanelMap.set(panel.dataset.tab, panel);
+  const panelId = panel.dataset.rootPanel || panel.dataset.tab;
+  if (panelId) {
+    const normalizedId = panelId.toLowerCase();
+    tabPanelMap.set(normalizedId, panel);
+    if (!panel.dataset.tab) {
+      panel.dataset.tab = panelId;
+    }
   }
 });
 const tabHeadings = new Map();
 tabPanels.forEach((panel) => {
-  if (panel.dataset.tab) {
-    const heading = panel.querySelector('[data-tab-heading]');
-    if (heading instanceof HTMLElement) {
-      tabHeadings.set(panel.dataset.tab, heading);
-    }
+  const panelId = panel.dataset.rootPanel || panel.dataset.tab;
+  if (!panelId) {
+    return;
+  }
+  const heading = panel.querySelector('[data-tab-heading]');
+  if (heading instanceof HTMLElement) {
+    tabHeadings.set(panelId.toLowerCase(), heading);
   }
 });
 const tabOrder = ['visuals', 'config', 'console', 'json', 'fixtures', 'logs'];
@@ -1003,8 +1013,13 @@ function showToast(payload = {}) {
 registerIntentHandler(INTENT_TYPES.SHOW_TOAST, showToast);
 
 let currentTab =
+  tabButtons.find((button) => button.classList.contains('root-tab--active'))
+    ?.dataset.rootTab ||
   tabButtons.find((button) => button.classList.contains('active'))?.dataset.tab ||
   tabOrder[0];
+if (typeof currentTab === 'string') {
+  currentTab = currentTab.toLowerCase();
+}
 let consoleIndicator;
 let pendingAutoSwitch = false;
 
@@ -1035,15 +1050,20 @@ function applyActiveTab(targetTab, options = {}) {
   }
 
   tabButtons.forEach((button) => {
-    const isActive = button.dataset.tab === normalizedTarget;
+    const buttonId = (button.dataset.rootTab || button.dataset.tab || '').toLowerCase();
+    const isActive = buttonId === normalizedTarget;
     button.classList.toggle('active', isActive);
+    button.classList.toggle('root-tab--active', isActive);
     button.setAttribute('aria-selected', isActive ? 'true' : 'false');
     button.setAttribute('tabindex', isActive ? '0' : '-1');
   });
 
   tabPanels.forEach((panel) => {
-    const isActive = panel.dataset.tab === normalizedTarget;
+    const panelId = (panel.dataset.rootPanel || panel.dataset.tab || '').toLowerCase();
+    const isActive = panelId === normalizedTarget;
     panel.classList.toggle('active', isActive);
+    panel.classList.toggle('root-panel--active', isActive);
+    panel.classList.toggle('is-hidden', !isActive);
     panel.toggleAttribute('hidden', !isActive);
     panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
   });
@@ -1064,6 +1084,41 @@ function applyActiveTab(targetTab, options = {}) {
   }
 }
 
+function initRootTabs() {
+  if (!document.body || document.body.dataset.rootTabsHydrated === '1') {
+    return;
+  }
+
+  document.body.dataset.rootTabsHydrated = '1';
+
+  if (tabButtons.length === 0 || tabPanels.length === 0) {
+    return;
+  }
+
+  tabButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const targetId = button.dataset.rootTab || button.dataset.tab;
+      if (targetId) {
+        applyActiveTab(targetId, { focusPanel: true });
+      }
+    });
+  });
+
+  const defaultTabButton =
+    tabButtons.find((button) => button.classList.contains('root-tab--active')) ||
+    tabButtons.find((button) => button.classList.contains('active')) ||
+    tabButtons[0];
+
+  const defaultTarget =
+    defaultTabButton?.dataset.rootTab ||
+    defaultTabButton?.dataset.tab ||
+    tabOrder[0];
+
+  if (defaultTarget) {
+    applyActiveTab(defaultTarget, { focusPanel: false });
+  }
+}
+
 registerIntentHandler(INTENT_TYPES.NAVIGATE_TAB, (payload = {}) => {
   const target =
     typeof payload.tab === 'string' ? payload.tab.toLowerCase() : undefined;
@@ -1073,6 +1128,8 @@ registerIntentHandler(INTENT_TYPES.NAVIGATE_TAB, (payload = {}) => {
   const shouldFocus = payload.focusPanel === true;
   applyActiveTab(target, { focusPanel: shouldFocus });
 });
+
+initRootTabs();
 
 if (consoleTabButton) {
   consoleTabButton.style.display = 'inline-flex';
@@ -1100,7 +1157,8 @@ function handleRootTabKeydown(event) {
   if (!(button instanceof HTMLElement)) {
     return;
   }
-  const tabKey = button.dataset.tab;
+  const tabKey =
+    (button.dataset.rootTab || button.dataset.tab || '').toLowerCase();
   if (!tabKey) {
     return;
   }
@@ -1145,17 +1203,8 @@ function handleRootTabKeydown(event) {
 }
 
 tabButtons.forEach((button) => {
-  button.addEventListener('click', () => {
-    const targetTab = button.dataset.tab;
-    dispatchIntent({
-      type: INTENT_TYPES.NAVIGATE_TAB,
-      payload: { tab: targetTab, focusPanel: true },
-    });
-  });
   button.addEventListener('keydown', handleRootTabKeydown);
 });
-
-applyActiveTab(currentTab, { focusPanel: false });
 
 function tabFromShortcutKey(key) {
   const numericKey = Number.parseInt(key, 10);
