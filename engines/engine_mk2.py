@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
@@ -32,6 +33,8 @@ from models import Activity, ActivityTemplate, Event, PersonProfile, DAY_NAMES
 from modules.unique_events import UniqueDay, generate_unique_day_schedule
 from yearly_budget import YearlyBudget
 from modules.validation import validate_week
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "EngineMK2",
@@ -281,6 +284,14 @@ class EngineMK2:
                 weekday_index, profile.base_waste_factor, profile.friction_variance
             )
 
+            logger.debug(
+                "[SLEEP-DEBUG] level=budget profile=%s day=%s minutes=%s weekly_hours=%s",
+                profile.name,
+                day_name,
+                sleep_minutes,
+                profile.budget.sleep_hours,
+            )
+
             unique_day: Optional[UniqueDay] = None
             if yearly_budget:
                 unique_day = yearly_budget.get_day_type(current_date)
@@ -334,6 +345,14 @@ class EngineMK2:
 
             for activity in activities:
                 self._apply_friction(activity, daily_friction)
+                if activity.name == "sleep":
+                    logger.debug(
+                        "[SLEEP-DEBUG] level=activity profile=%s day=%s base=%s actual=%s",
+                        profile.name,
+                        day_name,
+                        activity.base_duration_minutes,
+                        activity.actual_duration,
+                    )
 
             week_schedule.append(DayPlan(current_date, day_name, day_type, activities))
 
@@ -551,6 +570,29 @@ class EngineMK2:
                 )
 
         events_payload = normalize_mk2_events(normalized_inputs, week_start=start_date)
+        sleep_totals: Dict[str, int] = {}
+        total_sleep_minutes = 0
+        for event in events_payload:
+            if str(event.get("activity")) != "sleep":
+                continue
+            minutes = int(event.get("duration_minutes", 0))
+            day_label = str(event.get("day") or "")
+            sleep_totals[day_label] = sleep_totals.get(day_label, 0) + minutes
+            total_sleep_minutes += minutes
+        if total_sleep_minutes:
+            logger.debug(
+                "[SLEEP-DEBUG] level=events profile=%s total_minutes=%s total_hours=%.2f per_day=%s",
+                profile.name,
+                total_sleep_minutes,
+                total_sleep_minutes / 60.0,
+                sleep_totals,
+            )
+        else:
+            logger.debug(
+                "[SLEEP-DEBUG] level=events profile=%s total_minutes=0 total_hours=0.00 per_day=%s",
+                profile.name,
+                sleep_totals,
+            )
         summary_hours = self._generate_summary(events_payload)
 
         return {
