@@ -5,43 +5,64 @@ const tabList = document.querySelector('.tab-bar[role="tablist"]');
 if (tabList instanceof HTMLElement && !tabList.hasAttribute('aria-orientation')) {
   tabList.setAttribute('aria-orientation', 'horizontal');
 }
-const tabButtons = Array.from(document.querySelectorAll('[data-root-tab]'));
-const tabPanels = Array.from(document.querySelectorAll('[data-root-panel]'));
-
-tabButtons.forEach((button) => {
-  const tabId = button.dataset.rootTab;
-  if (tabId && !button.dataset.tab) {
-    button.dataset.tab = tabId;
-  }
-});
-const tabPanelMap = new Map();
-tabPanels.forEach((panel) => {
-  const panelId = panel.dataset.rootPanel || panel.dataset.tab;
-  if (panelId) {
-    const normalizedId = panelId.toLowerCase();
-    tabPanelMap.set(normalizedId, panel);
-    if (!panel.dataset.tab) {
-      panel.dataset.tab = panelId;
-    }
-  }
-});
-const tabHeadings = new Map();
-tabPanels.forEach((panel) => {
-  const panelId = panel.dataset.rootPanel || panel.dataset.tab;
-  if (!panelId) {
-    return;
-  }
-  const heading = panel.querySelector('[data-tab-heading]');
-  if (heading instanceof HTMLElement) {
-    tabHeadings.set(panelId.toLowerCase(), heading);
-  }
-});
 const tabOrder = ['visuals', 'config', 'console', 'json', 'fixtures', 'logs'];
-const consoleTabButton = tabButtons.find((button) => button.dataset.tab === 'console');
-const jsonTabButton = tabButtons.find((button) => button.dataset.tab === 'json');
-const fixturesTabButton = tabButtons.find((button) => button.dataset.tab === 'fixtures');
+let tabButtons = [];
+let tabPanels = [];
+let tabPanelMap = new Map();
+let tabHeadings = new Map();
+let consoleTabButton;
+let jsonTabButton;
+let fixturesTabButton;
 let jsonTabBadge;
 let fixturesTabBadge;
+
+function collectRootTabElements() {
+  tabButtons = Array.from(document.querySelectorAll('[data-root-tab]'));
+  tabPanels = Array.from(document.querySelectorAll('[data-root-panel]'));
+
+  tabButtons.forEach((button) => {
+    const tabId = button.dataset.rootTab;
+    if (tabId && !button.dataset.tab) {
+      button.dataset.tab = tabId;
+    }
+  });
+
+  tabPanelMap = new Map();
+  tabPanels.forEach((panel) => {
+    const panelId = panel.dataset.rootPanel || panel.dataset.tab;
+    if (panelId) {
+      const normalizedId = panelId.toLowerCase();
+      tabPanelMap.set(normalizedId, panel);
+      if (!panel.dataset.tab) {
+        panel.dataset.tab = panelId;
+      }
+    }
+  });
+
+  tabHeadings = new Map();
+  tabPanels.forEach((panel) => {
+    const panelId = panel.dataset.rootPanel || panel.dataset.tab;
+    if (!panelId) {
+      return;
+    }
+    const heading = panel.querySelector('[data-tab-heading]');
+    if (heading instanceof HTMLElement) {
+      tabHeadings.set(panelId.toLowerCase(), heading);
+    }
+  });
+
+  consoleTabButton = tabButtons.find(
+    (button) => (button.dataset.rootTab || button.dataset.tab || '').toLowerCase() === 'console'
+  );
+  jsonTabButton = tabButtons.find(
+    (button) => (button.dataset.rootTab || button.dataset.tab || '').toLowerCase() === 'json'
+  );
+  fixturesTabButton = tabButtons.find(
+    (button) => (button.dataset.rootTab || button.dataset.tab || '').toLowerCase() === 'fixtures'
+  );
+}
+
+collectRootTabElements();
 
 if (typeof window !== 'undefined') {
   window.WYRD_DEBUG = DEBUG;
@@ -1039,7 +1060,8 @@ function focusTabPanel(targetTab) {
   }
 }
 
-function applyActiveTab(targetTab, options = {}) {
+function goToRootTab(targetTab, options = {}) {
+  console.info('[root-tabs] switching to', targetTab);
   const { focusPanel = false } = options;
   if (typeof targetTab !== 'string') {
     return;
@@ -1089,25 +1111,41 @@ function initRootTabs() {
     return;
   }
 
+  collectRootTabElements();
+
+  const tabs = tabButtons;
+  const panels = tabPanels;
+
+  console.info(
+    '[root-tabs] found tabs:',
+    tabs.map((tab) => tab.dataset.rootTab || tab.dataset.tab || '')
+  );
+  console.info(
+    '[root-tabs] found panels:',
+    panels.map((panel) => panel.dataset.rootPanel || panel.dataset.tab || '')
+  );
+
   document.body.dataset.rootTabsHydrated = '1';
 
-  if (tabButtons.length === 0 || tabPanels.length === 0) {
+  if (tabs.length === 0 || panels.length === 0) {
     return;
   }
 
-  tabButtons.forEach((button) => {
-    button.addEventListener('click', () => {
-      const targetId = button.dataset.rootTab || button.dataset.tab;
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', (event) => {
+      console.info('[root-tabs] click on', tab.dataset.rootTab || tab.dataset.tab);
+      event.preventDefault();
+      const targetId = tab.dataset.rootTab || tab.dataset.tab;
       if (targetId) {
-        applyActiveTab(targetId, { focusPanel: true });
+        goToRootTab(targetId, { focusPanel: true });
       }
     });
   });
 
   const defaultTabButton =
-    tabButtons.find((button) => button.classList.contains('root-tab--active')) ||
-    tabButtons.find((button) => button.classList.contains('active')) ||
-    tabButtons[0];
+    tabs.find((button) => button.classList.contains('root-tab--active')) ||
+    tabs.find((button) => button.classList.contains('active')) ||
+    tabs[0];
 
   const defaultTarget =
     defaultTabButton?.dataset.rootTab ||
@@ -1115,18 +1153,19 @@ function initRootTabs() {
     tabOrder[0];
 
   if (defaultTarget) {
-    applyActiveTab(defaultTarget, { focusPanel: false });
+    goToRootTab(defaultTarget, { focusPanel: false });
+  } else if (tabOrder.length > 0) {
+    goToRootTab(tabOrder[0], { focusPanel: false });
   }
 }
 
 registerIntentHandler(INTENT_TYPES.NAVIGATE_TAB, (payload = {}) => {
-  const target =
-    typeof payload.tab === 'string' ? payload.tab.toLowerCase() : undefined;
+  const target = typeof payload.tab === 'string' ? payload.tab : undefined;
   if (!target) {
     return;
   }
   const shouldFocus = payload.focusPanel === true;
-  applyActiveTab(target, { focusPanel: shouldFocus });
+  goToRootTab(target, { focusPanel: shouldFocus });
 });
 
 initRootTabs();
