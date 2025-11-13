@@ -27,6 +27,8 @@ body {
 }
 
 .tab-bar {
+  position: relative;
+  z-index: 10;
   display: flex;
   gap: 2px;
   background: #15161c;
@@ -93,6 +95,8 @@ body {
 }
 
 .tab-content {
+  position: relative;
+  z-index: 0;
   padding: 12px;
   background: #181a21;
   min-height: 420px;
@@ -102,8 +106,25 @@ body {
   display: none;
 }
 
+.tab-panel[hidden] {
+  display: none;
+}
+
 .tab-panel.active {
   display: block;
+}
+
+.tab-panel:focus-visible,
+.tab-panel-title:focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 4px;
+}
+
+.tab-panel-title {
+  margin: 0 0 16px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .tab-bar.nested {
@@ -421,11 +442,17 @@ body {
 }
 
 #visuals-container {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
   min-height: 420px;
+  height: 100%;
   border-radius: 20px;
   background: linear-gradient(180deg, rgba(15, 23, 42, 0.75), rgba(15, 23, 42, 0.3));
   padding: 20px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  overflow: hidden;
 }
 
 .console-pane {
@@ -524,10 +551,13 @@ body {
 
 .visuals-mount {
   position: relative;
+  z-index: 0;
   min-height: 420px;
 }
 
 .visuals-fallback-panel {
+  position: relative;
+  z-index: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -757,7 +787,7 @@ body {
   border-radius: 20px;
   background: radial-gradient(circle at top, rgba(148, 163, 184, 0.15), rgba(15, 23, 42, 0.75));
   border: 1px solid rgba(148, 163, 184, 0.2);
-  overflow: visible;
+  overflow: hidden;
 }
 
 .radial-urchin__canvas {

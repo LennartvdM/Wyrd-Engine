@@ -8,19 +8,109 @@
 </head>
 <body>
   <div class="workbench">
-    <nav class="tab-bar">
-      <button class="tab active" data-tab="calendar" data-tab-scope="root">Visuals</button>
-      <button class="tab" data-tab="config" data-tab-scope="root">Config</button>
-      <button class="tab" data-tab="console" data-tab-scope="root">Console</button>
-      <button class="tab" data-tab="json" data-tab-scope="root">JSON</button>
-      <button class="tab" data-tab="fixtures" data-tab-scope="root">Fixtures</button>
-      <button class="tab" data-tab="logs" data-tab-scope="root">Logs</button>
+    <nav class="tab-bar" role="tablist" aria-label="Workbench tabs">
+      <button
+        class="tab active"
+        type="button"
+        id="tab-visuals"
+        role="tab"
+        aria-selected="true"
+        aria-controls="panel-visuals"
+        data-tab="visuals"
+        data-tab-scope="root"
+      >
+        Visuals
+      </button>
+      <button
+        class="tab"
+        type="button"
+        id="tab-config"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-config"
+        data-tab="config"
+        data-tab-scope="root"
+        tabindex="-1"
+      >
+        Config
+      </button>
+      <button
+        class="tab"
+        type="button"
+        id="tab-console"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-console"
+        data-tab="console"
+        data-tab-scope="root"
+        tabindex="-1"
+      >
+        Console
+      </button>
+      <button
+        class="tab"
+        type="button"
+        id="tab-json"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-json"
+        data-tab="json"
+        data-tab-scope="root"
+        tabindex="-1"
+      >
+        JSON
+      </button>
+      <button
+        class="tab"
+        type="button"
+        id="tab-fixtures"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-fixtures"
+        data-tab="fixtures"
+        data-tab-scope="root"
+        tabindex="-1"
+      >
+        Fixtures
+      </button>
+      <button
+        class="tab"
+        type="button"
+        id="tab-logs"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-logs"
+        data-tab="logs"
+        data-tab-scope="root"
+        tabindex="-1"
+      >
+        Logs
+      </button>
     </nav>
     <main class="tab-content">
-      <section class="tab-panel active" data-tab="calendar" data-tab-scope="root">
+      <section
+        class="tab-panel active"
+        id="panel-visuals"
+        role="tabpanel"
+        aria-labelledby="tab-visuals"
+        data-tab="visuals"
+        data-tab-scope="root"
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Visuals</h2>
         <div id="visuals-container"></div>
       </section>
-      <section class="tab-panel" data-tab="config" data-tab-scope="root">
+      <section
+        class="tab-panel"
+        id="panel-config"
+        role="tabpanel"
+        aria-labelledby="tab-config"
+        data-tab="config"
+        data-tab-scope="root"
+        hidden
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Config</h2>
         <div class="config-layout" id="config-panel">
           <div class="tab-group">
             <div class="tab-bar nested" data-config="class-tabs">
@@ -144,10 +234,54 @@
           </div>
         </div>
       </section>
-      <section class="tab-panel" data-tab="console" data-tab-scope="root"></section>
-      <section class="tab-panel" data-tab="json" data-tab-scope="root"></section>
-      <section class="tab-panel" data-tab="fixtures" data-tab-scope="root"></section>
-      <section class="tab-panel" data-tab="logs" data-tab-scope="root"></section>
+      <section
+        class="tab-panel"
+        id="panel-console"
+        role="tabpanel"
+        aria-labelledby="tab-console"
+        data-tab="console"
+        data-tab-scope="root"
+        hidden
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Console</h2>
+      </section>
+      <section
+        class="tab-panel"
+        id="panel-json"
+        role="tabpanel"
+        aria-labelledby="tab-json"
+        data-tab="json"
+        data-tab-scope="root"
+        hidden
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">JSON</h2>
+      </section>
+      <section
+        class="tab-panel"
+        id="panel-fixtures"
+        role="tabpanel"
+        aria-labelledby="tab-fixtures"
+        data-tab="fixtures"
+        data-tab-scope="root"
+        hidden
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Fixtures</h2>
+      </section>
+      <section
+        class="tab-panel"
+        id="panel-logs"
+        role="tabpanel"
+        aria-labelledby="tab-logs"
+        data-tab="logs"
+        data-tab-scope="root"
+        hidden
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Logs</h2>
+      </section>
     </main>
   </div>
   <script type="module" src="app.js"></script>
