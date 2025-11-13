@@ -140,7 +140,21 @@ class EngineMK2:
 
     @staticmethod
     def _allocate_minutes(hours: float, days: int) -> int:
-        return int(hours * 60 / days) if hours > 0 else 0
+        """Convert weekly hours into per-day minutes for a fixed number of days."""
+
+        if hours <= 0 or days <= 0:
+            return 0
+
+        weekly_minutes = hours * 60.0
+        occurrences = max(1, days)
+        per_day_minutes = weekly_minutes / occurrences
+
+        # Guard against mis-scaled inputs (e.g. dividing by 7 twice) that would
+        # otherwise collapse sleep to ~1h per day despite a healthy weekly budget.
+        if weekly_minutes >= 7 * 180 and per_day_minutes < 180:
+            per_day_minutes = weekly_minutes / 7.0
+
+        return max(1, int(round(per_day_minutes)))
 
     def _generate_standard_day_schedule(
         self,

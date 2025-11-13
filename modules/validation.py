@@ -68,6 +68,51 @@ def _detect_sleep_shortage(day_name: str, activities: Iterable[Activity]) -> Lis
     ]
 
 
+def _detect_weekly_sleep_shortage(
+    week_schedule: Dict[str, List[Activity]]
+) -> List[ScheduleIssue]:
+    if not week_schedule:
+        return []
+
+    per_day_minutes: Dict[str, int] = {}
+    for day_name, activities in week_schedule.items():
+        per_day_minutes[day_name] = sum(
+            activity.actual_duration for activity in activities if activity.name == "sleep"
+        )
+
+    total_sleep = sum(per_day_minutes.values())
+    issues: List[ScheduleIssue] = []
+
+    if total_sleep < 14 * 60:
+        hours = round(total_sleep / 60.0, 1)
+        issues.append(
+            ScheduleIssue(
+                day="week",
+                issue_type="insufficient_sleep_week",
+                severity="warning",
+                details=f"Weekly sleep dropped to {hours} hours",
+            )
+        )
+
+    short_days = {
+        day: minutes
+        for day, minutes in per_day_minutes.items()
+        if minutes > 0 and minutes < 180
+    }
+    if short_days:
+        formatted = ", ".join(f"{day} ({minutes}m)" for day, minutes in sorted(short_days.items()))
+        issues.append(
+            ScheduleIssue(
+                day="week",
+                issue_type="insufficient_sleep_day",
+                severity="warning",
+                details=f"Sleep below 3h on: {formatted}",
+            )
+        )
+
+    return issues
+
+
 def validate_day(day_name: str, activities: Iterable[Activity]) -> List[ScheduleIssue]:
     """Validate a single day's activities and return any issues."""
 
@@ -86,4 +131,5 @@ def validate_week(week_schedule: Dict[str, List[Activity]]) -> List[ScheduleIssu
     issues: List[ScheduleIssue] = []
     for day_name, activities in week_schedule.items():
         issues.extend(validate_day(day_name, activities))
+    issues.extend(_detect_weekly_sleep_shortage(week_schedule))
     return issues

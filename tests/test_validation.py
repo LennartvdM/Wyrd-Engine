@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from models import Activity
-from modules.validation import validate_day
+from modules.validation import validate_day, validate_week
 
 
 class TestValidation(unittest.TestCase):
@@ -25,6 +25,23 @@ class TestValidation(unittest.TestCase):
         sleep.actual_duration = 200
         issues = validate_day("monday", [sleep])
         self.assertTrue(any(issue.issue_type == "insufficient_sleep" for issue in issues))
+
+    def test_weekly_sleep_warning(self) -> None:
+        short_sleep = Activity("sleep", 100, 1.0, optional=False, priority=1)
+        short_sleep.actual_duration = 100
+        week_schedule = {
+            "monday": [short_sleep],
+            "tuesday": [short_sleep],
+            "wednesday": [short_sleep],
+            "thursday": [short_sleep],
+            "friday": [short_sleep],
+            "saturday": [short_sleep],
+            "sunday": [short_sleep],
+        }
+        issues = validate_week(week_schedule)
+        self.assertTrue(
+            any(issue.issue_type == "insufficient_sleep_week" for issue in issues)
+        )
 
 
 if __name__ == "__main__":
