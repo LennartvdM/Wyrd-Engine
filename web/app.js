@@ -162,21 +162,57 @@ function updateVisuals(payload) {
         }
       }
     }
+  } else {
+    maybeCreateUrchinInstance(lastVisualPayload);
   }
+
   if (visualsState.urchin) {
-    visualsState.urchin.update({ data: visualsState.useLegacy ? null : lastVisualPayload });
+    try {
+      visualsState.urchin.update({ data: visualsState.useLegacy ? null : lastVisualPayload });
+    } catch (error) {
+      console.error('[visuals] failed to update radial urchin:', error);
+    }
   }
 }
 
-const visualsContainerElement = document.querySelector('#visuals-container');
+function hasVisualEvents(payload) {
+  return (
+    payload &&
+    typeof payload === 'object' &&
+    Array.isArray(payload.events) &&
+    payload.events.length > 0
+  );
+}
 
-if (visualsContainerElement) {
-  visualsState.container = visualsContainerElement;
+function maybeCreateUrchinInstance(payload) {
+  if (visualsState.useLegacy || visualsState.urchin || !visualsState.mount || !hasVisualEvents(payload)) {
+    return;
+  }
+  const instance = createRadialUrchin(visualsState.mount, {
+    data: payload,
+    mode: 'day-rings',
+    onSelect: handleUrchinSelect,
+  });
+  if (instance) {
+    visualsState.urchin = instance;
+  }
+}
+
+function initVisualsMount() {
+  if (visualsState.container) {
+    return true;
+  }
+  const container = document.querySelector('#visuals-container');
+  if (!container) {
+    return false;
+  }
+
+  visualsState.container = container;
   visualsState.useLegacy = readVisualsLegacyFlag();
 
   const mount = document.createElement('div');
   mount.className = 'visuals-mount';
-  visualsContainerElement.append(mount);
+  container.append(mount);
   visualsState.mount = mount;
 
   const fallback = document.createElement('div');
@@ -190,32 +226,10 @@ if (visualsContainerElement) {
   fallbackMessage.textContent = 'Legacy visuals preview unavailable.';
   fallbackMessage.hidden = true;
   fallback.append(fallbackImg, fallbackMessage);
-  visualsContainerElement.append(fallback);
+  container.append(fallback);
   visualsState.fallback = fallback;
   visualsState.fallbackImg = fallbackImg;
   visualsState.fallbackMessage = fallbackMessage;
-
-  visualsState.urchin = createRadialUrchin(mount, {
-    data: null,
-    mode: 'day-rings',
-    onSelect(activity) {
-      if (!activity) {
-        return;
-      }
-      dispatchIntent({
-        type: INTENT_TYPES.SHOW_TOAST,
-        payload: {
-          message: activity.label || 'Activity selected',
-          description: `${activity.start || '?'} – ${activity.end || '?'}`,
-          intent: 'info',
-          duration: 1800,
-        },
-      });
-    },
-  });
-
-  syncVisualsVisibility();
-  updateVisuals(null);
 
   if (typeof window !== 'undefined') {
     window.WYRD_SET_VISUALS_LEGACY = (enabled) => {
@@ -225,6 +239,24 @@ if (visualsContainerElement) {
       syncVisualsVisibility();
       updateVisuals(lastVisualPayload);
     };
+  }
+
+  syncVisualsVisibility();
+  return true;
+}
+
+function safeInitVisuals(initialData) {
+  try {
+    const ready = initVisualsMount();
+    if (!ready) {
+      console.warn('[visuals] no container found, skipping visuals init');
+      return;
+    }
+    const payload = lastVisualPayload ?? (initialData && typeof initialData === 'object' ? initialData : null);
+    console.info('[visuals] initializing with', hasVisualEvents(payload) ? 'real data' : 'no data');
+    updateVisuals(payload);
+  } catch (error) {
+    console.error('[visuals] init failed:', error);
   }
 }
 
@@ -727,6 +759,21 @@ function dispatchIntent(intent) {
   });
 }
 
+function handleUrchinSelect(activity) {
+  if (!activity) {
+    return;
+  }
+  dispatchIntent({
+    type: INTENT_TYPES.SHOW_TOAST,
+    payload: {
+      message: activity.label || 'Activity selected',
+      description: `${activity.start || '?'} – ${activity.end || '?'}`,
+      intent: 'info',
+      duration: 1800,
+    },
+  });
+}
+
 function initializeNestedTabScopes() {
   const scopeRegistry = new Map();
 
@@ -1191,6 +1238,16 @@ registerIntentHandler(INTENT_TYPES.NAVIGATE_TAB, (payload = {}) => {
 document.addEventListener('DOMContentLoaded', () => {
   console.info('[app] DOMContentLoaded');
   initRootTabs();
+  hydrateConfigPanel();
+  hydrateConsolePanel();
+  hydrateJsonPanel();
+  hydrateFixturesPanel();
+  hydrateLogsPanel();
+  const initialVisualData =
+    typeof window !== 'undefined' && window.__currentScheduleData
+      ? window.__currentScheduleData
+      : null;
+  safeInitVisuals(initialVisualData);
 });
 
 function handleRootTabKeydown(event) {
@@ -2084,7 +2141,10 @@ function handleRuntimeLoadFailure(error) {
   });
 }
 
-if (configPanel && configPanel.dataset.hydrated !== '1') {
+function hydrateConfigPanel() {
+  if (!configPanel || configPanel.dataset.hydrated === '1') {
+    return;
+  }
   const CLASS_STORAGE_KEY = 'config.class';
   const VARIANT_STORAGE_KEY = 'config.variant';
   const RIG_STORAGE_PREFIX = 'config.rig.';
@@ -3058,7 +3118,10 @@ if (configPanel && configPanel.dataset.hydrated !== '1') {
 }
 
 
-if (consolePanel) {
+function hydrateConsolePanel() {
+  if (!consolePanel || consolePanel.dataset.consoleHydrated === '1') {
+    return;
+  }
   const consoleContainer = document.createElement('div');
   consoleContainer.className = 'console-pane';
 
@@ -3137,9 +3200,13 @@ if (consolePanel) {
   consoleContainer.append(stdoutSection, stderrSection, consoleStructuredContainer);
   consolePanel.append(consoleContainer);
   updateConsoleStructuredPayload(null);
+  consolePanel.dataset.consoleHydrated = '1';
 }
 
-if (jsonPanel) {
+function hydrateJsonPanel() {
+  if (!jsonPanel || jsonPanel.dataset.jsonHydrated === '1') {
+    return;
+  }
   const jsonContainer = document.createElement('div');
   jsonContainer.className = 'json-pane';
 
@@ -3184,11 +3251,15 @@ if (jsonPanel) {
   saveJsonButton.addEventListener('click', () => {
     saveCurrentJsonToFile();
   });
+
+  jsonPanel.dataset.jsonHydrated = '1';
+  setJsonValidationBadge('clear');
 }
 
-setJsonValidationBadge('clear');
-
-if (fixturesPanel) {
+function hydrateFixturesPanel() {
+  if (!fixturesPanel || fixturesPanel.dataset.fixturesHydrated === '1') {
+    return;
+  }
   const fixturesContainer = document.createElement('div');
   fixturesContainer.className = 'fixtures-pane';
 
@@ -3305,9 +3376,13 @@ if (fixturesPanel) {
   });
 
   renderRunHistory();
+  fixturesPanel.dataset.fixturesHydrated = '1';
 }
 
-if (logsPanel) {
+function hydrateLogsPanel() {
+  if (!logsPanel || logsPanel.dataset.logsHydrated === '1') {
+    return;
+  }
   const logsContainer = document.createElement('div');
   logsContainer.className = 'logs-pane';
 
@@ -3327,4 +3402,5 @@ if (logsPanel) {
 
   logsContainer.append(logsToolbar, logsOutput);
   logsPanel.append(logsContainer);
+  logsPanel.dataset.logsHydrated = '1';
 }
