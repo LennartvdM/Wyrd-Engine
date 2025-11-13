@@ -54,6 +54,8 @@ class DayPlan:
     day_name: str
     day_type: str
     activities: List[Activity]
+    friction: float = 1.0
+    target_minutes: Optional[Dict[str, int]] = None
 
 
 OUTDOOR_ACTIVITIES = {"outdoor_run", "bike_ride", "park_visit", "hiking", "outdoor_walk"}
@@ -357,6 +359,10 @@ class EngineMK2:
             special = self._calendar_provider.get_special_period_effects(current_date)
             activities = self.apply_special_period_effects(activities, special)
 
+            target_minutes: Dict[str, int] = {}
+            for activity in activities:
+                target_minutes[activity.name] = target_minutes.get(activity.name, 0) + activity.base_duration_minutes
+
             for activity in activities:
                 self._apply_friction(activity, daily_friction)
                 if activity.name == "sleep":
@@ -368,7 +374,16 @@ class EngineMK2:
                         activity.actual_duration,
                     )
 
-            week_schedule.append(DayPlan(current_date, day_name, day_type, activities))
+            week_schedule.append(
+                DayPlan(
+                    current_date,
+                    day_name,
+                    day_type,
+                    activities,
+                    friction=daily_friction,
+                    target_minutes=target_minutes,
+                )
+            )
 
         return week_schedule
 
@@ -536,6 +551,7 @@ class EngineMK2:
         week_seed: int,
         templates: Optional[Dict[str, ActivityTemplate]] = None,
         yearly_budget: Optional[YearlyBudget] = None,
+        debug: bool = False,
     ) -> Dict[str, object]:
         random.seed(week_seed)
         templates = templates or DEFAULT_TEMPLATES
@@ -545,11 +561,50 @@ class EngineMK2:
             {f"{plan.day_name} ({plan.date.isoformat()})": plan.activities for plan in week_plans}
         )
 
+        debug_trace: Optional[Dict[str, Any]] = None
+        debug_days: Dict[str, Dict[str, Any]] = {}
+        if debug:
+            for plan in week_plans:
+                debug_days[plan.day_name] = {
+                    "date": plan.date.isoformat(),
+                    "classification": plan.day_type,
+                    "friction": plan.friction,
+                    "target_minutes": dict(plan.target_minutes or {}),
+                    "activities_before_compression": [
+                        {
+                            "name": activity.name,
+                            "base": activity.base_duration_minutes,
+                            "waste_multiplier": activity.waste_multiplier,
+                            "optional": activity.optional,
+                            "priority": activity.priority,
+                        }
+                        for activity in plan.activities
+                    ],
+                }
+            debug_trace = {
+                "profile": profile.name,
+                "budget": asdict(profile.budget),
+                "per_day": debug_days,
+            }
+
         compression_metadata: Dict[str, Dict[str, object]] = {}
         for plan in week_plans:
             compressed, metadata = self._compress_day_if_needed(plan.activities)
             plan.activities = compressed
             compression_metadata[plan.date.isoformat()] = metadata
+            if debug:
+                day_debug = debug_days.get(plan.day_name)
+                if day_debug is not None:
+                    day_debug["activities_after_compression"] = [
+                        {
+                            "name": activity.name,
+                            "base": activity.base_duration_minutes,
+                            "actual": activity.actual_duration,
+                            "optional": activity.optional,
+                            "priority": activity.priority,
+                        }
+                        for activity in plan.activities
+                    ]
 
         normalized_inputs: List[Dict[str, Any]] = []
         for plan in week_plans:
@@ -559,6 +614,20 @@ class EngineMK2:
                 event.day = plan.day_name
             events = self.fill_free_time(events)
             events = self.apply_micro_jitter(events)
+            if debug:
+                day_debug = debug_days.get(plan.day_name)
+                if day_debug is not None:
+                    day_debug["events"] = [
+                        {
+                            "activity": event.activity.name
+                            if isinstance(event.activity, Activity)
+                            else event.activity,
+                            "start_minutes": event.start_minutes,
+                            "end_minutes": event.end_minutes,
+                            "duration": max(0, event.end_minutes - event.start_minutes),
+                        }
+                        for event in events
+                    ]
             day_offset = (plan.date - start_date).days
             weekday_index = plan.date.weekday()
             for event in events:
@@ -609,7 +678,18 @@ class EngineMK2:
             )
         summary_hours = self._generate_summary(events_payload)
 
-        return {
+        weekly_totals_minutes: Dict[str, int] = {}
+        if debug:
+            for event in events_payload:
+                activity_name = str(event.get("activity"))
+                duration = int(event.get("duration_minutes", 0) or 0)
+                weekly_totals_minutes[activity_name] = (
+                    weekly_totals_minutes.get(activity_name, 0) + duration
+                )
+            if debug_trace is not None:
+                debug_trace["weekly_totals_from_events"] = weekly_totals_minutes
+
+        result: Dict[str, Any] = {
             "person": profile.name,
             "week_start": start_date.isoformat(),
             "events": events_payload,
@@ -622,6 +702,11 @@ class EngineMK2:
                 "day_types": {plan.date.isoformat(): plan.day_type for plan in week_plans},
             },
         }
+
+        if debug and debug_trace is not None:
+            result["debug_trace"] = debug_trace
+
+        return result
 
     def select_profile(self, archetype: str) -> Tuple[PersonProfile, Dict[str, ActivityTemplate]]:
         archetype = archetype.lower()

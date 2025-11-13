@@ -281,13 +281,17 @@ def mk1_run_web(archetype: str, week_start: Optional[str], seed: Any) -> SchemaP
     return _ensure_schema(payload, rig="default", seed=seed_value, archetype=archetype_key or "office")
 
 
-def mk2_run_calendar_web(archetype: str, week_start: Optional[str], seed: Any) -> SchemaPayload:
+def mk2_run_calendar_web(
+    archetype: str, week_start: Optional[str], seed: Any, debug: bool = False
+) -> SchemaPayload:
     archetype_key = str(archetype or "office").strip().lower()
     seed_value = _coerce_seed(seed)
     start_date = _coerce_start_date(week_start) or date.today()
 
     profile, templates = _MK2_RIG.select_profile(archetype_key)
-    result = _MK2_RIG.generate_complete_week(profile, start_date, seed_value, templates, None)
+    result = _MK2_RIG.generate_complete_week(
+        profile, start_date, seed_value, templates, None, debug=debug
+    )
 
     payload: MutableMapping[str, Any] = dict(result)
     payload.setdefault("issues", [])
@@ -307,6 +311,7 @@ def mk2_run_workforce_web(
     week_start: Optional[str],
     seed: Any,
     yearly_budget: Optional[Mapping[str, Any]],
+    debug: bool = False,
 ) -> SchemaPayload:
     archetype_key = str(archetype or "office").strip().lower()
     seed_value = _coerce_seed(seed)
@@ -315,7 +320,9 @@ def mk2_run_workforce_web(
     profile, templates = _MK2_RIG.select_profile(archetype_key)
     budget = _build_yearly_budget(yearly_budget)
 
-    result = _MK2_RIG.generate_complete_week(profile, start_date, seed_value, templates, budget)
+    result = _MK2_RIG.generate_complete_week(
+        profile, start_date, seed_value, templates, budget, debug=debug
+    )
 
     payload: MutableMapping[str, Any] = dict(result)
     payload.setdefault("issues", [])

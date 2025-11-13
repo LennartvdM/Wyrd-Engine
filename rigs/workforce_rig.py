@@ -101,9 +101,10 @@ class WorkforceRig(CalendarRig):
         week_seed: int,
         templates: Optional[Dict[str, ActivityTemplate]] = None,
         yearly_budget: Optional[YearlyBudget] = None,
+        debug: bool = False,
     ) -> Dict[str, object]:
         """Delegate generation to the configured engine."""
 
         return self._engine.generate_complete_week(
-            profile, start_date, week_seed, templates, yearly_budget
+            profile, start_date, week_seed, templates, yearly_budget, debug=debug
         )
