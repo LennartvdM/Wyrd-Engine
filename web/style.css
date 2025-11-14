@@ -469,6 +469,117 @@ body {
   overflow: hidden;
 }
 
+.visuals-layout {
+  flex: 1;
+  display: flex;
+  gap: 20px;
+  min-height: 0;
+}
+
+.visuals-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.visuals-history-panel {
+  width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(6px);
+}
+
+.visuals-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.visuals-history-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #e2e8f0;
+}
+
+.visuals-history-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.visuals-history-empty {
+  margin: 0;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.35);
+  color: rgba(203, 213, 225, 0.85);
+  font-size: 13px;
+  text-align: center;
+}
+
+.visuals-history-item {
+  list-style: none;
+}
+
+.visuals-history-entry {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  background: rgba(30, 41, 59, 0.55);
+  color: inherit;
+  font: inherit;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.visuals-history-entry:hover {
+  border-color: rgba(94, 234, 212, 0.55);
+  background: rgba(30, 64, 175, 0.4);
+}
+
+.visuals-history-entry:focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 2px;
+}
+
+.visuals-history-entry.is-active {
+  border-color: rgba(56, 189, 248, 0.85);
+  background: rgba(14, 116, 144, 0.45);
+}
+
+.visuals-history-entry__headline {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.visuals-history-entry__meta {
+  font-size: 12px;
+  color: rgba(203, 213, 225, 0.9);
+}
+
 .console-pane {
   display: grid;
   gap: 12px;
@@ -688,6 +799,7 @@ body {
 .visuals-mount {
   position: relative;
   z-index: 0;
+  flex: 1;
   min-height: 420px;
 }
 
