@@ -1756,6 +1756,7 @@ document.addEventListener('DOMContentLoaded', () => {
   console.info('[app] DOMContentLoaded');
   initRootTabs();
   hydrateConfigPanel();
+  hydrateGlobalActions();
   hydrateConsolePanel();
   hydrateJsonPanel();
   hydrateFixturesPanel();
@@ -2098,6 +2099,7 @@ let consoleStructuredFailuresBody;
 let consoleStructuredSysPathDetails;
 let consoleStructuredSysPathList;
 let currentStructuredConsolePayload = null;
+let calendarConfigState = null;
 
 let pyWorker;
 try {
@@ -2204,6 +2206,186 @@ function updateRuntimeButtonState(button) {
   if (button.disabled) {
     button.style.background = '#1f2128';
     button.style.color = '#cbd0df';
+  }
+}
+
+function updateGenerateButtonDisabledForRuntime() {
+  if (!generateButton) {
+    return;
+  }
+  const shouldDisable =
+    isGeneratingCalendar || runtimeStatus === 'loading' || runtimeStatus === 'error';
+  generateButton.disabled = shouldDisable;
+  updateRuntimeButtonState(generateButton);
+}
+
+function setGenerateButtonState(loading) {
+  isGeneratingCalendar = Boolean(loading);
+  if (!generateButton) {
+    return;
+  }
+  generateButton.textContent = isGeneratingCalendar
+    ? GENERATE_BUTTON_LOADING_LABEL
+    : GENERATE_BUTTON_DEFAULT_LABEL;
+  updateGenerateButtonDisabledForRuntime();
+}
+
+async function handleGenerate(event) {
+  if (event && typeof event.preventDefault === 'function') {
+    event.preventDefault();
+  }
+  if (isGeneratingCalendar) {
+    return;
+  }
+
+  const snapshot = typeof getConfigSnapshot === 'function' ? getConfigSnapshot() : {};
+  const variantId = snapshot.variant || 'mk1';
+  const rigId = snapshot.rig || 'default';
+  const config = calendarConfigState || {};
+  const archetype = config?.common?.archetype || '';
+  const weekStartValue = snapshot.week_start || '';
+  const seedValue = snapshot.seed || '';
+  const budgetText =
+    variantId === 'mk2' && rigId === 'workforce'
+      ? config?.mk2?.workforce?.budgetText || ''
+      : '';
+
+  setGenerateButtonState(true);
+  updateVisuals(null);
+  showVisualsOverlay('Generating schedule…', { loading: true });
+  calendarHistoryState.activeId = null;
+  renderCalendarRunHistory();
+
+  beginConsoleRun('Generating payload…');
+
+  const runnerFnMap = {
+    mk1: { default: 'mk1_run' },
+    mk2: { calendar: 'mk2_run_calendar', workforce: 'mk2_run_workforce' },
+  };
+  const selectedFn = runnerFnMap[variantId]?.[rigId] || null;
+  const seedNumber = Number.parseInt(seedValue, 10);
+  const normalizedSeed = Number.isFinite(seedNumber) ? seedNumber : seedValue;
+
+  try {
+    const workerArgs = {
+      class: 'calendar',
+      variant: variantId,
+      rig: rigId,
+      archetype,
+      week_start: weekStartValue,
+      seed: normalizedSeed,
+    };
+    if (budgetText && budgetText.trim()) {
+      try {
+        workerArgs.yearly_budget = JSON.parse(budgetText);
+      } catch (parseError) {
+        throw { error: 'Invalid yearly budget JSON.', stdout: '', stderr: '' };
+      }
+    }
+
+    const { result = null, stdout = '', stderr = '', fallback = false } =
+      await sendWorkerMessage('run', {
+        fn: selectedFn || 'mock_run',
+        args: workerArgs,
+      });
+
+    renderConsoleOutputs({ stdout, stderr });
+    if (fallback) {
+      appendConsoleLog('Pyodide import failed → mock used');
+    }
+
+    if (!result || typeof result !== 'object') {
+      appendConsoleLog('error: No result returned from worker.');
+      showVisualsOverlay('No result returned from worker.', { loading: false });
+      dispatchIntent({
+        type: INTENT_TYPES.SHOW_TOAST,
+        payload: {
+          message: 'Generation failed',
+          description: 'No result returned from worker.',
+          intent: 'error',
+          duration: 4000,
+        },
+      });
+      return;
+    }
+
+    setJsonPayload(result, {
+      variant: variantId,
+      rig: rigId,
+      weekStart: result.week_start || weekStartValue,
+    });
+    updateJsonActionsState();
+    hideVisualsOverlay();
+
+    const eventsCount = Array.isArray(result.events) ? result.events.length : 0;
+    const inputsSnapshot = {
+      archetype,
+      week_start: weekStartValue,
+      seed: seedValue,
+    };
+    if (workerArgs.yearly_budget) {
+      inputsSnapshot.budget = true;
+    }
+
+    recordCalendarHistoryEntry({
+      archetype,
+      seed: normalizedSeed,
+      variant: variantId,
+      rig: rigId,
+      weekStart:
+        typeof result.week_start === 'string' && result.week_start
+          ? result.week_start
+          : weekStartValue,
+      rawResult: result,
+      summary: computeCalendarHistorySummary(result.events),
+      timestamp: new Date().toISOString(),
+    });
+
+    addRunHistoryEntry({
+      kind: 'generate',
+      ts: Date.now(),
+      class: 'calendar',
+      variant: variantId,
+      rig: rigId,
+      week_start:
+        typeof result.week_start === 'string' && result.week_start
+          ? result.week_start
+          : weekStartValue,
+      label: 'Generated schedule',
+      payload: result,
+      inputs: inputsSnapshot,
+      resultSummary: { events: eventsCount },
+    });
+
+    appendConsoleLog('Run completed');
+  } catch (error) {
+    const summary = formatStructuredErrorSummary(error);
+    renderConsoleOutputs({
+      stdout: error?.stdout || '',
+      stderr: error?.stderr || summary,
+      structured: error,
+    });
+    const description =
+      summary && summary.length > 0
+        ? summary
+        : typeof error?.error === 'string' && error.error
+        ? error.error
+        : error instanceof Error && error.message
+        ? error.message
+        : 'Generation failed.';
+    console.error('Generation failed:', error);
+    showVisualsOverlay(description, { loading: false });
+    dispatchIntent({
+      type: INTENT_TYPES.SHOW_TOAST,
+      payload: {
+        message: 'Generation failed',
+        description,
+        intent: 'error',
+        duration: 5000,
+      },
+    });
+  } finally {
+    setGenerateButtonState(false);
   }
 }
 
@@ -2903,6 +3085,7 @@ registerIntentHandler(INTENT_TYPES.APP_STATUS, (payload = {}) => {
       return;
     }
     const previousStatus = runtimeStatus;
+    runtimeStatus = status;
     if (status === 'ready') {
       runtimeReady = true;
       if (initializeRuntimeButton) {
@@ -2910,10 +3093,7 @@ registerIntentHandler(INTENT_TYPES.APP_STATUS, (payload = {}) => {
         initializeRuntimeButton.disabled = true;
         updateRuntimeButtonState(initializeRuntimeButton);
       }
-      if (generateButton) {
-        generateButton.disabled = false;
-        updateRuntimeButtonState(generateButton);
-      }
+      setGenerateButtonState(isGeneratingCalendar);
       if (!hasShownRuntimeReadyToast || previousStatus !== 'ready') {
         dispatchIntent({
           type: INTENT_TYPES.SHOW_TOAST,
@@ -2932,10 +3112,7 @@ registerIntentHandler(INTENT_TYPES.APP_STATUS, (payload = {}) => {
         initializeRuntimeButton.disabled = true;
         updateRuntimeButtonState(initializeRuntimeButton);
       }
-      if (generateButton) {
-        generateButton.disabled = true;
-        updateRuntimeButtonState(generateButton);
-      }
+      setGenerateButtonState(isGeneratingCalendar);
     } else if (status === 'error') {
       runtimeReady = false;
       hasShownRuntimeReadyToast = false;
@@ -2944,12 +3121,8 @@ registerIntentHandler(INTENT_TYPES.APP_STATUS, (payload = {}) => {
         initializeRuntimeButton.disabled = false;
         updateRuntimeButtonState(initializeRuntimeButton);
       }
-      if (generateButton) {
-        generateButton.disabled = true;
-        updateRuntimeButtonState(generateButton);
-      }
+      setGenerateButtonState(isGeneratingCalendar);
     }
-    runtimeStatus = status;
   }
 });
 
@@ -2959,10 +3132,7 @@ function handleRuntimeLoadSuccess() {
     initializeRuntimeButton.disabled = true;
     updateRuntimeButtonState(initializeRuntimeButton);
   }
-  if (generateButton) {
-    generateButton.disabled = false;
-    updateRuntimeButtonState(generateButton);
-  }
+  setGenerateButtonState(isGeneratingCalendar);
 }
 
 function handleRuntimeLoadFailure(error) {
@@ -2971,10 +3141,7 @@ function handleRuntimeLoadFailure(error) {
     initializeRuntimeButton.disabled = false;
     updateRuntimeButtonState(initializeRuntimeButton);
   }
-  if (generateButton && !runtimeReady) {
-    generateButton.disabled = true;
-    updateRuntimeButtonState(generateButton);
-  }
+  setGenerateButtonState(isGeneratingCalendar);
   hasShownRuntimeReadyToast = false;
   const summary = formatStructuredErrorSummary(error);
   const stderrMessage =
@@ -2992,6 +3159,27 @@ function handleRuntimeLoadFailure(error) {
       duration: 6000,
     },
   });
+}
+
+function hydrateGlobalActions() {
+  const actionsRoot = document.querySelector('[data-global-actions]');
+  if (!actionsRoot) {
+    return;
+  }
+  const button = actionsRoot.querySelector('[data-global-action="generate"]');
+  if (!(button instanceof HTMLElement)) {
+    return;
+  }
+  if (generateButton && generateButton !== button) {
+    generateButton.removeEventListener('click', handleGenerate);
+  }
+  generateButton = button;
+  styleRuntimeButton(generateButton);
+  setGenerateButtonState(isGeneratingCalendar);
+  if (!button.dataset.generateBound) {
+    button.addEventListener('click', handleGenerate);
+    button.dataset.generateBound = '1';
+  }
 }
 
 function hydrateConfigPanel() {
@@ -3020,9 +3208,6 @@ function hydrateConfigPanel() {
 
   const configActions = configPanel.querySelector('.config-actions');
   if (configActions) {
-    generateButton =
-      configActions.querySelector('[data-config-action="generate-runtime"]') ||
-      configActions.querySelector('.primary-action');
     initializeRuntimeButton =
       configActions.querySelector('[data-config-action="initialize-runtime"]') ||
       configActions.querySelector('.secondary-action');
@@ -3179,6 +3364,7 @@ function hydrateConfigPanel() {
       workforce: { budgetText: '' },
     },
   };
+  calendarConfigState = calendarConfig;
 
   let commonSeedUserEdited = false;
   let shouldPersistInitialCommon = false;
@@ -3768,184 +3954,6 @@ function hydrateConfigPanel() {
         console.error('Runtime initialization failed:', error);
       }
     });
-  }
-
-  if (generateButton) {
-    styleRuntimeButton(generateButton);
-    generateButton.disabled = false;
-    generateButton.textContent = GENERATE_BUTTON_DEFAULT_LABEL;
-    updateRuntimeButtonState(generateButton);
-
-    const setGenerateButtonState = (loading) => {
-      isGeneratingCalendar = Boolean(loading);
-      generateButton.disabled = isGeneratingCalendar;
-      generateButton.textContent = isGeneratingCalendar
-        ? GENERATE_BUTTON_LOADING_LABEL
-        : GENERATE_BUTTON_DEFAULT_LABEL;
-      updateRuntimeButtonState(generateButton);
-    };
-
-    const handleGenerate = async () => {
-      if (isGeneratingCalendar) {
-        return;
-      }
-
-      const snapshot = typeof getConfigSnapshot === 'function' ? getConfigSnapshot() : {};
-      const variantId = snapshot.variant || 'mk1';
-      const rigId = snapshot.rig || 'default';
-      const archetype = calendarConfig.common.archetype || '';
-      const weekStartValue = snapshot.week_start || '';
-      const seedValue = snapshot.seed || '';
-      const budgetText =
-        variantId === 'mk2' && rigId === 'workforce'
-          ? calendarConfig?.mk2?.workforce?.budgetText || ''
-          : '';
-
-      setGenerateButtonState(true);
-      updateVisuals(null);
-      showVisualsOverlay('Generating schedule…', { loading: true });
-      calendarHistoryState.activeId = null;
-      renderCalendarRunHistory();
-
-      beginConsoleRun('Generating payload…');
-
-      const runnerFnMap = {
-        mk1: { default: 'mk1_run' },
-        mk2: { calendar: 'mk2_run_calendar', workforce: 'mk2_run_workforce' },
-      };
-      const selectedFn = runnerFnMap[variantId]?.[rigId] || null;
-      const seedNumber = Number.parseInt(seedValue, 10);
-      const normalizedSeed = Number.isFinite(seedNumber) ? seedNumber : seedValue;
-
-      try {
-        const workerArgs = {
-          class: 'calendar',
-          variant: variantId,
-          rig: rigId,
-          archetype,
-          week_start: weekStartValue,
-          seed: normalizedSeed,
-        };
-        if (budgetText && budgetText.trim()) {
-          try {
-            workerArgs.yearly_budget = JSON.parse(budgetText);
-          } catch (parseError) {
-            throw { error: 'Invalid yearly budget JSON.', stdout: '', stderr: '' };
-          }
-        }
-
-        const { result = null, stdout = '', stderr = '', fallback = false } =
-          await sendWorkerMessage('run', {
-            fn: selectedFn || 'mock_run',
-            args: workerArgs,
-          });
-
-        renderConsoleOutputs({ stdout, stderr });
-        if (fallback) {
-          appendConsoleLog('Pyodide import failed → mock used');
-        }
-
-        if (!result || typeof result !== 'object') {
-          appendConsoleLog('error: No result returned from worker.');
-          showVisualsOverlay('No result returned from worker.', { loading: false });
-          dispatchIntent({
-            type: INTENT_TYPES.SHOW_TOAST,
-            payload: {
-              message: 'Generation failed',
-              description: 'No result returned from worker.',
-              intent: 'error',
-              duration: 4000,
-            },
-          });
-          return;
-        }
-
-        setJsonPayload(result, {
-          variant: variantId,
-          rig: rigId,
-          weekStart: result.week_start || weekStartValue,
-        });
-        updateJsonActionsState();
-        hideVisualsOverlay();
-
-        const eventsCount = Array.isArray(result.events) ? result.events.length : 0;
-        const inputsSnapshot = {
-          archetype,
-          week_start: weekStartValue,
-          seed: seedValue,
-        };
-        if (workerArgs.yearly_budget) {
-          inputsSnapshot.budget = true;
-        }
-
-        recordCalendarHistoryEntry({
-          archetype,
-          seed: normalizedSeed,
-          variant: variantId,
-          rig: rigId,
-          weekStart:
-            typeof result.week_start === 'string' && result.week_start
-              ? result.week_start
-              : weekStartValue,
-          rawResult: result,
-          summary: computeCalendarHistorySummary(result.events),
-          timestamp: new Date().toISOString(),
-        });
-
-        addRunHistoryEntry({
-          kind: 'generate',
-          ts: Date.now(),
-          class: 'calendar',
-          variant: variantId,
-          rig: rigId,
-          week_start:
-            typeof result.week_start === 'string' && result.week_start
-              ? result.week_start
-              : weekStartValue,
-          label: 'Generated schedule',
-          payload: result,
-          inputs: inputsSnapshot,
-          resultSummary: { events: eventsCount },
-        });
-
-        dispatchIntent({
-          type: INTENT_TYPES.NAVIGATE_TAB,
-          payload: { tab: 'json' },
-        });
-
-        appendConsoleLog('Run completed');
-      } catch (error) {
-        const summary = formatStructuredErrorSummary(error);
-        renderConsoleOutputs({
-          stdout: error?.stdout || '',
-          stderr: error?.stderr || summary,
-          structured: error,
-        });
-        const description =
-          summary && summary.length > 0
-            ? summary
-            : typeof error?.error === 'string' && error.error
-            ? error.error
-            : error instanceof Error && error.message
-            ? error.message
-            : 'Generation failed.';
-        console.error('Generation failed:', error);
-        showVisualsOverlay(description, { loading: false });
-        dispatchIntent({
-          type: INTENT_TYPES.SHOW_TOAST,
-          payload: {
-            message: 'Generation failed',
-            description,
-            intent: 'error',
-            duration: 5000,
-          },
-        });
-      } finally {
-        setGenerateButtonState(false);
-      }
-    };
-
-    generateButton.addEventListener('click', handleGenerate);
   }
 
   if (initializeRuntimeButton && runtimeReady) {
