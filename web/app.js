@@ -2256,7 +2256,7 @@ async function handleGenerate(event) {
   calendarHistoryState.activeId = null;
   renderCalendarRunHistory();
 
-  beginConsoleRun('Generating payload…');
+  beginConsoleRun('Generating payload…', { autoSwitch: false });
 
   const runnerFnMap = {
     mk1: { default: 'mk1_run' },
@@ -2645,8 +2645,8 @@ function applyConsoleIndicatorVisible(isVisible) {
   consoleIndicator.style.opacity = isVisible ? '1' : '0';
 }
 
-function beginConsoleRun(message) {
-  pendingAutoSwitch = true;
+function beginConsoleRun(message, { autoSwitch = true } = {}) {
+  pendingAutoSwitch = Boolean(autoSwitch);
   setConsoleOutputContent(stdoutOutput, message, defaultStdoutMessage);
   setConsoleOutputContent(stderrOutput, '', defaultStderrMessage);
   setConsoleResult(null);
