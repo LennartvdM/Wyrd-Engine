@@ -140,6 +140,9 @@ export class RadialUrchin {
     this.didWarnNoData = false;
     this.didWarnInvalidCenter = false;
 
+    this.metaElement = null;
+    this.metaSlot = null;
+
     this.handleResize = this.handleResize.bind(this);
     this.handlePointerMove = this.handlePointerMove.bind(this);
     this.handlePointerLeave = this.handlePointerLeave.bind(this);
@@ -173,12 +176,21 @@ export class RadialUrchin {
     this.root.append(this.container);
 
     this.controlBar = document.createElement('div');
-    this.controlBar.className = 'radial-urchin__controls';
+    this.controlBar.className = 'radial-urchin__controls visuals-controls-block';
     this.container.append(this.controlBar);
+
+    this.headerRow = document.createElement('div');
+    this.headerRow.className = 'radial-urchin__header visuals-header-row';
+    this.controlBar.append(this.headerRow);
 
     this.modeControl = document.createElement('div');
     this.modeControl.className = 'radial-urchin__segmented';
-    this.controlBar.append(this.modeControl);
+    this.headerRow.append(this.modeControl);
+
+    this.metaSlot = document.createElement('div');
+    this.metaSlot.className = 'radial-urchin__meta-slot';
+    this.metaSlot.hidden = true;
+    this.headerRow.append(this.metaSlot);
 
     this.modeButtons = new Map();
     Object.entries(MODE_LABELS).forEach(([mode, label]) => {
@@ -195,7 +207,7 @@ export class RadialUrchin {
     });
 
     this.legendContainer = document.createElement('div');
-    this.legendContainer.className = 'radial-urchin__legend';
+    this.legendContainer.className = 'radial-urchin__legend chip-row';
     this.controlBar.append(this.legendContainer);
 
     this.actionsContainer = document.createElement('div');
@@ -296,7 +308,7 @@ export class RadialUrchin {
     );
 
     this.canvasWrapper = document.createElement('div');
-    this.canvasWrapper.className = 'radial-urchin__stage';
+    this.canvasWrapper.className = 'radial-urchin__stage visuals-canvas-block';
     this.container.append(this.canvasWrapper);
 
     this.canvas = document.createElement('canvas');
@@ -381,7 +393,39 @@ export class RadialUrchin {
     }
   }
 
+  getRunMetaSlot() {
+    return this.metaSlot || null;
+  }
+
+  attachRunMeta(element) {
+    if (!this.metaSlot) {
+      return;
+    }
+    if (!(element instanceof HTMLElement)) {
+      this.detachRunMeta();
+      this.metaSlot.hidden = true;
+      return;
+    }
+    if (this.metaElement !== element || element.parentElement !== this.metaSlot) {
+      this.detachRunMeta();
+      this.metaElement = element;
+      this.metaSlot.append(element);
+    }
+    this.metaSlot.hidden = Boolean(element.hidden);
+  }
+
+  detachRunMeta() {
+    if (this.metaElement && this.metaElement.parentElement === this.metaSlot) {
+      this.metaSlot.removeChild(this.metaElement);
+    }
+    this.metaElement = null;
+    if (this.metaSlot) {
+      this.metaSlot.hidden = true;
+    }
+  }
+
   destroy() {
+    this.detachRunMeta();
     this.stopPlayback();
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
