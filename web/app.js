@@ -85,6 +85,8 @@ let currentJsonMetadata = { variant: '', rig: '', week: '', events: null };
 const VISUALS_LEGACY_FLAG = 'wyrd.visuals.legacy';
 const visualsState = {
   container: null,
+  layout: null,
+  mainPanel: null,
   mount: null,
   fallback: null,
   fallbackImg: null,
@@ -93,6 +95,14 @@ const visualsState = {
   useLegacy: false,
 };
 let lastVisualPayload = null;
+
+const CALENDAR_HISTORY_LIMIT = 20;
+const calendarHistoryState = {
+  runHistory: [],
+  panel: null,
+  list: null,
+  activeId: null,
+};
 
 function readVisualsLegacyFlag() {
   try {
@@ -210,9 +220,19 @@ function initVisualsMount() {
   visualsState.container = container;
   visualsState.useLegacy = readVisualsLegacyFlag();
 
+  const layout = document.createElement('div');
+  layout.className = 'visuals-layout';
+  container.append(layout);
+  visualsState.layout = layout;
+
+  const mainPanel = document.createElement('div');
+  mainPanel.className = 'visuals-main';
+  layout.append(mainPanel);
+  visualsState.mainPanel = mainPanel;
+
   const mount = document.createElement('div');
   mount.className = 'visuals-mount';
-  container.append(mount);
+  mainPanel.append(mount);
   visualsState.mount = mount;
 
   const fallback = document.createElement('div');
@@ -226,10 +246,15 @@ function initVisualsMount() {
   fallbackMessage.textContent = 'Legacy visuals preview unavailable.';
   fallbackMessage.hidden = true;
   fallback.append(fallbackImg, fallbackMessage);
-  container.append(fallback);
+  mainPanel.append(fallback);
   visualsState.fallback = fallback;
   visualsState.fallbackImg = fallbackImg;
   visualsState.fallbackMessage = fallbackMessage;
+
+  const historyPanel = createCalendarHistoryPanel();
+  if (historyPanel) {
+    layout.append(historyPanel);
+  }
 
   if (typeof window !== 'undefined') {
     window.WYRD_SET_VISUALS_LEGACY = (enabled) => {
@@ -258,6 +283,279 @@ function safeInitVisuals(initialData) {
   } catch (error) {
     console.error('[visuals] init failed:', error);
   }
+}
+
+function generateCalendarHistoryId() {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch (error) {
+    // ignore
+  }
+  const random = Math.random().toString(16).slice(2);
+  return `calendar-${Date.now()}-${random}`;
+}
+
+function parseHistoryTime(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const [hoursPart, minutesPart] = value.split(':');
+  const hours = Number.parseInt(hoursPart, 10);
+  const minutes = Number.parseInt(minutesPart, 10);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+  const total = hours * 60 + minutes;
+  return Number.isFinite(total) ? ((total % (24 * 60)) + 24 * 60) % (24 * 60) : null;
+}
+
+function computeEventDurationMinutes(event) {
+  if (!event || typeof event !== 'object') {
+    return 0;
+  }
+  const start = parseHistoryTime(event.start);
+  const end = parseHistoryTime(event.end);
+  if (start === null || end === null) {
+    return 0;
+  }
+  if (end >= start) {
+    return end - start;
+  }
+  return 24 * 60 - start + end;
+}
+
+function computeCalendarHistorySummary(events) {
+  if (!Array.isArray(events) || events.length === 0) {
+    return { totalEvents: Array.isArray(events) ? events.length : 0 };
+  }
+
+  let sleepMinutes = 0;
+  let workMinutes = 0;
+
+  events.forEach((event) => {
+    const duration = computeEventDurationMinutes(event);
+    if (duration <= 0) {
+      return;
+    }
+    const activity = (event?.activity || event?.label || '').toString().toLowerCase();
+    if (activity.includes('sleep')) {
+      sleepMinutes += duration;
+    }
+    if (activity.includes('work')) {
+      workMinutes += duration;
+    }
+  });
+
+  const summary = { totalEvents: events.length };
+  if (sleepMinutes > 0) {
+    summary.totalSleepHours = Math.round((sleepMinutes / 60) * 10) / 10;
+  }
+  if (workMinutes > 0) {
+    summary.totalWorkHours = Math.round((workMinutes / 60) * 10) / 10;
+  }
+  return summary;
+}
+
+function cloneCalendarHistoryPayload(payload) {
+  try {
+    return JSON.parse(JSON.stringify(payload ?? {}));
+  } catch (error) {
+    console.warn('Unable to clone calendar history payload:', error);
+    return null;
+  }
+}
+
+function formatHistoryTimestamp(value) {
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new Error('Invalid date');
+    }
+    const pad = (num) => String(num).padStart(2, '0');
+    const year = date.getFullYear();
+    const month = pad(date.getMonth() + 1);
+    const day = pad(date.getDate());
+    const hours = pad(date.getHours());
+    const minutes = pad(date.getMinutes());
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
+  } catch (error) {
+    return 'Unknown time';
+  }
+}
+
+function formatHistoryHours(value) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const rounded = Math.round(value * 10) / 10;
+  return rounded.toFixed(1);
+}
+
+function renderCalendarRunHistory() {
+  const list = calendarHistoryState.list;
+  if (!list) {
+    return;
+  }
+
+  list.innerHTML = '';
+  if (calendarHistoryState.runHistory.length === 0) {
+    const emptyItem = document.createElement('li');
+    emptyItem.className = 'visuals-history-empty';
+    emptyItem.textContent = 'No runs yet. Generate a schedule to build history.';
+    list.append(emptyItem);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  calendarHistoryState.runHistory.forEach((entry) => {
+    const item = document.createElement('li');
+    item.className = 'visuals-history-item';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'visuals-history-entry';
+    if (entry.id === calendarHistoryState.activeId) {
+      button.classList.add('is-active');
+    }
+
+    const headline = document.createElement('span');
+    headline.className = 'visuals-history-entry__headline';
+    const parts = [`[${formatHistoryTimestamp(entry.timestamp)}]`];
+    if (entry.archetype) {
+      parts.push(`archetype=${entry.archetype}`);
+    }
+    if (entry.seed !== undefined && entry.seed !== null && entry.seed !== '') {
+      parts.push(`seed=${entry.seed}`);
+    }
+    const variantLabel = [entry.variant, entry.rig].filter(Boolean).join('/');
+    if (variantLabel) {
+      parts.push(variantLabel);
+    }
+    headline.textContent = parts.join(' ');
+
+    const meta = document.createElement('span');
+    meta.className = 'visuals-history-entry__meta';
+    const metaParts = [];
+    if (entry.weekStart) {
+      metaParts.push(`week=${entry.weekStart}`);
+    }
+    if (entry.summary && Number.isFinite(entry.summary.totalEvents)) {
+      metaParts.push(`events=${entry.summary.totalEvents}`);
+    }
+    if (entry.summary && Number.isFinite(entry.summary.totalSleepHours)) {
+      const value = formatHistoryHours(entry.summary.totalSleepHours);
+      if (value) {
+        metaParts.push(`sleep≈${value}h`);
+      }
+    }
+    if (entry.summary && Number.isFinite(entry.summary.totalWorkHours)) {
+      const value = formatHistoryHours(entry.summary.totalWorkHours);
+      if (value) {
+        metaParts.push(`work≈${value}h`);
+      }
+    }
+    meta.textContent = metaParts.join(' • ') || 'No summary available';
+
+    button.append(headline, meta);
+    button.addEventListener('click', () => {
+      restoreCalendarHistoryEntry(entry.id);
+    });
+
+    item.append(button);
+    fragment.append(item);
+  });
+
+  list.append(fragment);
+}
+
+function createCalendarHistoryPanel() {
+  if (calendarHistoryState.panel) {
+    return calendarHistoryState.panel;
+  }
+  const panel = document.createElement('aside');
+  panel.className = 'visuals-history-panel';
+
+  const header = document.createElement('div');
+  header.className = 'visuals-history-header';
+
+  const title = document.createElement('h3');
+  title.className = 'visuals-history-title';
+  title.textContent = 'History';
+
+  header.append(title);
+  panel.append(header);
+
+  const list = document.createElement('ul');
+  list.className = 'visuals-history-list';
+  panel.append(list);
+
+  calendarHistoryState.panel = panel;
+  calendarHistoryState.list = list;
+
+  renderCalendarRunHistory();
+
+  return panel;
+}
+
+function recordCalendarHistoryEntry(entry) {
+  if (!entry || !entry.rawResult) {
+    return;
+  }
+  const normalized = {
+    id: entry.id || generateCalendarHistoryId(),
+    timestamp: entry.timestamp || new Date().toISOString(),
+    archetype: entry.archetype || '',
+    seed:
+      Number.isFinite(entry.seed)
+        ? entry.seed
+        : Number.isFinite(Number.parseInt(entry.seed, 10))
+        ? Number.parseInt(entry.seed, 10)
+        : undefined,
+    variant: entry.variant || '',
+    rig: entry.rig || '',
+    weekStart: entry.weekStart || '',
+    summary: entry.summary ? { ...entry.summary } : null,
+    rawResult: cloneCalendarHistoryPayload(entry.rawResult) || entry.rawResult,
+  };
+
+  calendarHistoryState.runHistory = [normalized, ...calendarHistoryState.runHistory].slice(
+    0,
+    CALENDAR_HISTORY_LIMIT,
+  );
+  calendarHistoryState.activeId = normalized.id;
+  renderCalendarRunHistory();
+}
+
+function restoreCalendarHistoryEntry(entryId) {
+  if (!entryId) {
+    return;
+  }
+  const entry = calendarHistoryState.runHistory.find((item) => item.id === entryId);
+  if (!entry) {
+    return;
+  }
+  const payload = cloneCalendarHistoryPayload(entry.rawResult) || entry.rawResult;
+  if (!payload || typeof payload !== 'object') {
+    return;
+  }
+
+  calendarHistoryState.activeId = entry.id;
+
+  setJsonPayload(payload, {
+    variant: entry.variant,
+    rig: entry.rig,
+    weekStart: entry.weekStart,
+  });
+  updateJsonActionsState();
+  const validation = validateWebV1Calendar(payload);
+  setJsonValidationBadge(validation.ok ? 'ok' : 'err');
+  renderCalendarRunHistory();
+  dispatchIntent({
+    type: INTENT_TYPES.NAVIGATE_TAB,
+    payload: { tab: 'visuals' },
+  });
 }
 
 let getConfigSnapshot = () => ({
@@ -3342,6 +3640,20 @@ function hydrateConfigPanel() {
         if (workerArgs.yearly_budget) {
           inputsSnapshot.budget = true;
         }
+
+        recordCalendarHistoryEntry({
+          archetype,
+          seed: normalizedSeed,
+          variant: variantId,
+          rig: rigId,
+          weekStart:
+            typeof result.week_start === 'string' && result.week_start
+              ? result.week_start
+              : weekStartValue,
+          rawResult: result,
+          summary: computeCalendarHistorySummary(result.events),
+          timestamp: new Date().toISOString(),
+        });
 
         addRunHistoryEntry({
           kind: 'generate',
