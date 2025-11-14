@@ -99,6 +99,7 @@ const visualsState = {
   runLabel: null,
 };
 let lastVisualPayload = null;
+let lastVisualSchedule = null;
 let isGeneratingCalendar = false;
 const GENERATE_BUTTON_DEFAULT_LABEL = 'Generate schedule';
 const GENERATE_BUTTON_LOADING_LABEL = 'Generating…';
@@ -242,8 +243,36 @@ function resolveLegacyPng(payload) {
   return candidates.find((value) => typeof value === 'string' && value.trim().length > 0) || '';
 }
 
+function resolveVisualPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  if (Array.isArray(payload.events)) {
+    return payload;
+  }
+  if (payload.calendar && typeof payload.calendar === 'object') {
+    return resolveVisualPayload(payload.calendar);
+  }
+  if (payload.calendarJson && typeof payload.calendarJson === 'object') {
+    return resolveVisualPayload(payload.calendarJson);
+  }
+  if (payload.rawResult && typeof payload.rawResult === 'object') {
+    return resolveVisualPayload(payload.rawResult);
+  }
+  if (payload.data && typeof payload.data === 'object') {
+    return resolveVisualPayload(payload.data);
+  }
+  return null;
+}
+
 function updateVisuals(payload) {
   lastVisualPayload = payload && typeof payload === 'object' ? payload : null;
+  lastVisualSchedule = resolveVisualPayload(payload);
+
+  if (!lastVisualSchedule && payload && typeof payload === 'object' && !visualsState.useLegacy) {
+    console.warn('[visuals] received payload without events, skipping radial render');
+  }
+
   if (visualsState.useLegacy) {
     resetVisualsInstance();
     const src = resolveLegacyPng(lastVisualPayload);
@@ -267,12 +296,12 @@ function updateVisuals(payload) {
       }
     }
   } else {
-    maybeCreateUrchinInstance(lastVisualPayload);
+    maybeCreateUrchinInstance(lastVisualSchedule);
   }
 
   if (visualsState.urchin) {
     try {
-      visualsState.urchin.update({ data: visualsState.useLegacy ? null : lastVisualPayload });
+      visualsState.urchin.update({ data: visualsState.useLegacy ? null : lastVisualSchedule });
     } catch (error) {
       console.error('[visuals] failed to update radial urchin:', error);
     }
@@ -298,21 +327,23 @@ function resetVisualsInstance() {
 }
 
 function hasVisualEvents(payload) {
-  return (
-    payload &&
-    typeof payload === 'object' &&
-    Array.isArray(payload.events) &&
-    payload.events.length > 0
-  );
+  const schedule = resolveVisualPayload(payload);
+  return Boolean(schedule && Array.isArray(schedule.events) && schedule.events.length > 0);
 }
 
-function maybeCreateUrchinInstance(payload) {
-  if (visualsState.useLegacy || visualsState.urchin || !visualsState.mount || !hasVisualEvents(payload)) {
+function maybeCreateUrchinInstance(schedule) {
+  if (
+    visualsState.useLegacy ||
+    visualsState.urchin ||
+    !visualsState.mount ||
+    !schedule ||
+    !hasVisualEvents(schedule)
+  ) {
     return;
   }
   resetVisualsInstance();
   const instance = createRadialUrchin(visualsState.mount, {
-    data: payload,
+    data: schedule,
     mode: 'day-rings',
     onSelect: handleUrchinSelect,
   });
@@ -500,7 +531,9 @@ function ensureCalendarHistorySummary(entry) {
   if (entry.summary && typeof entry.summary === 'object') {
     return entry.summary;
   }
-  const events = entry.rawResult && Array.isArray(entry.rawResult.events)
+  const events = entry.calendarJson && Array.isArray(entry.calendarJson.events)
+    ? entry.calendarJson.events
+    : entry.rawResult && Array.isArray(entry.rawResult.events)
     ? entry.rawResult.events
     : null;
   if (!events) {
@@ -756,9 +789,15 @@ function renderCalendarHistorySummary() {
 function setCurrentCalendarHistoryEntry(entry, options = {}) {
   const { updateJson = true, focusVisuals = false, showEmptyState = true } = options;
 
-  const payload = entry && entry.rawResult ? cloneCalendarHistoryPayload(entry.rawResult) || entry.rawResult : null;
+  const rawPayload =
+    entry && entry.rawResult ? cloneCalendarHistoryPayload(entry.rawResult) || entry.rawResult : null;
+  const calendarPayloadSource =
+    entry && entry.calendarJson
+      ? cloneCalendarHistoryPayload(entry.calendarJson) || entry.calendarJson
+      : rawPayload;
+  const visualPayload = resolveVisualPayload(calendarPayloadSource);
 
-  if (!entry || !payload || typeof payload !== 'object') {
+  if (!entry || !visualPayload || typeof visualPayload !== 'object') {
     calendarHistoryState.activeId = null;
     calendarHistoryState.currentRun = null;
     updateVisuals(null);
@@ -770,19 +809,20 @@ function setCurrentCalendarHistoryEntry(entry, options = {}) {
     calendarHistoryState.currentRun = {
       ...entry,
       summary: entry.summary && typeof entry.summary === 'object' ? { ...entry.summary } : null,
-      rawResult: cloneCalendarHistoryPayload(payload) || payload,
+      rawResult: rawPayload || visualPayload,
+      calendarJson: cloneCalendarHistoryPayload(visualPayload) || visualPayload,
     };
 
     if (updateJson) {
-      setJsonPayload(payload, {
+      setJsonPayload(rawPayload || visualPayload, {
         variant: entry.variant,
         rig: entry.rig,
         weekStart: entry.weekStart,
       });
-      const validation = validateWebV1Calendar(payload);
+      const validation = validateWebV1Calendar(rawPayload || visualPayload || {});
       setJsonValidationBadge(validation.ok ? 'ok' : 'err');
     } else {
-      updateVisuals(payload);
+      updateVisuals(rawPayload || visualPayload);
     }
 
     hideVisualsOverlay();
@@ -865,6 +905,7 @@ function recordCalendarHistoryEntry(entry) {
   if (!entry || !entry.rawResult) {
     return;
   }
+  const visualPayload = resolveVisualPayload(entry.calendarJson || entry.rawResult);
   const normalized = {
     id: entry.id || generateCalendarHistoryId(),
     timestamp: entry.timestamp || new Date().toISOString(),
@@ -880,6 +921,7 @@ function recordCalendarHistoryEntry(entry) {
     weekStart: entry.weekStart || '',
     summary: entry.summary ? { ...entry.summary } : null,
     rawResult: cloneCalendarHistoryPayload(entry.rawResult) || entry.rawResult,
+    calendarJson: cloneCalendarHistoryPayload(visualPayload) || visualPayload,
   };
 
   calendarHistoryState.runHistory = [normalized, ...calendarHistoryState.runHistory].slice(
@@ -1247,8 +1289,9 @@ function setJsonPayload(payload, options = {}) {
       : snapshot.week_start || '';
   metadata.week = weekFromOptions;
 
-  if (parsedPayload && Array.isArray(parsedPayload.events)) {
-    metadata.events = parsedPayload.events.length;
+  const scheduleForMeta = resolveVisualPayload(parsedPayload);
+  if (scheduleForMeta && Array.isArray(scheduleForMeta.events)) {
+    metadata.events = scheduleForMeta.events.length;
   }
 
   currentJsonMetadata = metadata;

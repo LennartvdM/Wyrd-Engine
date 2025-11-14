@@ -138,6 +138,7 @@ export class RadialUrchin {
     this.contrastQuery = null;
     this.hasRenderableData = false;
     this.didWarnNoData = false;
+    this.didWarnInvalidCenter = false;
 
     this.handleResize = this.handleResize.bind(this);
     this.handlePointerMove = this.handlePointerMove.bind(this);
@@ -646,6 +647,7 @@ export class RadialUrchin {
     this.overlay.setAttribute('width', width);
     this.overlay.setAttribute('height', height);
     this.center = { x: width / 2, y: height / 2 };
+    this.didWarnInvalidCenter = false;
     this.canvasRect = getElementRect(this.canvas);
     this.rebuildDisplayArcs();
     this.render();
@@ -660,6 +662,23 @@ export class RadialUrchin {
     if (!ctx || !mainCtx) {
       return;
     }
+
+    if (
+      !this.center ||
+      typeof this.center.x !== 'number' ||
+      Number.isNaN(this.center.x) ||
+      typeof this.center.y !== 'number' ||
+      Number.isNaN(this.center.y)
+    ) {
+      if (!this.didWarnInvalidCenter) {
+        console.warn('[RadialUrchin] invalid center point, skipping render', this.center);
+        this.didWarnInvalidCenter = true;
+      }
+      this.updateSelectionOverlay();
+      this.updateScrubOverlay();
+      return;
+    }
+    this.didWarnInvalidCenter = false;
 
     if (!this.hasRenderableData || !this.layout || !Array.isArray(this.layout.arcs) || this.layout.arcs.length === 0) {
       ctx.clearRect(0, 0, this.offscreen.width, this.offscreen.height);
