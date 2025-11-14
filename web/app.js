@@ -110,7 +110,7 @@ const calendarHistoryState = {
   panel: null,
   list: null,
   activeId: null,
-  currentEntry: null,
+  currentRun: null,
   summaryContainer: null,
   summaryList: null,
   summaryMeta: null,
@@ -245,6 +245,7 @@ function resolveLegacyPng(payload) {
 function updateVisuals(payload) {
   lastVisualPayload = payload && typeof payload === 'object' ? payload : null;
   if (visualsState.useLegacy) {
+    resetVisualsInstance();
     const src = resolveLegacyPng(lastVisualPayload);
     if (visualsState.fallbackImg) {
       if (src) {
@@ -275,6 +276,24 @@ function updateVisuals(payload) {
     } catch (error) {
       console.error('[visuals] failed to update radial urchin:', error);
     }
+  } else if (!visualsState.useLegacy && visualsState.mount && visualsState.mount.childElementCount > 0) {
+    visualsState.mount.replaceChildren();
+  }
+}
+
+function resetVisualsInstance() {
+  if (visualsState.urchin) {
+    try {
+      if (typeof visualsState.urchin.destroy === 'function') {
+        visualsState.urchin.destroy();
+      }
+    } catch (error) {
+      console.warn('[visuals] failed to destroy existing radial urchin:', error);
+    }
+    visualsState.urchin = null;
+  }
+  if (visualsState.mount && visualsState.mount.childNodes.length > 0) {
+    visualsState.mount.replaceChildren();
   }
 }
 
@@ -291,6 +310,7 @@ function maybeCreateUrchinInstance(payload) {
   if (visualsState.useLegacy || visualsState.urchin || !visualsState.mount || !hasVisualEvents(payload)) {
     return;
   }
+  resetVisualsInstance();
   const instance = createRadialUrchin(visualsState.mount, {
     data: payload,
     mode: 'day-rings',
@@ -654,11 +674,11 @@ function renderCalendarHistorySummary() {
     return;
   }
 
-  const { activeId, runHistory, currentEntry } = calendarHistoryState;
+  const { activeId, runHistory, currentRun } = calendarHistoryState;
   const activeIndex = activeId ? runHistory.findIndex((entry) => entry.id === activeId) : -1;
   const entry =
-    currentEntry && currentEntry.id === activeId
-      ? currentEntry
+    currentRun && currentRun.id === activeId
+      ? currentRun
       : activeIndex !== -1
       ? runHistory[activeIndex]
       : null;
@@ -740,14 +760,14 @@ function setCurrentCalendarHistoryEntry(entry, options = {}) {
 
   if (!entry || !payload || typeof payload !== 'object') {
     calendarHistoryState.activeId = null;
-    calendarHistoryState.currentEntry = null;
+    calendarHistoryState.currentRun = null;
     updateVisuals(null);
     if (showEmptyState) {
       showVisualsEmptyState();
     }
   } else {
     calendarHistoryState.activeId = entry.id;
-    calendarHistoryState.currentEntry = {
+    calendarHistoryState.currentRun = {
       ...entry,
       summary: entry.summary && typeof entry.summary === 'object' ? { ...entry.summary } : null,
       rawResult: cloneCalendarHistoryPayload(payload) || payload,
@@ -1237,7 +1257,7 @@ function setJsonPayload(payload, options = {}) {
   updateVisuals(parsedPayload);
   if (hasVisualEvents(parsedPayload)) {
     hideVisualsOverlay();
-  } else if (!calendarHistoryState.currentEntry && calendarHistoryState.runHistory.length === 0) {
+  } else if (!calendarHistoryState.currentRun && calendarHistoryState.runHistory.length === 0) {
     showVisualsEmptyState();
   }
 }
@@ -2405,7 +2425,7 @@ async function handleGenerate(event) {
   updateVisuals(null);
   showVisualsOverlay('Generating schedule…', { loading: true });
   calendarHistoryState.activeId = null;
-  calendarHistoryState.currentEntry = null;
+  calendarHistoryState.currentRun = null;
   renderCalendarRunHistory();
 
   beginConsoleRun('Generating payload…', { autoSwitch: false });
