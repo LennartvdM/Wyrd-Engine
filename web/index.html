@@ -94,9 +94,19 @@
       </button>
     </nav>
     <div class="workbench-toolbar" data-global-actions>
-      <button type="button" data-global-action="generate">
-        Generate schedule
-      </button>
+      <div class="toolbar-info">
+        <span class="toolbar-seed-label">Seed:</span>
+        <span class="toolbar-seed-value" data-current-seed>—</span>
+      </div>
+      <div class="toolbar-actions">
+        <label class="toolbar-toggle" for="randomize-seed-toggle">
+          <input type="checkbox" id="randomize-seed-toggle" />
+          <span>Randomise seed</span>
+        </label>
+        <button type="button" data-global-action="generate">
+          Generate schedule
+        </button>
+      </div>
     </div>
     <main class="tab-content">
       <section

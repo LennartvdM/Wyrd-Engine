@@ -46,6 +46,41 @@ body {
   border-bottom: 1px solid #2a2d35;
 }
 
+.toolbar-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  font-size: 12px;
+  color: #9ea3b6;
+}
+
+.toolbar-seed-value {
+  font-variant-numeric: tabular-nums;
+  color: #e5e7eb;
+  font-weight: 600;
+}
+
+.toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toolbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #cbd0df;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toolbar-toggle input {
+  margin: 0;
+}
+
 .tab {
   flex: 1;
   background: #1f2128;
