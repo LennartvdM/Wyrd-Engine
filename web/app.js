@@ -114,6 +114,58 @@ const calendarHistoryState = {
   summaryMeta: null,
 };
 
+const RANDOMIZE_SEED_STORAGE_KEY = 'cfg.calendar.randomizeSeed';
+let randomizeSeed = false;
+let randomizeSeedToggle = null;
+let seedIndicatorElement = null;
+let calendarConfigController = null;
+
+function readRandomizeSeedPreference() {
+  try {
+    return localStorage.getItem(RANDOMIZE_SEED_STORAGE_KEY) === '1';
+  } catch (error) {
+    return false;
+  }
+}
+
+function persistRandomizeSeedPreference(enabled) {
+  try {
+    localStorage.setItem(RANDOMIZE_SEED_STORAGE_KEY, enabled ? '1' : '0');
+  } catch (error) {
+    // ignore storage failures
+  }
+}
+
+function updateRandomizeSeedToggleUI() {
+  if (randomizeSeedToggle) {
+    randomizeSeedToggle.checked = Boolean(randomizeSeed);
+  }
+}
+
+function updateSeedIndicator(seedValue) {
+  if (!seedIndicatorElement) {
+    return;
+  }
+  let value = seedValue;
+  if (typeof value === 'undefined') {
+    if (calendarConfigState && calendarConfigState.common) {
+      value = calendarConfigState.common.seed;
+    } else if (typeof getConfigSnapshot === 'function') {
+      try {
+        const snapshot = getConfigSnapshot();
+        value = snapshot?.seed;
+      } catch (error) {
+        value = undefined;
+      }
+    }
+  }
+  if (value === null || typeof value === 'undefined' || value === '') {
+    seedIndicatorElement.textContent = '—';
+    return;
+  }
+  seedIndicatorElement.textContent = String(value);
+}
+
 function readVisualsLegacyFlag() {
   try {
     return localStorage.getItem(VISUALS_LEGACY_FLAG) === '1';
@@ -939,6 +991,13 @@ function renderRunHistory() {
         ? ''
         : `${eventCount} event${eventCount === 1 ? '' : 's'}`;
     const metaParts = [`${timestamp}`, `Week: ${week}`];
+    const seedDisplay =
+      entry.seed !== undefined && entry.seed !== null && entry.seed !== ''
+        ? String(entry.seed)
+        : '';
+    if (seedDisplay) {
+      metaParts.push(`Seed: ${seedDisplay}`);
+    }
     if (eventText) {
       metaParts.push(eventText);
     }
@@ -1007,6 +1066,12 @@ function addRunHistoryEntry(entry) {
     class: entry.class || 'calendar',
     variant: entry.variant || '',
     rig: entry.rig || '',
+    seed:
+      typeof entry.seed === 'number'
+        ? entry.seed
+        : typeof entry.seed === 'string' && entry.seed.trim().length > 0
+        ? entry.seed.trim()
+        : '',
     week_start: typeof entry.week_start === 'string' ? entry.week_start : '',
     label: entry.label || '',
     payload: clonePayload(entry.payload) || entry.payload || {},
@@ -2230,6 +2295,15 @@ function setGenerateButtonState(loading) {
   updateGenerateButtonDisabledForRuntime();
 }
 
+function handleRandomizeSeedToggleChange() {
+  if (!randomizeSeedToggle) {
+    return;
+  }
+  randomizeSeed = randomizeSeedToggle.checked;
+  persistRandomizeSeedPreference(randomizeSeed);
+  updateRandomizeSeedToggleUI();
+}
+
 async function handleGenerate(event) {
   if (event && typeof event.preventDefault === 'function') {
     event.preventDefault();
@@ -2238,17 +2312,38 @@ async function handleGenerate(event) {
     return;
   }
 
+  let randomizedSeedText = '';
+  if (randomizeSeed) {
+    randomizedSeedText = String(Math.floor(Math.random() * 1_000_000_000));
+    let appliedSeed = null;
+    if (calendarConfigController && typeof calendarConfigController.setSeed === 'function') {
+      appliedSeed = calendarConfigController.setSeed(randomizedSeedText, {
+        markUserEdited: true,
+        persist: true,
+      });
+      if (typeof appliedSeed === 'string' && appliedSeed.trim().length > 0) {
+        randomizedSeedText = appliedSeed.trim();
+      }
+    }
+    if (!appliedSeed && calendarConfigState && calendarConfigState.common) {
+      calendarConfigState.common.seed = randomizedSeedText;
+      updateSeedIndicator(randomizedSeedText);
+    }
+  }
+
   const snapshot = typeof getConfigSnapshot === 'function' ? getConfigSnapshot() : {};
   const variantId = snapshot.variant || 'mk1';
   const rigId = snapshot.rig || 'default';
   const config = calendarConfigState || {};
   const archetype = config?.common?.archetype || '';
   const weekStartValue = snapshot.week_start || '';
-  const seedValue = snapshot.seed || '';
+  const seedValue = snapshot.seed || randomizedSeedText;
   const budgetText =
     variantId === 'mk2' && rigId === 'workforce'
       ? config?.mk2?.workforce?.budgetText || ''
       : '';
+
+  updateSeedIndicator(seedValue);
 
   setGenerateButtonState(true);
   updateVisuals(null);
@@ -2352,6 +2447,7 @@ async function handleGenerate(event) {
           ? result.week_start
           : weekStartValue,
       label: 'Generated schedule',
+      seed: normalizedSeed,
       payload: result,
       inputs: inputsSnapshot,
       resultSummary: { events: eventsCount },
@@ -3170,6 +3266,22 @@ function hydrateGlobalActions() {
   if (!(button instanceof HTMLElement)) {
     return;
   }
+  seedIndicatorElement = actionsRoot.querySelector('[data-current-seed]') || seedIndicatorElement;
+  if (!actionsRoot.dataset.randomizeSeedHydrated) {
+    randomizeSeed = readRandomizeSeedPreference();
+    actionsRoot.dataset.randomizeSeedHydrated = '1';
+  }
+  const toggle = actionsRoot.querySelector('#randomize-seed-toggle');
+  if (toggle !== randomizeSeedToggle) {
+    if (randomizeSeedToggle) {
+      randomizeSeedToggle.removeEventListener('change', handleRandomizeSeedToggleChange);
+    }
+    randomizeSeedToggle = toggle instanceof HTMLInputElement ? toggle : null;
+    if (randomizeSeedToggle) {
+      randomizeSeedToggle.addEventListener('change', handleRandomizeSeedToggleChange);
+    }
+  }
+  updateRandomizeSeedToggleUI();
   if (generateButton && generateButton !== button) {
     generateButton.removeEventListener('click', handleGenerate);
   }
@@ -3180,6 +3292,7 @@ function hydrateGlobalActions() {
     button.addEventListener('click', handleGenerate);
     button.dataset.generateBound = '1';
   }
+  updateSeedIndicator();
 }
 
 function hydrateConfigPanel() {
@@ -3365,6 +3478,10 @@ function hydrateConfigPanel() {
     },
   };
   calendarConfigState = calendarConfig;
+  calendarConfigController = {
+    setSeed: (value, options) => setCalendarSeed(value, options),
+    getSeed: () => (calendarConfig.common.seed ? String(calendarConfig.common.seed) : ''),
+  };
 
   let commonSeedUserEdited = false;
   let shouldPersistInitialCommon = false;
@@ -3521,6 +3638,7 @@ function hydrateConfigPanel() {
     cfg.weekStart = calendarConfig.common.weekStart || '';
     cfg.seed = calendarConfig.common.seed ? String(calendarConfig.common.seed) : '';
     renderSummaryChips();
+    updateSeedIndicator(calendarConfig.common.seed);
   };
 
   const computeDeterministicSeed = () => {
@@ -3545,6 +3663,7 @@ function hydrateConfigPanel() {
     if (seedInput) {
       seedInput.value = calendarConfig.common.seed || computeDeterministicSeed();
     }
+    updateSeedIndicator(calendarConfig.common.seed);
   };
 
   const persistCalendarCommon = () => {
@@ -3557,6 +3676,21 @@ function hydrateConfigPanel() {
     };
     persistJsonStorage(CALENDAR_COMMON_STORAGE_KEY, payload);
   };
+
+  function setCalendarSeed(nextSeed, { markUserEdited = true, persist = true } = {}) {
+    const parsedSeed = Number.parseInt(String(nextSeed), 10);
+    if (!Number.isFinite(parsedSeed)) {
+      return '';
+    }
+    calendarConfig.common.seed = String(parsedSeed);
+    commonSeedUserEdited = Boolean(markUserEdited);
+    if (persist) {
+      persistCalendarCommon();
+    }
+    syncCommonInputs();
+    syncCommonStateToChips();
+    return calendarConfig.common.seed;
+  }
 
   const persistCalendarMk2Calendar = () => {
     persistJsonStorage(CALENDAR_MK2_CALENDAR_STORAGE_KEY, {
@@ -3651,28 +3785,24 @@ function hydrateConfigPanel() {
     seedInput.addEventListener('change', () => {
       const value = seedInput.value.trim();
       if (!value) {
-        commonSeedUserEdited = false;
-        calendarConfig.common.seed = computeDeterministicSeed();
-        seedInput.value = calendarConfig.common.seed;
-      } else {
-        const numericSeed = Number.parseInt(value, 10);
-        if (!Number.isFinite(numericSeed)) {
-          seedInput.value = calendarConfig.common.seed || computeDeterministicSeed();
-          return;
-        }
-        calendarConfig.common.seed = String(numericSeed);
-        commonSeedUserEdited = true;
+        setCalendarSeed(computeDeterministicSeed(), { markUserEdited: false, persist: true });
+        updateDerivedFromFoundation();
+        return;
       }
-      persistCalendarCommon();
+      const numericSeed = Number.parseInt(value, 10);
+      if (!Number.isFinite(numericSeed)) {
+        seedInput.value = calendarConfig.common.seed || computeDeterministicSeed();
+        updateSeedIndicator(calendarConfig.common.seed);
+        return;
+      }
+      setCalendarSeed(numericSeed, { markUserEdited: true, persist: true });
       updateDerivedFromFoundation();
     });
   }
 
   if (seedResetButton) {
     seedResetButton.addEventListener('click', () => {
-      commonSeedUserEdited = false;
-      calendarConfig.common.seed = computeDeterministicSeed();
-      persistCalendarCommon();
+      setCalendarSeed(computeDeterministicSeed(), { markUserEdited: false, persist: true });
       updateDerivedFromFoundation();
     });
   }
@@ -3680,9 +3810,7 @@ function hydrateConfigPanel() {
   if (seedRandomButton) {
     seedRandomButton.addEventListener('click', () => {
       const randomSeed = Math.floor(Math.random() * 1_000_000_000);
-      calendarConfig.common.seed = String(randomSeed);
-      commonSeedUserEdited = true;
-      persistCalendarCommon();
+      setCalendarSeed(randomSeed, { markUserEdited: true, persist: true });
       updateDerivedFromFoundation();
     });
   }
