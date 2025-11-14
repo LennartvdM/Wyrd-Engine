@@ -1460,9 +1460,110 @@ const logsPanel = document.querySelector('.tab-panel[data-tab="logs"]');
 
 const defaultStdoutMessage = 'Program output will appear here.';
 const defaultStderrMessage = 'Error output will appear here.';
+const defaultResultMessage = 'Result JSON will appear here.';
+
+const consoleRuntimePresets = {
+  'mk2-quick-test': {
+    label: 'Run MK2 quick test',
+    script: String.raw`
+from datetime import date
+from rigs.workforce_rig import WorkforceRig
+from modules.unique_events import UniqueDay
+from yearly_budget import YearlyBudget
+
+RUNNER_CONFIG = globals().get("RUNNER_CONFIG", {})
+EXECUTION_INPUTS = globals().get("EXECUTION_INPUTS", {})
+
+
+def _build_budget(data):
+    if not isinstance(data, dict):
+        return None
+
+    year = int(data.get("year") or date.today().year)
+    budget = YearlyBudget(
+        person_id=data.get("person_id", "console"),
+        year=year,
+        vacation_days=int(data.get("vacation_days", 20)),
+        sick_days_taken=int(data.get("sick_days_taken", 0)),
+    )
+
+    for entry in data.get("unique_days", []):
+        try:
+            unique = UniqueDay(
+                date=date.fromisoformat(entry["date"]),
+                day_type=entry.get("day_type", "custom"),
+                rules=entry.get("rules", {}),
+                priority=int(entry.get("priority", 5)),
+            )
+        except Exception:  # pragma: no cover - defensive in sample script
+            continue
+        budget.add_unique_day(unique)
+
+    return budget
+
+
+def main():
+    archetype = EXECUTION_INPUTS.get("archetype", "office")
+    seed = int(EXECUTION_INPUTS.get("seed", 7))
+    start_text = EXECUTION_INPUTS.get("start_date")
+    start_date = date.fromisoformat(start_text) if start_text else date.today()
+
+    print(f"Generating MK2 workforce schedule for {archetype} (seed={seed})")
+
+    rig = WorkforceRig()
+    profile, templates = rig.select_profile(archetype)
+    yearly_budget = _build_budget(EXECUTION_INPUTS.get("yearly_budget"))
+
+    result = rig.generate_complete_week(
+        profile,
+        start_date,
+        seed,
+        templates,
+        yearly_budget,
+    )
+
+    issue_count = len(result.get("issues", []))
+    print(f"Issues detected: {issue_count}")
+    print(f"Events generated: {len(result.get('events', []))}")
+
+    return result
+`.trim(),
+    runnerConfig: {
+      description: 'Workforce rig quick run using MK2 engine.',
+      engine: 'mk2',
+      rig: 'workforce',
+    },
+    inputs: {
+      archetype: 'office',
+      seed: 7,
+    },
+  },
+  blank: {
+    label: 'Blank script',
+    script: '# Write your script here\n',
+    runnerConfig: {},
+    inputs: {},
+  },
+};
+
+const consoleState = {
+  scriptText: '',
+  runnerConfigText: '',
+  inputsText: '',
+  running: false,
+};
+
+const consoleRunEndpoint = '/.netlify/functions/tes-runner';
 
 let stdoutOutput;
 let stderrOutput;
+let resultOutput;
+let consoleScriptTextarea;
+let consoleConfigTextarea;
+let consoleInputsTextarea;
+let consoleRunButton;
+let consolePresetSelect;
+let consoleRunMeta;
 let jsonOutputElement;
 let initializeRuntimeButton;
 let generateButton;
@@ -1589,6 +1690,255 @@ function updateRuntimeButtonState(button) {
   }
 }
 
+function setConsoleOutputContent(element, text, defaultMessage) {
+  if (!element) {
+    return;
+  }
+  const content = text && text.length > 0 ? text : defaultMessage;
+  if ('value' in element) {
+    element.value = content;
+  } else {
+    element.textContent = content;
+  }
+  if (typeof element.scrollHeight === 'number' && typeof element.scrollTop === 'number') {
+    element.scrollTop = element.scrollHeight;
+  }
+}
+
+function getConsoleOutputContent(element, defaultMessage) {
+  if (!element) {
+    return '';
+  }
+  const value = 'value' in element ? element.value || '' : element.textContent || '';
+  return value && value !== defaultMessage ? value : '';
+}
+
+function setConsoleResult(value) {
+  if (!resultOutput) {
+    return;
+  }
+  let text = '';
+  if (typeof value === 'string') {
+    text = value;
+  } else if (value && typeof value === 'object') {
+    try {
+      text = JSON.stringify(value, null, 2);
+    } catch (error) {
+      text = String(value);
+    }
+  } else if (typeof value !== 'undefined' && value !== null) {
+    text = String(value);
+  }
+  setConsoleOutputContent(resultOutput, text, defaultResultMessage);
+}
+
+function setConsoleRunMeta(message) {
+  if (!consoleRunMeta) {
+    return;
+  }
+  consoleRunMeta.textContent = message || '';
+}
+
+function updateConsoleRunButtonState() {
+  if (!consoleRunButton) {
+    return;
+  }
+  const hasScript = consoleState.scriptText.trim().length > 0;
+  const isRunning = consoleState.running;
+  consoleRunButton.disabled = isRunning || !hasScript;
+  consoleRunButton.textContent = isRunning ? 'Running…' : 'Run';
+}
+
+function loadConsolePreset(presetId) {
+  const preset = consoleRuntimePresets[presetId];
+  if (!preset) {
+    return;
+  }
+  const scriptText = typeof preset.script === 'string' ? preset.script : '';
+  const configText = JSON.stringify(preset.runnerConfig ?? {}, null, 2);
+  const inputsText = JSON.stringify(preset.inputs ?? {}, null, 2);
+
+  if (consoleScriptTextarea) {
+    consoleScriptTextarea.value = scriptText;
+  }
+  if (consoleConfigTextarea) {
+    consoleConfigTextarea.value = configText;
+  }
+  if (consoleInputsTextarea) {
+    consoleInputsTextarea.value = inputsText;
+  }
+
+  consoleState.scriptText = scriptText;
+  consoleState.runnerConfigText = configText;
+  consoleState.inputsText = inputsText;
+  updateConsoleRunButtonState();
+}
+
+function parseConsoleJson(rawText, label) {
+  const trimmed = typeof rawText === 'string' ? rawText.trim() : '';
+  if (!trimmed) {
+    return { ok: true, value: {} };
+  }
+  try {
+    return { ok: true, value: JSON.parse(trimmed) };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `${label} JSON error: ${error?.message || 'Unable to parse value.'}`,
+    };
+  }
+}
+
+function formatElapsedMs(ms) {
+  if (!Number.isFinite(ms)) {
+    return '';
+  }
+  if (ms < 1000) {
+    return `${ms.toFixed(0)}ms`;
+  }
+  const seconds = ms / 1000;
+  if (seconds >= 10) {
+    return `${seconds.toFixed(1)}s`;
+  }
+  return `${seconds.toFixed(2)}s`;
+}
+
+async function handleConsoleRun() {
+  if (consoleState.running) {
+    return;
+  }
+  const script = consoleState.scriptText.trim();
+  if (!script) {
+    renderConsoleOutputs({ stdout: '', stderr: 'Script is required.' });
+    setConsoleRunMeta('Run blocked: missing script');
+    return;
+  }
+
+  const configParse = parseConsoleJson(consoleState.runnerConfigText, 'Runner config');
+  if (!configParse.ok) {
+    renderConsoleOutputs({ stdout: '', stderr: configParse.error });
+    setConsoleResult(null);
+    setConsoleRunMeta('Input parsing failed');
+    if (consoleConfigTextarea) {
+      consoleConfigTextarea.focus();
+    }
+    return;
+  }
+
+  const inputsParse = parseConsoleJson(consoleState.inputsText, 'Execution inputs');
+  if (!inputsParse.ok) {
+    renderConsoleOutputs({ stdout: '', stderr: inputsParse.error });
+    setConsoleResult(null);
+    setConsoleRunMeta('Input parsing failed');
+    if (consoleInputsTextarea) {
+      consoleInputsTextarea.focus();
+    }
+    return;
+  }
+
+  consoleState.running = true;
+  updateConsoleRunButtonState();
+  beginConsoleRun('Sending request…');
+  setConsoleRunMeta('Running…');
+
+  const requestPayload = {
+    script,
+    runnerConfig: configParse.value,
+    inputs: inputsParse.value,
+  };
+
+  const start = typeof performance !== 'undefined' ? performance.now() : Date.now();
+
+  try {
+    const response = await fetch(consoleRunEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(requestPayload),
+    });
+
+    const elapsedRaw = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - start;
+    const elapsedMs = Number.isFinite(elapsedRaw) ? Math.max(0, elapsedRaw) : null;
+
+    let responseBody = null;
+    let text = '';
+    try {
+      text = await response.text();
+      responseBody = text ? JSON.parse(text) : {};
+    } catch (error) {
+      renderConsoleOutputs({ stdout: '', stderr: 'Failed to parse server response.' });
+      setConsoleResult(null);
+      setConsoleRunMeta(
+        `Status ${response.status} • ${elapsedMs !== null ? formatElapsedMs(elapsedMs) : '—'}`
+      );
+      return;
+    }
+
+    const structuredPayload =
+      responseBody && typeof responseBody.structured === 'object'
+        ? responseBody.structured
+        : null;
+    const bridgeStderr = typeof responseBody.bridgeStderr === 'string' ? responseBody.bridgeStderr : '';
+
+    const combinedStderr = (() => {
+      const base = typeof responseBody.stderr === 'string' ? responseBody.stderr : '';
+      if (bridgeStderr && base) {
+        return `${base}\n${bridgeStderr}`;
+      }
+      return base || bridgeStderr;
+    })();
+
+    const stdoutText = typeof responseBody.stdout === 'string' ? responseBody.stdout : '';
+
+    if (response.ok) {
+      renderConsoleOutputs({ stdout: stdoutText, stderr: combinedStderr, structured: structuredPayload });
+
+      let resultValue = null;
+      if (typeof responseBody.result !== 'undefined') {
+        resultValue = responseBody.result;
+      } else if (typeof responseBody.resultJSON === 'string') {
+        try {
+          resultValue = JSON.parse(responseBody.resultJSON);
+        } catch (error) {
+          resultValue = responseBody.resultJSON;
+        }
+      }
+      setConsoleResult(resultValue);
+
+      const parts = [`Status ${response.status}`];
+      if (elapsedMs !== null) {
+        parts.push(formatElapsedMs(elapsedMs));
+      }
+      if (typeof responseBody.pythonBinary === 'string' && responseBody.pythonBinary) {
+        parts.push(responseBody.pythonBinary);
+      }
+      setConsoleRunMeta(parts.join(' • '));
+    } else {
+      const errorMessage =
+        typeof responseBody.error === 'string' && responseBody.error
+          ? responseBody.error
+          : `Run failed with status ${response.status}`;
+      const stderrText = combinedStderr || errorMessage;
+      renderConsoleOutputs({ stdout: stdoutText, stderr: stderrText, structured: structuredPayload });
+      setConsoleResult(null);
+      const parts = [`Status ${response.status}`];
+      if (elapsedMs !== null) {
+        parts.push(formatElapsedMs(elapsedMs));
+      }
+      setConsoleRunMeta(`${parts.join(' • ')} • error`);
+    }
+  } catch (error) {
+    renderConsoleOutputs({
+      stdout: '',
+      stderr: error?.message || 'Request failed.',
+    });
+    setConsoleResult(null);
+    setConsoleRunMeta('Request failed');
+  } finally {
+    consoleState.running = false;
+    updateConsoleRunButtonState();
+  }
+}
+
 function applyConsoleIndicatorVisible(isVisible) {
   if (!consoleIndicator) {
     return;
@@ -1598,12 +1948,10 @@ function applyConsoleIndicatorVisible(isVisible) {
 
 function beginConsoleRun(message) {
   pendingAutoSwitch = true;
-  if (stdoutOutput) {
-    stdoutOutput.textContent = message;
-  }
-  if (stderrOutput) {
-    stderrOutput.textContent = defaultStderrMessage;
-  }
+  setConsoleOutputContent(stdoutOutput, message, defaultStdoutMessage);
+  setConsoleOutputContent(stderrOutput, '', defaultStderrMessage);
+  setConsoleResult(null);
+  setConsoleRunMeta('Running…');
   updateConsoleStructuredPayload(null);
   setJsonValidationBadge('clear');
   if (currentTab === 'console') {
@@ -1619,10 +1967,7 @@ function renderConsoleOutputs({ stdout, stderr, structured } = {}) {
   const summary = structuredPayload ? formatStructuredErrorSummary(structuredPayload) : '';
 
   const stdoutText = typeof stdout === 'string' && stdout ? stdout : '';
-  if (stdoutOutput) {
-    stdoutOutput.textContent = stdoutText || defaultStdoutMessage;
-    stdoutOutput.scrollTop = stdoutOutput.scrollHeight;
-  }
+  setConsoleOutputContent(stdoutOutput, stdoutText, defaultStdoutMessage);
 
   let stderrText = typeof stderr === 'string' && stderr ? stderr : '';
   if (structuredPayload) {
@@ -1635,10 +1980,7 @@ function renderConsoleOutputs({ stdout, stderr, structured } = {}) {
     }
   }
 
-  if (stderrOutput) {
-    stderrOutput.textContent = stderrText || defaultStderrMessage;
-    stderrOutput.scrollTop = stderrOutput.scrollHeight;
-  }
+  setConsoleOutputContent(stderrOutput, stderrText, defaultStderrMessage);
 
   updateConsoleStructuredPayload(structuredPayload);
 
@@ -1669,15 +2011,9 @@ function appendConsoleLog(message) {
   if (!logText) {
     return;
   }
-  const previousStdout =
-    stdoutOutput.textContent && stdoutOutput.textContent !== defaultStdoutMessage
-      ? stdoutOutput.textContent
-      : '';
+  const previousStdout = getConsoleOutputContent(stdoutOutput, defaultStdoutMessage);
   const mergedStdout = previousStdout ? `${previousStdout}\n${logText}` : logText;
-  const previousStderr =
-    stderrOutput && stderrOutput.textContent !== defaultStderrMessage
-      ? stderrOutput.textContent
-      : '';
+  const previousStderr = getConsoleOutputContent(stderrOutput, defaultStderrMessage);
   renderConsoleOutputs({ stdout: mergedStdout, stderr: previousStderr });
 }
 
@@ -3122,34 +3458,118 @@ function hydrateConsolePanel() {
   if (!consolePanel || consolePanel.dataset.consoleHydrated === '1') {
     return;
   }
+
   const consoleContainer = document.createElement('div');
   consoleContainer.className = 'console-pane';
 
+  const controlsSection = document.createElement('section');
+  controlsSection.className = 'console-controls';
+
+  const presetRow = document.createElement('div');
+  presetRow.className = 'console-runtime-row';
+
+  consolePresetSelect = document.createElement('select');
+  consolePresetSelect.className = 'console-select';
+  consolePresetSelect.setAttribute('aria-label', 'Runtime preset');
+
+  for (const [presetId, preset] of Object.entries(consoleRuntimePresets)) {
+    const option = document.createElement('option');
+    option.value = presetId;
+    option.textContent = preset?.label || presetId;
+    consolePresetSelect.append(option);
+  }
+
+  const loadPresetButton = document.createElement('button');
+  loadPresetButton.type = 'button';
+  loadPresetButton.className = 'console-load-button';
+  loadPresetButton.textContent = 'Load preset';
+
+  presetRow.append(consolePresetSelect, loadPresetButton);
+
+  const scriptField = document.createElement('label');
+  scriptField.className = 'console-field';
+  const scriptLabel = document.createElement('span');
+  scriptLabel.className = 'console-field-label';
+  scriptLabel.textContent = 'Script';
+  consoleScriptTextarea = document.createElement('textarea');
+  consoleScriptTextarea.className = 'console-textarea console-textarea--script';
+  consoleScriptTextarea.spellcheck = false;
+  consoleScriptTextarea.setAttribute('aria-label', 'Console script');
+  scriptField.append(scriptLabel, consoleScriptTextarea);
+
+  const configField = document.createElement('label');
+  configField.className = 'console-field';
+  const configLabel = document.createElement('span');
+  configLabel.className = 'console-field-label';
+  configLabel.textContent = 'Runner config JSON';
+  consoleConfigTextarea = document.createElement('textarea');
+  consoleConfigTextarea.className = 'console-textarea console-textarea--json';
+  consoleConfigTextarea.spellcheck = false;
+  consoleConfigTextarea.setAttribute('aria-label', 'Runner config JSON');
+  configField.append(configLabel, consoleConfigTextarea);
+
+  const inputsField = document.createElement('label');
+  inputsField.className = 'console-field';
+  const inputsLabel = document.createElement('span');
+  inputsLabel.className = 'console-field-label';
+  inputsLabel.textContent = 'Execution inputs';
+  consoleInputsTextarea = document.createElement('textarea');
+  consoleInputsTextarea.className = 'console-textarea console-textarea--json';
+  consoleInputsTextarea.spellcheck = false;
+  consoleInputsTextarea.setAttribute('aria-label', 'Execution inputs JSON');
+  inputsField.append(inputsLabel, consoleInputsTextarea);
+
+  const fieldGrid = document.createElement('div');
+  fieldGrid.className = 'console-field-grid';
+  fieldGrid.append(configField, inputsField);
+
+  const actionsRow = document.createElement('div');
+  actionsRow.className = 'console-actions';
+  consoleRunButton = document.createElement('button');
+  consoleRunButton.type = 'button';
+  consoleRunButton.className = 'console-run-button';
+  consoleRunButton.textContent = 'Run';
+  actionsRow.append(consoleRunButton);
+
+  controlsSection.append(presetRow, scriptField, fieldGrid, actionsRow);
+
   const stdoutSection = document.createElement('section');
   stdoutSection.className = 'console-stream';
-
   const stdoutHeader = document.createElement('h3');
   stdoutHeader.className = 'console-stream-title';
   stdoutHeader.textContent = 'Stdout';
-
-  stdoutOutput = document.createElement('div');
+  stdoutOutput = document.createElement('textarea');
   stdoutOutput.className = 'console-output';
-  stdoutOutput.textContent = defaultStdoutMessage;
-
+  stdoutOutput.readOnly = true;
+  stdoutOutput.spellcheck = false;
+  stdoutOutput.setAttribute('aria-label', 'Stdout output');
   stdoutSection.append(stdoutHeader, stdoutOutput);
 
   const stderrSection = document.createElement('section');
   stderrSection.className = 'console-stream';
-
   const stderrHeader = document.createElement('h3');
   stderrHeader.className = 'console-stream-title';
   stderrHeader.textContent = 'Stderr';
-
-  stderrOutput = document.createElement('div');
+  stderrOutput = document.createElement('textarea');
   stderrOutput.className = 'console-output';
-  stderrOutput.textContent = defaultStderrMessage;
-
+  stderrOutput.readOnly = true;
+  stderrOutput.spellcheck = false;
+  stderrOutput.setAttribute('aria-label', 'Stderr output');
   stderrSection.append(stderrHeader, stderrOutput);
+
+  const resultSection = document.createElement('section');
+  resultSection.className = 'console-stream';
+  const resultHeader = document.createElement('h3');
+  resultHeader.className = 'console-stream-title';
+  resultHeader.textContent = 'Result';
+  resultOutput = document.createElement('textarea');
+  resultOutput.className = 'console-output';
+  resultOutput.readOnly = true;
+  resultOutput.spellcheck = false;
+  resultOutput.setAttribute('aria-label', 'Result payload');
+  consoleRunMeta = document.createElement('div');
+  consoleRunMeta.className = 'console-meta';
+  resultSection.append(resultHeader, resultOutput, consoleRunMeta);
 
   consoleStructuredContainer = document.createElement('section');
   consoleStructuredContainer.className = 'console-structured';
@@ -3197,9 +3617,54 @@ function hydrateConsolePanel() {
     consoleStructuredSysPathDetails
   );
 
-  consoleContainer.append(stdoutSection, stderrSection, consoleStructuredContainer);
+  consoleContainer.append(
+    controlsSection,
+    stdoutSection,
+    stderrSection,
+    resultSection,
+    consoleStructuredContainer
+  );
+
   consolePanel.append(consoleContainer);
+
+  loadPresetButton.addEventListener('click', () => {
+    loadConsolePreset(consolePresetSelect.value);
+  });
+
+  consoleScriptTextarea.addEventListener('input', () => {
+    consoleState.scriptText = consoleScriptTextarea.value;
+    updateConsoleRunButtonState();
+  });
+
+  consoleConfigTextarea.addEventListener('input', () => {
+    consoleState.runnerConfigText = consoleConfigTextarea.value;
+  });
+
+  consoleInputsTextarea.addEventListener('input', () => {
+    consoleState.inputsText = consoleInputsTextarea.value;
+  });
+
+  consoleRunButton.addEventListener('click', () => {
+    handleConsoleRun();
+  });
+
+  const defaultPresetId =
+    consoleRuntimePresets['mk2-quick-test'] !== undefined
+      ? 'mk2-quick-test'
+      : Object.keys(consoleRuntimePresets)[0];
+  if (defaultPresetId) {
+    consolePresetSelect.value = defaultPresetId;
+    loadConsolePreset(defaultPresetId);
+  } else {
+    updateConsoleRunButtonState();
+  }
+
+  setConsoleOutputContent(stdoutOutput, '', defaultStdoutMessage);
+  setConsoleOutputContent(stderrOutput, '', defaultStderrMessage);
+  setConsoleResult(null);
+  setConsoleRunMeta('Ready.');
   updateConsoleStructuredPayload(null);
+
   consolePanel.dataset.consoleHydrated = '1';
 }
 

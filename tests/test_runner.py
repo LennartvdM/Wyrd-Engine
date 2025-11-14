@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import textwrap
 
 from tes import run_script
@@ -63,4 +64,27 @@ def test_run_script_handles_unserialisable_result() -> None:
     assert result["stdout"] == ""
     assert "not JSON serializable" in result["stderr"]
     assert result["resultJSON"] is None
+
+
+def test_run_script_injects_global_values() -> None:
+    script = textwrap.dedent(
+        """
+        def main():
+            return {
+                "cfg": RUNNER_CONFIG,
+                "inputs": EXECUTION_INPUTS,
+            }
+        """
+    )
+    result = run_script(
+        script,
+        globals_update={
+            "RUNNER_CONFIG": {"rig": "workforce"},
+            "EXECUTION_INPUTS": {"seed": 99},
+        },
+    )
+    assert result["stderr"] == ""
+    payload = json.loads(result["resultJSON"])
+    assert payload["cfg"]["rig"] == "workforce"
+    assert payload["inputs"]["seed"] == 99
 
