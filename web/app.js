@@ -295,18 +295,32 @@ function updateVisuals(payload) {
         }
       }
     }
-  } else {
-    maybeCreateUrchinInstance(lastVisualSchedule);
+    return;
   }
 
-  if (visualsState.urchin) {
-    try {
-      visualsState.urchin.update({ data: visualsState.useLegacy ? null : lastVisualSchedule });
-    } catch (error) {
-      console.error('[visuals] failed to update radial urchin:', error);
+  const readyForRadial = canRenderRadialVisuals();
+  if (!readyForRadial) {
+    if (visualsState.urchin) {
+      resetVisualsInstance();
     }
-  } else if (!visualsState.useLegacy && visualsState.mount && visualsState.mount.childElementCount > 0) {
-    visualsState.mount.replaceChildren();
+    return;
+  }
+
+  if (!hasVisualEvents(lastVisualSchedule)) {
+    resetVisualsInstance();
+    return;
+  }
+
+  maybeCreateUrchinInstance(lastVisualSchedule);
+
+  if (!visualsState.urchin) {
+    return;
+  }
+
+  try {
+    visualsState.urchin.update({ data: lastVisualSchedule });
+  } catch (error) {
+    console.error('[visuals] failed to update radial urchin:', error);
   }
 }
 
@@ -331,11 +345,23 @@ function hasVisualEvents(payload) {
   return Boolean(schedule && Array.isArray(schedule.events) && schedule.events.length > 0);
 }
 
+function canRenderRadialVisuals() {
+  if (visualsState.useLegacy) {
+    return false;
+  }
+  const mount = visualsState.mount;
+  if (!(mount instanceof HTMLElement) || !mount.isConnected) {
+    return false;
+  }
+  return true;
+}
+
 function maybeCreateUrchinInstance(schedule) {
   if (
     visualsState.useLegacy ||
     visualsState.urchin ||
     !visualsState.mount ||
+    !visualsState.mount.isConnected ||
     !schedule ||
     !hasVisualEvents(schedule)
   ) {
