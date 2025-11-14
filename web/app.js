@@ -103,7 +103,7 @@ let isGeneratingCalendar = false;
 const GENERATE_BUTTON_DEFAULT_LABEL = 'Generate schedule';
 const GENERATE_BUTTON_LOADING_LABEL = 'Generating…';
 
-const CALENDAR_HISTORY_LIMIT = 20;
+const CALENDAR_HISTORY_LIMIT = 50;
 const calendarHistoryState = {
   runHistory: [],
   panel: null,
@@ -409,6 +409,22 @@ function computeCalendarHistorySummary(events) {
   return summary;
 }
 
+function ensureCalendarHistorySummary(entry) {
+  if (!entry) {
+    return null;
+  }
+  if (entry.summary && typeof entry.summary === 'object') {
+    return entry.summary;
+  }
+  const events = entry.rawResult && Array.isArray(entry.rawResult.events)
+    ? entry.rawResult.events
+    : null;
+  if (!events) {
+    return null;
+  }
+  return computeCalendarHistorySummary(events);
+}
+
 function cloneCalendarHistoryPayload(payload) {
   try {
     return JSON.parse(JSON.stringify(payload ?? {}));
@@ -508,41 +524,45 @@ function renderCalendarRunHistory() {
 
     const headline = document.createElement('span');
     headline.className = 'visuals-history-entry__headline';
-    const parts = [`[${formatHistoryTimestamp(entry.timestamp)}]`];
+    const timeLabel = formatHistoryTimestamp(entry.timestamp);
+    const parts = [`[${timeLabel}]`];
     if (entry.archetype) {
       parts.push(`archetype=${entry.archetype}`);
     }
     if (entry.seed !== undefined && entry.seed !== null && entry.seed !== '') {
       parts.push(`seed=${entry.seed}`);
     }
-    const variantLabel = [entry.variant, entry.rig].filter(Boolean).join('/');
-    if (variantLabel) {
-      parts.push(variantLabel);
+    if (entry.variant) {
+      parts.push(`variant=${entry.variant}`);
+    }
+    if (entry.rig) {
+      parts.push(`rig=${entry.rig}`);
     }
     headline.textContent = parts.join(' ');
 
     const meta = document.createElement('span');
     meta.className = 'visuals-history-entry__meta';
+    const summary = ensureCalendarHistorySummary(entry);
     const metaParts = [];
-    if (entry.weekStart) {
-      metaParts.push(`week=${entry.weekStart}`);
-    }
-    if (entry.summary && Number.isFinite(entry.summary.totalEvents)) {
-      metaParts.push(`events=${entry.summary.totalEvents}`);
-    }
-    if (entry.summary && Number.isFinite(entry.summary.totalSleepHours)) {
-      const value = formatHistoryHours(entry.summary.totalSleepHours);
+    if (summary && Number.isFinite(summary.totalSleepHours)) {
+      const value = formatHistoryHours(summary.totalSleepHours);
       if (value) {
         metaParts.push(`sleep≈${value}h`);
       }
     }
-    if (entry.summary && Number.isFinite(entry.summary.totalWorkHours)) {
-      const value = formatHistoryHours(entry.summary.totalWorkHours);
+    if (summary && Number.isFinite(summary.totalWorkHours)) {
+      const value = formatHistoryHours(summary.totalWorkHours);
       if (value) {
         metaParts.push(`work≈${value}h`);
       }
     }
-    meta.textContent = metaParts.join(' • ') || 'No summary available';
+    if (summary && Number.isFinite(summary.totalEvents)) {
+      metaParts.push(`events=${summary.totalEvents}`);
+    }
+    if (entry.weekStart) {
+      metaParts.push(`week=${entry.weekStart}`);
+    }
+    meta.textContent = metaParts.join(', ') || 'No summary available';
 
     button.append(headline, meta);
     button.addEventListener('click', () => {
@@ -573,6 +593,11 @@ function createCalendarHistoryPanel() {
 
   header.append(title);
   panel.append(header);
+
+  const hint = document.createElement('p');
+  hint.className = 'visuals-history-hint';
+  hint.textContent = 'Recent runs (click to restore):';
+  panel.append(hint);
 
   const list = document.createElement('ul');
   list.className = 'visuals-history-list';

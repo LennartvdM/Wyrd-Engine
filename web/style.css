@@ -509,7 +509,7 @@ body {
 }
 
 .visuals-history-panel {
-  width: 280px;
+  width: 300px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -534,6 +534,12 @@ body {
   letter-spacing: 0.02em;
   text-transform: uppercase;
   color: #e2e8f0;
+}
+
+.visuals-history-hint {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(203, 213, 225, 0.75);
 }
 
 .visuals-history-list {
@@ -575,6 +581,7 @@ body {
   padding: 10px 12px;
   cursor: pointer;
   text-align: left;
+  position: relative;
   transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
 }
 
@@ -591,17 +598,20 @@ body {
 .visuals-history-entry.is-active {
   border-color: rgba(56, 189, 248, 0.85);
   background: rgba(14, 116, 144, 0.45);
+  box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.9);
 }
 
 .visuals-history-entry__headline {
   font-size: 12px;
   font-weight: 600;
   color: #f1f5f9;
+  line-height: 1.4;
 }
 
 .visuals-history-entry__meta {
   font-size: 12px;
   color: rgba(203, 213, 225, 0.9);
+  line-height: 1.4;
 }
 
 .console-pane {
