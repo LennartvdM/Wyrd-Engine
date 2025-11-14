@@ -96,6 +96,7 @@ const visualsState = {
   statusOverlay: null,
   statusText: null,
   metaBar: null,
+  metaSlot: null,
   runLabel: null,
 };
 let lastVisualPayload = null;
@@ -318,6 +319,12 @@ function updateVisuals(payload) {
   }
 
   try {
+    if (visualsState.metaBar && typeof visualsState.urchin.attachRunMeta === 'function') {
+      visualsState.urchin.attachRunMeta(visualsState.metaBar);
+    }
+    if (visualsState.metaSlot) {
+      visualsState.metaSlot.hidden = Boolean(visualsState.metaBar?.hidden);
+    }
     visualsState.urchin.update({ data: lastVisualSchedule });
   } catch (error) {
     console.error('[visuals] failed to update radial urchin:', error);
@@ -335,6 +342,10 @@ function resetVisualsInstance() {
     }
     visualsState.urchin = null;
   }
+  if (visualsState.metaBar && visualsState.metaBar.parentElement) {
+    visualsState.metaBar.parentElement.removeChild(visualsState.metaBar);
+  }
+  visualsState.metaSlot = null;
   if (visualsState.mount && visualsState.mount.childNodes.length > 0) {
     visualsState.mount.replaceChildren();
   }
@@ -374,6 +385,14 @@ function maybeCreateUrchinInstance(schedule) {
     onSelect: handleUrchinSelect,
   });
   if (instance) {
+    if (typeof instance.getRunMetaSlot === 'function') {
+      visualsState.metaSlot = instance.getRunMetaSlot();
+    } else {
+      visualsState.metaSlot = null;
+    }
+    if (visualsState.metaBar && typeof instance.attachRunMeta === 'function') {
+      instance.attachRunMeta(visualsState.metaBar);
+    }
     visualsState.urchin = instance;
   }
 }
@@ -396,17 +415,16 @@ function initVisualsMount() {
   visualsState.layout = layout;
 
   const mainPanel = document.createElement('div');
-  mainPanel.className = 'visuals-main';
+  mainPanel.className = 'visuals-main visuals-panel';
   layout.append(mainPanel);
   visualsState.mainPanel = mainPanel;
 
   const metaBar = document.createElement('div');
-  metaBar.className = 'visuals-meta';
+  metaBar.className = 'visuals-run-meta';
   metaBar.hidden = true;
   const runLabel = document.createElement('span');
-  runLabel.className = 'visuals-meta__run';
+  runLabel.className = 'visuals-run-meta__label';
   metaBar.append(runLabel);
-  mainPanel.append(metaBar);
   visualsState.metaBar = metaBar;
   visualsState.runLabel = runLabel;
 
@@ -614,6 +632,9 @@ function updateActiveRunLabel() {
   if (!activeId) {
     runLabel.textContent = '';
     metaBar.hidden = true;
+    if (visualsState.metaSlot) {
+      visualsState.metaSlot.hidden = true;
+    }
     return;
   }
 
@@ -621,6 +642,9 @@ function updateActiveRunLabel() {
   if (index === -1) {
     runLabel.textContent = '';
     metaBar.hidden = true;
+    if (visualsState.metaSlot) {
+      visualsState.metaSlot.hidden = true;
+    }
     return;
   }
 
@@ -635,6 +659,9 @@ function updateActiveRunLabel() {
   }
   runLabel.textContent = parts.join(' · ');
   metaBar.hidden = false;
+  if (visualsState.metaSlot) {
+    visualsState.metaSlot.hidden = false;
+  }
 }
 
 function renderCalendarRunHistory() {
