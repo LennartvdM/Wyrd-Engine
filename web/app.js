@@ -102,6 +102,7 @@ let lastVisualPayload = null;
 let isGeneratingCalendar = false;
 const GENERATE_BUTTON_DEFAULT_LABEL = 'Generate schedule';
 const GENERATE_BUTTON_LOADING_LABEL = 'Generating…';
+const VISUALS_EMPTY_STATE_MESSAGE = 'No schedule generated yet. Click Generate to create one.';
 
 const CALENDAR_HISTORY_LIMIT = 50;
 const calendarHistoryState = {
@@ -109,6 +110,7 @@ const calendarHistoryState = {
   panel: null,
   list: null,
   activeId: null,
+  currentEntry: null,
   summaryContainer: null,
   summaryList: null,
   summaryMeta: null,
@@ -215,6 +217,13 @@ function hideVisualsOverlay() {
   overlay.hidden = true;
   overlay.classList.remove('is-loading');
   text.textContent = '';
+}
+
+function showVisualsEmptyState() {
+  if (isGeneratingCalendar) {
+    return;
+  }
+  showVisualsOverlay(VISUALS_EMPTY_STATE_MESSAGE, { loading: false });
 }
 
 function resolveLegacyPng(payload) {
@@ -381,6 +390,11 @@ function safeInitVisuals(initialData) {
     const payload = lastVisualPayload ?? (initialData && typeof initialData === 'object' ? initialData : null);
     console.info('[visuals] initializing with', hasVisualEvents(payload) ? 'real data' : 'no data');
     updateVisuals(payload);
+    if (hasVisualEvents(payload)) {
+      hideVisualsOverlay();
+    } else {
+      showVisualsEmptyState();
+    }
   } catch (error) {
     console.error('[visuals] init failed:', error);
   }
@@ -559,6 +573,8 @@ function renderCalendarRunHistory() {
     list.append(emptyItem);
     updateActiveRunLabel();
     renderCalendarHistorySummary();
+    updateVisuals(null);
+    showVisualsEmptyState();
     return;
   }
 
@@ -638,9 +654,16 @@ function renderCalendarHistorySummary() {
     return;
   }
 
-  const { activeId, runHistory } = calendarHistoryState;
+  const { activeId, runHistory, currentEntry } = calendarHistoryState;
   const activeIndex = activeId ? runHistory.findIndex((entry) => entry.id === activeId) : -1;
-  if (activeIndex === -1) {
+  const entry =
+    currentEntry && currentEntry.id === activeId
+      ? currentEntry
+      : activeIndex !== -1
+      ? runHistory[activeIndex]
+      : null;
+
+  if (!entry) {
     list.innerHTML = '';
     if (meta) {
       meta.textContent = '';
@@ -649,7 +672,6 @@ function renderCalendarHistorySummary() {
     return;
   }
 
-  const entry = runHistory[activeIndex];
   const summary = ensureCalendarHistorySummary(entry);
 
   list.innerHTML = '';
@@ -691,8 +713,13 @@ function renderCalendarHistorySummary() {
   });
 
   if (meta) {
-    const runNumber = runHistory.length - activeIndex;
-    const metaParts = [`Run #${runNumber}`];
+    const runNumber = activeIndex !== -1 ? runHistory.length - activeIndex : null;
+    const metaParts = [];
+    if (Number.isFinite(runNumber)) {
+      metaParts.push(`Run #${runNumber}`);
+    } else {
+      metaParts.push('Run');
+    }
     if (entry.weekStart) {
       metaParts.push(`Week ${entry.weekStart}`);
     }
@@ -704,6 +731,51 @@ function renderCalendarHistorySummary() {
   }
 
   container.hidden = false;
+}
+
+function setCurrentCalendarHistoryEntry(entry, options = {}) {
+  const { updateJson = true, focusVisuals = false, showEmptyState = true } = options;
+
+  const payload = entry && entry.rawResult ? cloneCalendarHistoryPayload(entry.rawResult) || entry.rawResult : null;
+
+  if (!entry || !payload || typeof payload !== 'object') {
+    calendarHistoryState.activeId = null;
+    calendarHistoryState.currentEntry = null;
+    updateVisuals(null);
+    if (showEmptyState) {
+      showVisualsEmptyState();
+    }
+  } else {
+    calendarHistoryState.activeId = entry.id;
+    calendarHistoryState.currentEntry = {
+      ...entry,
+      summary: entry.summary && typeof entry.summary === 'object' ? { ...entry.summary } : null,
+      rawResult: cloneCalendarHistoryPayload(payload) || payload,
+    };
+
+    if (updateJson) {
+      setJsonPayload(payload, {
+        variant: entry.variant,
+        rig: entry.rig,
+        weekStart: entry.weekStart,
+      });
+      const validation = validateWebV1Calendar(payload);
+      setJsonValidationBadge(validation.ok ? 'ok' : 'err');
+    } else {
+      updateVisuals(payload);
+    }
+
+    hideVisualsOverlay();
+  }
+
+  renderCalendarRunHistory();
+
+  if (focusVisuals) {
+    dispatchIntent({
+      type: INTENT_TYPES.NAVIGATE_TAB,
+      payload: { tab: 'visuals' },
+    });
+  }
 }
 
 function ensureCalendarHistoryPanel(parentElement) {
@@ -794,8 +866,7 @@ function recordCalendarHistoryEntry(entry) {
     0,
     CALENDAR_HISTORY_LIMIT,
   );
-  calendarHistoryState.activeId = normalized.id;
-  renderCalendarRunHistory();
+  setCurrentCalendarHistoryEntry(normalized, { updateJson: false });
 }
 
 function restoreCalendarHistoryEntry(entryId) {
@@ -806,27 +877,7 @@ function restoreCalendarHistoryEntry(entryId) {
   if (!entry) {
     return;
   }
-  const payload = cloneCalendarHistoryPayload(entry.rawResult) || entry.rawResult;
-  if (!payload || typeof payload !== 'object') {
-    return;
-  }
-
-  calendarHistoryState.activeId = entry.id;
-
-  setJsonPayload(payload, {
-    variant: entry.variant,
-    rig: entry.rig,
-    weekStart: entry.weekStart,
-  });
-  updateJsonActionsState();
-  const validation = validateWebV1Calendar(payload);
-  setJsonValidationBadge(validation.ok ? 'ok' : 'err');
-  renderCalendarRunHistory();
-  hideVisualsOverlay();
-  dispatchIntent({
-    type: INTENT_TYPES.NAVIGATE_TAB,
-    payload: { tab: 'visuals' },
-  });
+  setCurrentCalendarHistoryEntry(entry, { focusVisuals: true });
 }
 
 let getConfigSnapshot = () => ({
@@ -1184,6 +1235,11 @@ function setJsonPayload(payload, options = {}) {
   updateJsonActionsState();
   updateJsonSummaryDisplay();
   updateVisuals(parsedPayload);
+  if (hasVisualEvents(parsedPayload)) {
+    hideVisualsOverlay();
+  } else if (!calendarHistoryState.currentEntry && calendarHistoryState.runHistory.length === 0) {
+    showVisualsEmptyState();
+  }
 }
 
 loadRunHistoryFromStorage();
@@ -2349,6 +2405,7 @@ async function handleGenerate(event) {
   updateVisuals(null);
   showVisualsOverlay('Generating schedule…', { loading: true });
   calendarHistoryState.activeId = null;
+  calendarHistoryState.currentEntry = null;
   renderCalendarRunHistory();
 
   beginConsoleRun('Generating payload…', { autoSwitch: false });
