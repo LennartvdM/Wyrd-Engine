@@ -152,6 +152,17 @@ export class RadialUrchin {
     this.update(this.props);
   }
 
+  hasValidCenter() {
+    const center = this.center;
+    return (
+      !!center &&
+      typeof center.x === 'number' &&
+      Number.isFinite(center.x) &&
+      typeof center.y === 'number' &&
+      Number.isFinite(center.y)
+    );
+  }
+
   setupDom() {
     this.root.classList.add('radial-urchin-root');
     this.root.setAttribute('tabindex', '0');
@@ -663,13 +674,7 @@ export class RadialUrchin {
       return;
     }
 
-    if (
-      !this.center ||
-      typeof this.center.x !== 'number' ||
-      Number.isNaN(this.center.x) ||
-      typeof this.center.y !== 'number' ||
-      Number.isNaN(this.center.y)
-    ) {
+    if (!this.hasValidCenter()) {
       if (!this.didWarnInvalidCenter) {
         console.warn('[RadialUrchin] invalid center point, skipping render', this.center);
         this.didWarnInvalidCenter = true;
@@ -696,7 +701,9 @@ export class RadialUrchin {
     const dpr = window.devicePixelRatio || 1;
     ctx.save();
     ctx.scale(dpr, dpr);
-    ctx.translate(this.center.x, this.center.y);
+    const center = this.center;
+
+    ctx.translate(center.x, center.y);
     ctx.lineWidth = 1;
     ctx.lineCap = 'butt';
     ctx.lineJoin = 'round';
@@ -768,9 +775,13 @@ export class RadialUrchin {
   }
 
   processHoverAtPoint(point) {
-    if (!this.center) {
+    if (!this.hasValidCenter()) {
+      this.state.hoverArc = null;
+      this.hoverPath.setAttribute('d', '');
+      this.hideTooltip();
       return;
     }
+    const center = this.center;
     const layout = {
       arcs: this.displayArcs.map((arc) => ({
         ...arc,
@@ -787,8 +798,8 @@ export class RadialUrchin {
     }
     this.state.hoverArc = hovered;
     const path = describeSegmentPath(
-      this.center.x,
-      this.center.y,
+      center.x,
+      center.y,
       hovered.innerRadius,
       hovered.outerRadius,
       hovered.startAngle,
@@ -886,10 +897,15 @@ export class RadialUrchin {
     const html = buildTooltipContent(arc);
     this.tooltipMeta.innerHTML = html;
     this.tooltip.hidden = false;
+    if (!this.hasValidCenter()) {
+      this.hideTooltip();
+      return;
+    }
+    const center = this.center;
     const angle = arc.centerAngle;
     const radius = (arc.innerRadius + arc.outerRadius) / 2;
-    const x = this.center.x + Math.cos(angle) * radius;
-    const y = this.center.y + Math.sin(angle) * radius;
+    const x = center.x + Math.cos(angle) * radius;
+    const y = center.y + Math.sin(angle) * radius;
     this.tooltip.style.left = `${x + 12}px`;
     this.tooltip.style.top = `${y + 12}px`;
   }
@@ -900,13 +916,14 @@ export class RadialUrchin {
 
   updateSelectionOverlay() {
     const arc = this.state.selectedArc;
-    if (!arc) {
+    if (!arc || !this.hasValidCenter()) {
       this.selectionPath.setAttribute('d', '');
       return;
     }
+    const center = this.center;
     const path = describeSegmentPath(
-      this.center.x,
-      this.center.y,
+      center.x,
+      center.y,
       arc.innerRadius,
       arc.outerRadius,
       arc.startAngle,
@@ -916,13 +933,21 @@ export class RadialUrchin {
   }
 
   updateScrubOverlay() {
+    if (!this.hasValidCenter()) {
+      this.scrubLine.setAttribute('x1', '0');
+      this.scrubLine.setAttribute('y1', '0');
+      this.scrubLine.setAttribute('x2', '0');
+      this.scrubLine.setAttribute('y2', '0');
+      return;
+    }
+    const center = this.center;
     const minutes = this.state.scrubMinutes;
     const angle = this.mapMinutesToAngle(minutes - this.getZoom().start);
     const radius = this.displayMaxRadius ?? (this.layout?.maxRadius ?? 160);
-    const x2 = this.center.x + Math.cos(angle) * radius;
-    const y2 = this.center.y + Math.sin(angle) * radius;
-    this.scrubLine.setAttribute('x1', String(this.center.x));
-    this.scrubLine.setAttribute('y1', String(this.center.y));
+    const x2 = center.x + Math.cos(angle) * radius;
+    const y2 = center.y + Math.sin(angle) * radius;
+    this.scrubLine.setAttribute('x1', String(center.x));
+    this.scrubLine.setAttribute('y1', String(center.y));
     this.scrubLine.setAttribute('x2', String(x2));
     this.scrubLine.setAttribute('y2', String(y2));
   }
