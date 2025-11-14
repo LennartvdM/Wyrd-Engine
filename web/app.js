@@ -93,8 +93,15 @@ const visualsState = {
   fallbackMessage: null,
   urchin: null,
   useLegacy: false,
+  statusOverlay: null,
+  statusText: null,
+  metaBar: null,
+  runLabel: null,
 };
 let lastVisualPayload = null;
+let isGeneratingCalendar = false;
+const GENERATE_BUTTON_DEFAULT_LABEL = 'Generate schedule';
+const GENERATE_BUTTON_LOADING_LABEL = 'Generating…';
 
 const CALENDAR_HISTORY_LIMIT = 20;
 const calendarHistoryState = {
@@ -131,6 +138,28 @@ function syncVisualsVisibility() {
   if (visualsState.fallback) {
     visualsState.fallback.hidden = !visualsState.useLegacy;
   }
+}
+
+function showVisualsOverlay(message, { loading = false } = {}) {
+  const overlay = visualsState.statusOverlay;
+  const text = visualsState.statusText;
+  if (!overlay || !text) {
+    return;
+  }
+  overlay.hidden = false;
+  overlay.classList.toggle('is-loading', Boolean(loading));
+  text.textContent = message || '';
+}
+
+function hideVisualsOverlay() {
+  const overlay = visualsState.statusOverlay;
+  const text = visualsState.statusText;
+  if (!overlay || !text) {
+    return;
+  }
+  overlay.hidden = true;
+  overlay.classList.remove('is-loading');
+  text.textContent = '';
 }
 
 function resolveLegacyPng(payload) {
@@ -230,6 +259,16 @@ function initVisualsMount() {
   layout.append(mainPanel);
   visualsState.mainPanel = mainPanel;
 
+  const metaBar = document.createElement('div');
+  metaBar.className = 'visuals-meta';
+  metaBar.hidden = true;
+  const runLabel = document.createElement('span');
+  runLabel.className = 'visuals-meta__run';
+  metaBar.append(runLabel);
+  mainPanel.append(metaBar);
+  visualsState.metaBar = metaBar;
+  visualsState.runLabel = runLabel;
+
   const mount = document.createElement('div');
   mount.className = 'visuals-mount';
   mainPanel.append(mount);
@@ -250,6 +289,18 @@ function initVisualsMount() {
   visualsState.fallback = fallback;
   visualsState.fallbackImg = fallbackImg;
   visualsState.fallbackMessage = fallbackMessage;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'visuals-status-overlay';
+  overlay.hidden = true;
+  const overlaySpinner = document.createElement('div');
+  overlaySpinner.className = 'visuals-status-overlay__spinner';
+  const overlayText = document.createElement('div');
+  overlayText.className = 'visuals-status-overlay__text';
+  overlay.append(overlaySpinner, overlayText);
+  mainPanel.append(overlay);
+  visualsState.statusOverlay = overlay;
+  visualsState.statusText = overlayText;
 
   const historyPanel = createCalendarHistoryPanel();
   if (historyPanel) {
@@ -393,6 +444,40 @@ function formatHistoryHours(value) {
   return rounded.toFixed(1);
 }
 
+function updateActiveRunLabel() {
+  const metaBar = visualsState.metaBar;
+  const runLabel = visualsState.runLabel;
+  if (!metaBar || !runLabel) {
+    return;
+  }
+
+  const { activeId, runHistory } = calendarHistoryState;
+  if (!activeId) {
+    runLabel.textContent = '';
+    metaBar.hidden = true;
+    return;
+  }
+
+  const index = runHistory.findIndex((entry) => entry.id === activeId);
+  if (index === -1) {
+    runLabel.textContent = '';
+    metaBar.hidden = true;
+    return;
+  }
+
+  const entry = runHistory[index];
+  const runNumber = runHistory.length - index;
+  const parts = [`Run #${runNumber}`];
+  if (entry.timestamp) {
+    const formatted = formatHistoryTimestamp(entry.timestamp);
+    if (formatted) {
+      parts.push(formatted);
+    }
+  }
+  runLabel.textContent = parts.join(' · ');
+  metaBar.hidden = false;
+}
+
 function renderCalendarRunHistory() {
   const list = calendarHistoryState.list;
   if (!list) {
@@ -405,6 +490,7 @@ function renderCalendarRunHistory() {
     emptyItem.className = 'visuals-history-empty';
     emptyItem.textContent = 'No runs yet. Generate a schedule to build history.';
     list.append(emptyItem);
+    updateActiveRunLabel();
     return;
   }
 
@@ -468,6 +554,7 @@ function renderCalendarRunHistory() {
   });
 
   list.append(fragment);
+  updateActiveRunLabel();
 }
 
 function createCalendarHistoryPanel() {
@@ -552,6 +639,7 @@ function restoreCalendarHistoryEntry(entryId) {
   const validation = validateWebV1Calendar(payload);
   setJsonValidationBadge(validation.ok ? 'ok' : 'err');
   renderCalendarRunHistory();
+  hideVisualsOverlay();
   dispatchIntent({
     type: INTENT_TYPES.NAVIGATE_TAB,
     payload: { tab: 'visuals' },
@@ -3554,9 +3642,23 @@ function hydrateConfigPanel() {
   if (generateButton) {
     styleRuntimeButton(generateButton);
     generateButton.disabled = false;
+    generateButton.textContent = GENERATE_BUTTON_DEFAULT_LABEL;
     updateRuntimeButtonState(generateButton);
 
+    const setGenerateButtonState = (loading) => {
+      isGeneratingCalendar = Boolean(loading);
+      generateButton.disabled = isGeneratingCalendar;
+      generateButton.textContent = isGeneratingCalendar
+        ? GENERATE_BUTTON_LOADING_LABEL
+        : GENERATE_BUTTON_DEFAULT_LABEL;
+      updateRuntimeButtonState(generateButton);
+    };
+
     const handleGenerate = async () => {
+      if (isGeneratingCalendar) {
+        return;
+      }
+
       const snapshot = typeof getConfigSnapshot === 'function' ? getConfigSnapshot() : {};
       const variantId = snapshot.variant || 'mk1';
       const rigId = snapshot.rig || 'default';
@@ -3568,9 +3670,11 @@ function hydrateConfigPanel() {
           ? calendarConfig?.mk2?.workforce?.budgetText || ''
           : '';
 
-      generateButton.disabled = true;
-      generateButton.textContent = 'Generating…';
-      updateRuntimeButtonState(generateButton);
+      setGenerateButtonState(true);
+      updateVisuals(null);
+      showVisualsOverlay('Generating schedule…', { loading: true });
+      calendarHistoryState.activeId = null;
+      renderCalendarRunHistory();
 
       beginConsoleRun('Generating payload…');
 
@@ -3582,23 +3686,23 @@ function hydrateConfigPanel() {
       const seedNumber = Number.parseInt(seedValue, 10);
       const normalizedSeed = Number.isFinite(seedNumber) ? seedNumber : seedValue;
 
-      const workerArgs = {
-        class: 'calendar',
-        variant: variantId,
-        rig: rigId,
-        archetype,
-        week_start: weekStartValue,
-        seed: normalizedSeed,
-      };
-      if (budgetText && budgetText.trim()) {
-        try {
-          workerArgs.yearly_budget = JSON.parse(budgetText);
-        } catch (parseError) {
-          throw { error: 'Invalid yearly budget JSON.', stdout: '', stderr: '' };
-        }
-      }
-
       try {
+        const workerArgs = {
+          class: 'calendar',
+          variant: variantId,
+          rig: rigId,
+          archetype,
+          week_start: weekStartValue,
+          seed: normalizedSeed,
+        };
+        if (budgetText && budgetText.trim()) {
+          try {
+            workerArgs.yearly_budget = JSON.parse(budgetText);
+          } catch (parseError) {
+            throw { error: 'Invalid yearly budget JSON.', stdout: '', stderr: '' };
+          }
+        }
+
         const { result = null, stdout = '', stderr = '', fallback = false } =
           await sendWorkerMessage('run', {
             fn: selectedFn || 'mock_run',
@@ -3612,6 +3716,7 @@ function hydrateConfigPanel() {
 
         if (!result || typeof result !== 'object') {
           appendConsoleLog('error: No result returned from worker.');
+          showVisualsOverlay('No result returned from worker.', { loading: false });
           dispatchIntent({
             type: INTENT_TYPES.SHOW_TOAST,
             payload: {
@@ -3630,6 +3735,7 @@ function hydrateConfigPanel() {
           weekStart: result.week_start || weekStartValue,
         });
         updateJsonActionsState();
+        hideVisualsOverlay();
 
         const eventsCount = Array.isArray(result.events) ? result.events.length : 0;
         const inputsSnapshot = {
@@ -3693,6 +3799,7 @@ function hydrateConfigPanel() {
             ? error.message
             : 'Generation failed.';
         console.error('Generation failed:', error);
+        showVisualsOverlay(description, { loading: false });
         dispatchIntent({
           type: INTENT_TYPES.SHOW_TOAST,
           payload: {
@@ -3703,15 +3810,11 @@ function hydrateConfigPanel() {
           },
         });
       } finally {
-        generateButton.disabled = false;
-        generateButton.textContent = 'Generate';
-        updateRuntimeButtonState(generateButton);
+        setGenerateButtonState(false);
       }
     };
 
-    generateButton.addEventListener('click', () => {
-      handleGenerate();
-    });
+    generateButton.addEventListener('click', handleGenerate);
   }
 
   if (initializeRuntimeButton && runtimeReady) {
