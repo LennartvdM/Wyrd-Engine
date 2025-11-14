@@ -109,6 +109,9 @@ const calendarHistoryState = {
   panel: null,
   list: null,
   activeId: null,
+  summaryContainer: null,
+  summaryList: null,
+  summaryMeta: null,
 };
 
 function readVisualsLegacyFlag() {
@@ -302,11 +305,6 @@ function initVisualsMount() {
   visualsState.statusOverlay = overlay;
   visualsState.statusText = overlayText;
 
-  const historyPanel = createCalendarHistoryPanel();
-  if (historyPanel) {
-    layout.append(historyPanel);
-  }
-
   if (typeof window !== 'undefined') {
     window.WYRD_SET_VISUALS_LEGACY = (enabled) => {
       const flag = Boolean(enabled);
@@ -497,6 +495,7 @@ function updateActiveRunLabel() {
 function renderCalendarRunHistory() {
   const list = calendarHistoryState.list;
   if (!list) {
+    renderCalendarHistorySummary();
     return;
   }
 
@@ -507,6 +506,7 @@ function renderCalendarRunHistory() {
     emptyItem.textContent = 'No runs yet. Generate a schedule to build history.';
     list.append(emptyItem);
     updateActiveRunLabel();
+    renderCalendarHistorySummary();
     return;
   }
 
@@ -575,36 +575,142 @@ function renderCalendarRunHistory() {
 
   list.append(fragment);
   updateActiveRunLabel();
+  renderCalendarHistorySummary();
 }
 
-function createCalendarHistoryPanel() {
-  if (calendarHistoryState.panel) {
-    return calendarHistoryState.panel;
+function renderCalendarHistorySummary() {
+  const container = calendarHistoryState.summaryContainer;
+  const list = calendarHistoryState.summaryList;
+  const meta = calendarHistoryState.summaryMeta;
+  if (!container || !list) {
+    return;
   }
-  const panel = document.createElement('aside');
-  panel.className = 'visuals-history-panel';
 
-  const header = document.createElement('div');
-  header.className = 'visuals-history-header';
+  const { activeId, runHistory } = calendarHistoryState;
+  const activeIndex = activeId ? runHistory.findIndex((entry) => entry.id === activeId) : -1;
+  if (activeIndex === -1) {
+    list.innerHTML = '';
+    if (meta) {
+      meta.textContent = '';
+    }
+    container.hidden = true;
+    return;
+  }
 
-  const title = document.createElement('h3');
-  title.className = 'visuals-history-title';
-  title.textContent = 'History';
+  const entry = runHistory[activeIndex];
+  const summary = ensureCalendarHistorySummary(entry);
 
-  header.append(title);
-  panel.append(header);
+  list.innerHTML = '';
 
-  const hint = document.createElement('p');
-  hint.className = 'visuals-history-hint';
-  hint.textContent = 'Recent runs (click to restore):';
-  panel.append(hint);
+  const summaryItems = [
+    {
+      label: 'Sleep',
+      value: summary && Number.isFinite(summary.totalSleepHours)
+        ? `${formatHistoryHours(summary.totalSleepHours)} h`
+        : '—',
+    },
+    {
+      label: 'Work',
+      value: summary && Number.isFinite(summary.totalWorkHours)
+        ? `${formatHistoryHours(summary.totalWorkHours)} h`
+        : '—',
+    },
+    {
+      label: 'Events',
+      value:
+        summary && Number.isFinite(summary.totalEvents) ? String(summary.totalEvents) : '—',
+    },
+  ];
 
-  const list = document.createElement('ul');
-  list.className = 'visuals-history-list';
-  panel.append(list);
+  summaryItems.forEach((item) => {
+    const block = document.createElement('div');
+    block.className = 'visuals-history-summary__item';
 
-  calendarHistoryState.panel = panel;
-  calendarHistoryState.list = list;
+    const term = document.createElement('span');
+    term.className = 'visuals-history-summary__term';
+    term.textContent = item.label;
+
+    const value = document.createElement('span');
+    value.className = 'visuals-history-summary__value';
+    value.textContent = item.value;
+
+    block.append(term, value);
+    list.append(block);
+  });
+
+  if (meta) {
+    const runNumber = runHistory.length - activeIndex;
+    const metaParts = [`Run #${runNumber}`];
+    if (entry.weekStart) {
+      metaParts.push(`Week ${entry.weekStart}`);
+    }
+    const variantParts = [entry.archetype, entry.variant, entry.rig].filter(Boolean);
+    if (variantParts.length > 0) {
+      metaParts.push(variantParts.join(' / '));
+    }
+    meta.textContent = metaParts.join(' • ');
+  }
+
+  container.hidden = false;
+}
+
+function ensureCalendarHistoryPanel(parentElement) {
+  if (!parentElement) {
+    return null;
+  }
+
+  let panel = calendarHistoryState.panel;
+  if (!panel) {
+    panel = document.createElement('section');
+    panel.className = 'visuals-history-panel';
+
+    const header = document.createElement('div');
+    header.className = 'visuals-history-header';
+
+    const title = document.createElement('h3');
+    title.className = 'visuals-history-title';
+    title.textContent = 'Run History';
+
+    header.append(title);
+    panel.append(header);
+
+    const hint = document.createElement('p');
+    hint.className = 'visuals-history-hint';
+    hint.textContent = 'Recent runs (click to load):';
+    panel.append(hint);
+
+    const summary = document.createElement('div');
+    summary.className = 'visuals-history-summary';
+    summary.hidden = true;
+
+    const summaryTitle = document.createElement('h4');
+    summaryTitle.className = 'visuals-history-summary__title';
+    summaryTitle.textContent = 'Current run overview';
+
+    const summaryMeta = document.createElement('p');
+    summaryMeta.className = 'visuals-history-summary__meta';
+    summaryMeta.textContent = '';
+
+    const summaryList = document.createElement('div');
+    summaryList.className = 'visuals-history-summary__grid';
+
+    summary.append(summaryTitle, summaryMeta, summaryList);
+    panel.append(summary);
+
+    const list = document.createElement('ul');
+    list.className = 'visuals-history-list';
+    panel.append(list);
+
+    calendarHistoryState.panel = panel;
+    calendarHistoryState.list = list;
+    calendarHistoryState.summaryContainer = summary;
+    calendarHistoryState.summaryList = summaryList;
+    calendarHistoryState.summaryMeta = summaryMeta;
+  }
+
+  if (panel.parentElement !== parentElement) {
+    parentElement.append(panel);
+  }
 
   renderCalendarRunHistory();
 
@@ -4285,27 +4391,44 @@ function hydrateFixturesPanel() {
 }
 
 function hydrateLogsPanel() {
-  if (!logsPanel || logsPanel.dataset.logsHydrated === '1') {
+  if (!logsPanel) {
     return;
   }
-  const logsContainer = document.createElement('div');
-  logsContainer.className = 'logs-pane';
 
-  const logsToolbar = document.createElement('div');
-  logsToolbar.className = 'logs-toolbar';
+  let historyHost = logsPanel.querySelector('[data-history-host]');
 
-  const clearButton = document.createElement('button');
-  clearButton.type = 'button';
-  clearButton.className = 'logs-clear';
-  clearButton.textContent = 'Clear';
+  if (!historyHost) {
+    const logsContainer = document.createElement('div');
+    logsContainer.className = 'logs-pane';
 
-  logsToolbar.append(clearButton);
+    historyHost = document.createElement('section');
+    historyHost.className = 'logs-history';
+    historyHost.dataset.historyHost = '1';
 
-  const logsOutput = document.createElement('div');
-  logsOutput.className = 'logs-output';
-  logsOutput.textContent = 'Log messages will appear here as they stream in.';
+    const logsStream = document.createElement('section');
+    logsStream.className = 'logs-stream';
 
-  logsContainer.append(logsToolbar, logsOutput);
-  logsPanel.append(logsContainer);
+    const logsToolbar = document.createElement('div');
+    logsToolbar.className = 'logs-toolbar';
+
+    const clearButton = document.createElement('button');
+    clearButton.type = 'button';
+    clearButton.className = 'logs-clear';
+    clearButton.textContent = 'Clear';
+
+    logsToolbar.append(clearButton);
+
+    const logsOutput = document.createElement('div');
+    logsOutput.className = 'logs-output';
+    logsOutput.textContent = 'Log messages will appear here as they stream in.';
+
+    logsStream.append(logsToolbar, logsOutput);
+
+    logsContainer.append(historyHost, logsStream);
+    logsPanel.append(logsContainer);
+  }
+
+  ensureCalendarHistoryPanel(historyHost);
+
   logsPanel.dataset.logsHydrated = '1';
 }
