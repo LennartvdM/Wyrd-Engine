@@ -2552,7 +2552,6 @@ async function handleGenerate(event) {
   updateSeedIndicator(seedValue);
 
   setGenerateButtonState(true);
-  updateVisuals(null);
   showVisualsOverlay('Generating schedule…', { loading: true });
   calendarHistoryState.activeId = null;
   calendarHistoryState.currentRun = null;
