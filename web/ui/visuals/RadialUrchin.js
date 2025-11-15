@@ -4,6 +4,7 @@ import {
   formatDuration,
   minutesToTime,
 } from './useUrchinLayout.js';
+import { ActivityShareBar, prepareActivityShareSegments } from './ActivityShareBar.js';
 import { mapLabelToColor, resolveSurface, resolveStateLayer } from './palette.js';
 
 const FULL_DAY_MINUTES = 24 * 60;
@@ -142,6 +143,8 @@ export class RadialUrchin {
 
     this.metaElement = null;
     this.metaSlot = null;
+    this.shareBar = null;
+    this.shareContainer = null;
 
     this.handleResize = this.handleResize.bind(this);
     this.handlePointerMove = this.handlePointerMove.bind(this);
@@ -306,6 +309,10 @@ export class RadialUrchin {
       this.exportSvgButton,
       this.exportPngButton,
     );
+
+    this.shareContainer = document.createElement('div');
+    this.container.append(this.shareContainer);
+    this.shareBar = new ActivityShareBar(this.shareContainer);
 
     this.canvasWrapper = document.createElement('div');
     this.canvasWrapper.className = 'radial-urchin__stage visuals-canvas-block';
@@ -550,6 +557,7 @@ export class RadialUrchin {
     if (!this.layout) {
       this.displayArcs = [];
       this.visibleArcs = [];
+      this.updateShareBar();
       return;
     }
     const zoom = this.getZoom();
@@ -589,6 +597,45 @@ export class RadialUrchin {
       return a.ringIndex - b.ringIndex;
     });
     this.displayMaxRadius = (this.layout?.maxRadius || 160) * scale;
+    this.updateShareBar();
+  }
+
+  computeVisibleActivityTotals() {
+    if (!Array.isArray(this.visibleArcs) || this.visibleArcs.length === 0) {
+      return [];
+    }
+    const totals = new Map();
+    this.visibleArcs.forEach((arc) => {
+      const duration = Number.isFinite(arc.segmentDuration)
+        ? arc.segmentDuration
+        : Number.isFinite(arc.duration)
+          ? arc.duration
+          : 0;
+      if (!(duration > 0)) {
+        return;
+      }
+      const label = arc.label || arc.event?.activity || 'Activity';
+      if (!totals.has(label)) {
+        totals.set(label, {
+          id: label,
+          label,
+          minutes: 0,
+          color: arc.color || mapLabelToColor(label, { highContrast: this.state.highContrast }),
+        });
+      }
+      const entry = totals.get(label);
+      entry.minutes += duration;
+    });
+    return Array.from(totals.values()).sort((a, b) => b.minutes - a.minutes);
+  }
+
+  updateShareBar() {
+    if (!this.shareBar) {
+      return;
+    }
+    const totals = this.computeVisibleActivityTotals();
+    const { segments, totalMinutes } = prepareActivityShareSegments(totals);
+    this.shareBar.update(segments, totalMinutes);
   }
 
   computeSegments(arc, zoom) {
