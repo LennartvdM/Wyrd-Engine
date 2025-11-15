@@ -620,6 +620,7 @@ body {
 
 .visuals-history-panel {
   width: 100%;
+  box-sizing: border-box;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
