@@ -161,7 +161,17 @@
                   <button type="button" class="batch-size-button" data-batch-size="500">500</button>
                 </div>
               </div>
-              <button type="button" class="batch-run-button" data-batch-run>Run batch</button>
+              <div class="batch-controls__actions">
+                <button type="button" class="batch-run-button" data-batch-run>Run batch</button>
+                <button
+                  type="button"
+                  class="batch-fit-button"
+                  data-batch-fit
+                  aria-pressed="false"
+                >
+                  Fit
+                </button>
+              </div>
             </div>
           </div>
           <div class="visuals-history-panel batch-results">
@@ -187,7 +197,9 @@
               </div>
             </div>
             <div class="batch-results__body">
-              <div class="batch-results__stack" data-batch-stack></div>
+              <div class="batch-results__visualization" data-batch-visualization>
+                <div class="batch-results__stack" data-batch-stack></div>
+              </div>
               <p class="batch-results__empty" data-batch-empty>Run a batch to see results.</p>
             </div>
           </div>
