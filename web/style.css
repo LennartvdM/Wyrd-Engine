@@ -1409,6 +1409,12 @@ body {
   border-radius: 6px;
 }
 
+.activity-balance-history__bar--dense {
+  border: none;
+  background: none;
+  gap: 0;
+}
+
 .activity-balance-history__segment {
   padding: 0;
   align-items: center;
@@ -1419,6 +1425,13 @@ body {
 
 .activity-balance-history__segment:hover {
   transform: none;
+}
+
+.activity-balance-history__segment--dense {
+  margin: 0;
+  border: none;
+  box-shadow: none;
+  outline: none;
 }
 
 .activity-balance-history__segment-label {

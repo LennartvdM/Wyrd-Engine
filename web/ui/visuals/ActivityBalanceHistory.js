@@ -83,6 +83,9 @@ export class ActivityBalanceHistory {
         : this.entries.length - index;
       const bar = document.createElement('div');
       bar.className = 'activity-balance-history__bar';
+      if (isDenseBarcode) {
+        bar.classList.add('activity-balance-history__bar--dense');
+      }
       bar.setAttribute('role', 'list');
       bar.dataset.index = String(runNumber);
       bar.addEventListener('mouseleave', this.boundHideTooltip);
@@ -104,6 +107,9 @@ export class ActivityBalanceHistory {
       entry.segments.forEach((segment, segmentIndex) => {
         const element = document.createElement('div');
         element.className = 'activity-share__segment activity-balance-history__segment';
+        if (isDenseBarcode) {
+          element.classList.add('activity-balance-history__segment--dense');
+        }
         element.style.setProperty('--segment-color', segment.color || '#6366f1');
         element.style.setProperty('--segment-text-color', computeSegmentTextColor(segment.color));
         element.style.flexGrow = String(segment.minutes);
