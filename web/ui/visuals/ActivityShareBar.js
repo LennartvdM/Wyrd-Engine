@@ -8,7 +8,7 @@ function toHexChannel(value) {
   return channel;
 }
 
-function computeTextColor(background) {
+export function computeSegmentTextColor(background) {
   if (typeof background !== 'string') {
     return '#0f172a';
   }
@@ -57,6 +57,11 @@ export class ActivityShareBar {
     this.root.setAttribute('role', 'group');
     this.root.setAttribute('aria-label', 'Activity balance overview');
 
+    this.historyAvailable = false;
+    this.historyOpen = false;
+    this.historyCount = 0;
+    this.toggleHandler = null;
+
     this.header = document.createElement('div');
     this.header.className = 'activity-share__header';
     this.title = document.createElement('span');
@@ -71,8 +76,23 @@ export class ActivityShareBar {
     this.track.className = 'activity-share__track';
     this.track.setAttribute('role', 'list');
     this.track.hidden = true;
+    this.track.tabIndex = -1;
     this.track.addEventListener('mouseleave', () => {
       this.hideTooltip();
+    });
+    this.track.addEventListener('click', () => {
+      if (this.canToggleHistory()) {
+        this.toggleHandler();
+      }
+    });
+    this.track.addEventListener('keydown', (event) => {
+      if (!this.canToggleHistory()) {
+        return;
+      }
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        this.toggleHandler();
+      }
     });
 
     this.empty = document.createElement('p');
@@ -87,7 +107,11 @@ export class ActivityShareBar {
     this.tooltip.setAttribute('aria-live', 'polite');
     this.tooltip.setAttribute('aria-hidden', 'true');
 
-    this.root.append(this.header, this.track, this.empty, this.tooltip);
+    this.historyHint = document.createElement('p');
+    this.historyHint.className = 'activity-share__hint';
+    this.historyHint.hidden = true;
+
+    this.root.append(this.header, this.track, this.historyHint, this.empty, this.tooltip);
 
     this.currentSegments = [];
     this.boundHideTooltip = this.hideTooltip.bind(this);
@@ -101,6 +125,7 @@ export class ActivityShareBar {
     this.total.textContent = hasSegments ? formatDuration(Math.round(totalMinutes)) : '—';
     this.track.hidden = !hasSegments;
     this.empty.hidden = hasSegments;
+    this.updateHistoryAffordance();
     if (!hasSegments) {
       return;
     }
@@ -109,7 +134,7 @@ export class ActivityShareBar {
       const element = document.createElement('div');
       element.className = 'activity-share__segment';
       element.style.setProperty('--segment-color', segment.color || '#6366f1');
-      element.style.setProperty('--segment-text-color', computeTextColor(segment.color));
+      element.style.setProperty('--segment-text-color', computeSegmentTextColor(segment.color));
       element.style.flexGrow = String(segment.minutes);
       element.setAttribute('role', 'listitem');
       const percentValue = Math.round(segment.percentage * 100);
@@ -169,5 +194,53 @@ export class ActivityShareBar {
   hideTooltip() {
     this.tooltip.hidden = true;
     this.tooltip.setAttribute('aria-hidden', 'true');
+  }
+
+  setToggleHandler(handler) {
+    this.toggleHandler = typeof handler === 'function' ? handler : null;
+    this.updateHistoryAffordance();
+  }
+
+  setHistoryState({ open, available, count } = {}) {
+    if (typeof open === 'boolean') {
+      this.historyOpen = open;
+    }
+    if (typeof available === 'boolean') {
+      this.historyAvailable = available;
+    }
+    if (typeof count === 'number') {
+      this.historyCount = count;
+    }
+    this.updateHistoryAffordance();
+  }
+
+  canToggleHistory() {
+    return Boolean(this.toggleHandler && this.historyAvailable && this.currentSegments.length > 0);
+  }
+
+  updateHistoryAffordance() {
+    const canToggle = this.canToggleHistory();
+    this.track.classList.toggle('is-interactive', canToggle);
+    this.track.tabIndex = canToggle ? 0 : -1;
+    this.track.setAttribute('aria-expanded', this.historyOpen ? 'true' : 'false');
+    this.root.classList.toggle('has-history', Boolean(this.historyAvailable));
+    this.root.classList.toggle('is-history-open', Boolean(this.historyOpen));
+
+    if (this.historyHint) {
+      const shouldShowHint = canToggle || (this.historyAvailable && this.historyOpen);
+      this.historyHint.hidden = !shouldShowHint;
+      if (shouldShowHint) {
+        const labelParts = [];
+        if (this.historyOpen) {
+          labelParts.push('History expanded');
+          labelParts.push('Click to collapse');
+        } else if (this.historyCount > 0) {
+          labelParts.push(`View balance history (${this.historyCount})`);
+        } else {
+          labelParts.push('Click bar to view balance history');
+        }
+        this.historyHint.textContent = labelParts.join(' · ');
+      }
+    }
   }
 }

@@ -1,10 +1,12 @@
 import {
   computeUrchinLayout,
+  computeLabelTotals,
   findNearestArc,
   formatDuration,
   minutesToTime,
 } from './useUrchinLayout.js';
 import { ActivityShareBar, prepareActivityShareSegments } from './ActivityShareBar.js';
+import { ActivityBalanceHistory } from './ActivityBalanceHistory.js';
 import { mapLabelToColor, resolveSurface, resolveStateLayer } from './palette.js';
 
 const FULL_DAY_MINUTES = 24 * 60;
@@ -22,6 +24,8 @@ const SPEED_OPTIONS = [
 ];
 
 const HOVER_DELAY = 180;
+
+const MAX_HISTORY_ENTRIES = 100;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -145,6 +149,12 @@ export class RadialUrchin {
     this.metaSlot = null;
     this.shareBar = null;
     this.shareContainer = null;
+    this.historyView = null;
+    this.balanceHistory = [];
+    this.isHistoryOpen = false;
+    this.historyRunCounter = 0;
+    this.maxHistoryEntries = MAX_HISTORY_ENTRIES;
+    this.lastSnapshotSource = null;
 
     this.handleResize = this.handleResize.bind(this);
     this.handlePointerMove = this.handlePointerMove.bind(this);
@@ -313,6 +323,11 @@ export class RadialUrchin {
     this.shareContainer = document.createElement('div');
     this.container.append(this.shareContainer);
     this.shareBar = new ActivityShareBar(this.shareContainer);
+    this.shareBar.setToggleHandler(() => {
+      this.toggleBalanceHistory();
+    });
+
+    this.historyView = new ActivityBalanceHistory(this.container);
 
     this.canvasWrapper = document.createElement('div');
     this.canvasWrapper.className = 'radial-urchin__stage visuals-canvas-block';
@@ -398,6 +413,127 @@ export class RadialUrchin {
         this.contrastQuery = null;
       }
     }
+
+    this.updateHistoryUi({ refreshEntries: true });
+  }
+
+  updateHistoryUi({ refreshEntries = false } = {}) {
+    const hasEntries = Array.isArray(this.balanceHistory) && this.balanceHistory.length > 0;
+    const open = this.isHistoryOpen && hasEntries;
+
+    if (refreshEntries && this.historyView) {
+      this.historyView.setEntries(this.balanceHistory);
+    }
+    if (this.historyView) {
+      this.historyView.setOpen(open);
+    }
+    if (this.shareBar) {
+      this.shareBar.setHistoryState({
+        open,
+        available: hasEntries,
+        count: this.balanceHistory.length,
+      });
+    }
+    if (this.container) {
+      this.container.classList.toggle('radial-urchin--history-open', open);
+    }
+  }
+
+  toggleBalanceHistory(force) {
+    const hasEntries = Array.isArray(this.balanceHistory) && this.balanceHistory.length > 0;
+    const next = typeof force === 'boolean' ? force : !this.isHistoryOpen;
+    if (next && !hasEntries) {
+      return;
+    }
+    if (this.isHistoryOpen === next) {
+      return;
+    }
+    this.isHistoryOpen = next;
+    this.updateHistoryUi();
+  }
+
+  captureBalanceSnapshot(schedule) {
+    if (!schedule || typeof schedule !== 'object') {
+      return;
+    }
+    const events = Array.isArray(schedule.events) ? schedule.events : [];
+    if (events.length === 0) {
+      return;
+    }
+    const totals = computeLabelTotals(events);
+    if (!Array.isArray(totals) || totals.length === 0) {
+      return;
+    }
+
+    const activities = totals.map(({ label, minutes }) => ({
+      id: label,
+      label,
+      minutes,
+      color: mapLabelToColor(label, { highContrast: this.state.highContrast }),
+    }));
+    const { segments, totalMinutes } = prepareActivityShareSegments(activities);
+    if (!segments.length || !(totalMinutes > 0)) {
+      return;
+    }
+
+    this.historyRunCounter += 1;
+    const runNumber = this.historyRunCounter;
+    const timestamp = this.extractScheduleTimestamp(schedule);
+    const entry = {
+      id: `${runNumber}-${Date.now()}`,
+      runNumber,
+      label: `Run #${runNumber}`,
+      timestamp,
+      timestampLabel: this.formatHistoryTimestamp(timestamp),
+      totalMinutes,
+      segments: segments.map((segment) => ({ ...segment })),
+    };
+
+    this.balanceHistory.unshift(entry);
+    if (this.balanceHistory.length > this.maxHistoryEntries) {
+      this.balanceHistory.length = this.maxHistoryEntries;
+    }
+
+    this.updateHistoryUi({ refreshEntries: true });
+  }
+
+  extractScheduleTimestamp(schedule) {
+    if (!schedule || typeof schedule !== 'object') {
+      return null;
+    }
+    if (typeof schedule.generatedAt === 'string') {
+      return schedule.generatedAt;
+    }
+    const meta = schedule.metadata && typeof schedule.metadata === 'object' ? schedule.metadata : null;
+    if (meta) {
+      if (typeof meta.generatedAt === 'string') {
+        return meta.generatedAt;
+      }
+      if (typeof meta.timestamp === 'string') {
+        return meta.timestamp;
+      }
+    }
+    return null;
+  }
+
+  formatHistoryTimestamp(value) {
+    if (!value || typeof value !== 'string') {
+      return '';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
+    try {
+      return date.toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch (error) {
+      return '';
+    }
   }
 
   getRunMetaSlot() {
@@ -463,7 +599,19 @@ export class RadialUrchin {
       this.updateLegend();
       this.refreshModeButtons();
       this.render();
+      this.lastSnapshotSource = null;
+      if (this.isHistoryOpen) {
+        this.isHistoryOpen = false;
+      }
+      this.updateHistoryUi();
       return;
+    }
+
+    if (payload && payload !== this.lastSnapshotSource) {
+      this.captureBalanceSnapshot(payload);
+    }
+    if (payload) {
+      this.lastSnapshotSource = payload;
     }
 
     try {
@@ -636,6 +784,11 @@ export class RadialUrchin {
     const totals = this.computeVisibleActivityTotals();
     const { segments, totalMinutes } = prepareActivityShareSegments(totals);
     this.shareBar.update(segments, totalMinutes);
+    const hasSegments = segments.length > 0 && totalMinutes > 0;
+    if (!hasSegments && this.isHistoryOpen) {
+      this.isHistoryOpen = false;
+    }
+    this.updateHistoryUi();
   }
 
   computeSegments(arc, zoom) {
