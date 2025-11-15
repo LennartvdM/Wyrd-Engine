@@ -152,9 +152,8 @@ export class RadialUrchin {
     this.historyView = null;
     this.balanceHistory = [];
     this.isHistoryOpen = false;
-    this.historyRunCounter = 0;
     this.maxHistoryEntries = MAX_HISTORY_ENTRIES;
-    this.lastSnapshotSource = null;
+    this.lastSnapshotSignature = null;
 
     this.handleResize = this.handleResize.bind(this);
     this.handlePointerMove = this.handlePointerMove.bind(this);
@@ -452,7 +451,7 @@ export class RadialUrchin {
     this.updateHistoryUi();
   }
 
-  captureBalanceSnapshot(schedule) {
+  captureBalanceSnapshot(schedule, signature) {
     if (!schedule || typeof schedule !== 'object') {
       return;
     }
@@ -476,8 +475,7 @@ export class RadialUrchin {
       return;
     }
 
-    this.historyRunCounter += 1;
-    const runNumber = this.historyRunCounter;
+    const runNumber = this.balanceHistory.length + 1;
     const timestamp = this.extractScheduleTimestamp(schedule);
     const entry = {
       id: `${runNumber}-${Date.now()}`,
@@ -489,12 +487,48 @@ export class RadialUrchin {
       segments: segments.map((segment) => ({ ...segment })),
     };
 
-    this.balanceHistory.unshift(entry);
-    if (this.balanceHistory.length > this.maxHistoryEntries) {
-      this.balanceHistory.length = this.maxHistoryEntries;
+    if (signature) {
+      entry.signature = signature;
     }
 
+    const nextHistory = [entry, ...this.balanceHistory];
+    if (nextHistory.length > this.maxHistoryEntries) {
+      nextHistory.length = this.maxHistoryEntries;
+    }
+    this.balanceHistory = nextHistory;
+
     this.updateHistoryUi({ refreshEntries: true });
+  }
+
+  computeScheduleSignature(schedule) {
+    if (!schedule || typeof schedule !== 'object') {
+      return null;
+    }
+
+    const timestamp = this.extractScheduleTimestamp(schedule);
+    if (timestamp) {
+      return `timestamp:${timestamp}`;
+    }
+
+    const events = Array.isArray(schedule.events) ? schedule.events : [];
+    if (!events.length) {
+      return null;
+    }
+
+    const parts = events.map((event) => {
+      const label = event?.label || event?.activity || '';
+      const start = typeof event?.start === 'string' ? event.start : '';
+      const end = typeof event?.end === 'string' ? event.end : '';
+      const agent =
+        typeof event?.agent === 'string'
+          ? event.agent
+          : typeof event?.metadata?.agent === 'string'
+          ? event.metadata.agent
+          : '';
+      return `${label}|${start}|${end}|${agent}`;
+    });
+
+    return `events:${parts.join(';')}`;
   }
 
   extractScheduleTimestamp(schedule) {
@@ -599,7 +633,7 @@ export class RadialUrchin {
       this.updateLegend();
       this.refreshModeButtons();
       this.render();
-      this.lastSnapshotSource = null;
+      this.lastSnapshotSignature = null;
       if (this.isHistoryOpen) {
         this.isHistoryOpen = false;
       }
@@ -607,11 +641,12 @@ export class RadialUrchin {
       return;
     }
 
-    if (payload && payload !== this.lastSnapshotSource) {
-      this.captureBalanceSnapshot(payload);
-    }
     if (payload) {
-      this.lastSnapshotSource = payload;
+      const snapshotSignature = this.computeScheduleSignature(payload);
+      if (snapshotSignature !== this.lastSnapshotSignature) {
+        this.captureBalanceSnapshot(payload, snapshotSignature);
+      }
+      this.lastSnapshotSignature = snapshotSignature;
     }
 
     try {
