@@ -5,6 +5,8 @@ import {
   computeScheduleSignature,
   MAX_HISTORY_ROWS as BALANCE_HISTORY_LIMIT,
 } from './ui/visuals/RadialUrchin.js';
+import { computeSegmentTextColor } from './ui/visuals/ActivityShareBar.js';
+import { formatDuration } from './ui/visuals/useUrchinLayout.js';
 
 console.info('[app] app.js loaded');
 
@@ -12,7 +14,7 @@ const tabList = document.querySelector('.tab-bar[role="tablist"]');
 if (tabList instanceof HTMLElement && !tabList.hasAttribute('aria-orientation')) {
   tabList.setAttribute('aria-orientation', 'horizontal');
 }
-const tabOrder = ['visuals', 'config', 'console', 'json', 'fixtures', 'logs'];
+const tabOrder = ['visuals', 'batch', 'config', 'console', 'json', 'fixtures', 'logs'];
 let tabButtons = [];
 let tabPanels = [];
 let tabPanelMap = new Map();
@@ -123,6 +125,29 @@ const calendarHistoryState = {
   summaryContainer: null,
   summaryList: null,
   summaryMeta: null,
+};
+
+const RUNNER_FN_MAP = {
+  mk1: { default: 'mk1_run' },
+  mk2: { calendar: 'mk2_run_calendar', workforce: 'mk2_run_workforce' },
+};
+
+const BATCH_PRESETS = [52, 100, 500];
+const batchState = {
+  panel: null,
+  results: [],
+  size: BATCH_PRESETS[0],
+  isRunning: false,
+  targetRuns: 0,
+  completedRuns: 0,
+  scaleMode: 'proportional',
+  runButton: null,
+  summary: null,
+  stack: null,
+  empty: null,
+  sizeButtons: new Map(),
+  modeButtons: new Map(),
+  lastRunCount: 0,
 };
 
 const RANDOMIZE_SEED_STORAGE_KEY = 'cfg.calendar.randomizeSeed';
@@ -2093,6 +2118,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initRootTabs();
   hydrateConfigPanel();
   hydrateGlobalActions();
+  hydrateBatchPanel();
   hydrateConsolePanel();
   hydrateJsonPanel();
   hydrateFixturesPanel();
@@ -2190,6 +2216,7 @@ paletteList.className = 'command-palette-actions';
 
 const paletteActions = [
   { label: 'Go to Visuals', tab: 'visuals' },
+  { label: 'Go to Batch', tab: 'batch' },
   { label: 'Go to Config', tab: 'config' },
   { label: 'Go to Console', tab: 'console' },
   { label: 'Go to JSON', tab: 'json' },
@@ -2575,6 +2602,79 @@ function handleRandomizeSeedToggleChange() {
   updateRandomizeSeedToggleUI();
 }
 
+function prepareCalendarGeneration({ snapshot, seedValue } = {}) {
+  const configSnapshot =
+    snapshot && typeof snapshot === 'object'
+      ? snapshot
+      : typeof getConfigSnapshot === 'function'
+      ? getConfigSnapshot()
+      : {};
+
+  const variantId = configSnapshot.variant || 'mk1';
+  const rigId = configSnapshot.rig || 'default';
+  const config = calendarConfigState || {};
+  const archetype = config?.common?.archetype || '';
+  const weekStartValue = configSnapshot.week_start || '';
+
+  let effectiveSeed =
+    typeof seedValue !== 'undefined' ? seedValue : configSnapshot.seed || '';
+  if (typeof effectiveSeed !== 'string') {
+    effectiveSeed =
+      effectiveSeed === null || typeof effectiveSeed === 'undefined'
+        ? ''
+        : String(effectiveSeed);
+  }
+
+  const seedNumber = Number.parseInt(effectiveSeed, 10);
+  const normalizedSeed = Number.isFinite(seedNumber) ? seedNumber : effectiveSeed;
+
+  const workerArgs = {
+    class: 'calendar',
+    variant: variantId,
+    rig: rigId,
+    archetype,
+    week_start: weekStartValue,
+    seed: normalizedSeed,
+  };
+
+  let yearlyBudget = null;
+  if (variantId === 'mk2' && rigId === 'workforce') {
+    const budgetText = config?.mk2?.workforce?.budgetText || '';
+    if (budgetText && budgetText.trim()) {
+      try {
+        yearlyBudget = JSON.parse(budgetText);
+      } catch (parseError) {
+        throw { error: 'Invalid yearly budget JSON.', stdout: '', stderr: '' };
+      }
+    }
+  }
+
+  if (yearlyBudget !== null) {
+    workerArgs.yearly_budget = yearlyBudget;
+  }
+
+  const inputsSnapshot = {
+    archetype,
+    week_start: weekStartValue,
+    seed: effectiveSeed,
+  };
+  if (yearlyBudget !== null) {
+    inputsSnapshot.budget = true;
+  }
+
+  return {
+    runnerFn: RUNNER_FN_MAP[variantId]?.[rigId] || 'mock_run',
+    workerArgs,
+    variantId,
+    rigId,
+    archetype,
+    weekStart: weekStartValue,
+    seedValue: effectiveSeed,
+    normalizedSeed,
+    inputsSnapshot,
+  };
+}
+
 async function handleGenerate(event) {
   if (event && typeof event.preventDefault === 'function') {
     event.preventDefault();
@@ -2603,16 +2703,7 @@ async function handleGenerate(event) {
   }
 
   const snapshot = typeof getConfigSnapshot === 'function' ? getConfigSnapshot() : {};
-  const variantId = snapshot.variant || 'mk1';
-  const rigId = snapshot.rig || 'default';
-  const config = calendarConfigState || {};
-  const archetype = config?.common?.archetype || '';
-  const weekStartValue = snapshot.week_start || '';
-  const seedValue = snapshot.seed || randomizedSeedText;
-  const budgetText =
-    variantId === 'mk2' && rigId === 'workforce'
-      ? config?.mk2?.workforce?.budgetText || ''
-      : '';
+  let seedValue = snapshot.seed || randomizedSeedText;
 
   updateSeedIndicator(seedValue);
 
@@ -2624,35 +2715,21 @@ async function handleGenerate(event) {
 
   beginConsoleRun('Generating payload…', { autoSwitch: false });
 
-  const runnerFnMap = {
-    mk1: { default: 'mk1_run' },
-    mk2: { calendar: 'mk2_run_calendar', workforce: 'mk2_run_workforce' },
-  };
-  const selectedFn = runnerFnMap[variantId]?.[rigId] || null;
-  const seedNumber = Number.parseInt(seedValue, 10);
-  const normalizedSeed = Number.isFinite(seedNumber) ? seedNumber : seedValue;
-
   try {
-    const workerArgs = {
-      class: 'calendar',
-      variant: variantId,
-      rig: rigId,
-      archetype,
-      week_start: weekStartValue,
-      seed: normalizedSeed,
-    };
-    if (budgetText && budgetText.trim()) {
-      try {
-        workerArgs.yearly_budget = JSON.parse(budgetText);
-      } catch (parseError) {
-        throw { error: 'Invalid yearly budget JSON.', stdout: '', stderr: '' };
-      }
-    }
+    const generationConfig = prepareCalendarGeneration({ snapshot, seedValue });
+    seedValue = generationConfig.seedValue;
+    updateSeedIndicator(seedValue);
+    const normalizedSeed = generationConfig.normalizedSeed;
+    const variantId = generationConfig.variantId;
+    const rigId = generationConfig.rigId;
+    const archetype = generationConfig.archetype;
+    const weekStartValue = generationConfig.weekStart;
+    const inputsSnapshot = { ...(generationConfig.inputsSnapshot || {}) };
 
     const { result = null, stdout = '', stderr = '', fallback = false } =
       await sendWorkerMessage('run', {
-        fn: selectedFn || 'mock_run',
-        args: workerArgs,
+        fn: generationConfig.runnerFn,
+        args: generationConfig.workerArgs,
       });
 
     renderConsoleOutputs({ stdout, stderr });
@@ -2684,14 +2761,7 @@ async function handleGenerate(event) {
     hideVisualsOverlay();
 
     const eventsCount = Array.isArray(result.events) ? result.events.length : 0;
-    const inputsSnapshot = {
-      archetype,
-      week_start: weekStartValue,
-      seed: seedValue,
-    };
-    if (workerArgs.yearly_budget) {
-      inputsSnapshot.budget = true;
-    }
+    inputsSnapshot.seed = seedValue;
 
     appendActivityBalanceSnapshot(result);
 
@@ -2756,6 +2826,334 @@ async function handleGenerate(event) {
   } finally {
     setGenerateButtonState(false);
   }
+}
+
+function setBatchSize(size) {
+  const numeric = Number.parseInt(size, 10);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return;
+  }
+  batchState.size = numeric;
+  batchState.sizeButtons.forEach((button, value) => {
+    const isActive = value === numeric;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+function setBatchScaleMode(mode) {
+  const normalized = mode === 'absolute' ? 'absolute' : 'proportional';
+  if (batchState.scaleMode === normalized) {
+    updateBatchControlsState();
+    return;
+  }
+  batchState.scaleMode = normalized;
+  renderBatchResults();
+  updateBatchControlsState();
+}
+
+function updateBatchControlsState() {
+  batchState.sizeButtons.forEach((button) => {
+    button.disabled = batchState.isRunning;
+  });
+  batchState.modeButtons.forEach((button, mode) => {
+    const isActive = mode === batchState.scaleMode;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    button.disabled = batchState.isRunning && mode !== batchState.scaleMode;
+  });
+  if (batchState.runButton) {
+    batchState.runButton.disabled = batchState.isRunning;
+    batchState.runButton.textContent = batchState.isRunning ? 'Running…' : 'Run batch';
+    batchState.runButton.setAttribute('aria-busy', batchState.isRunning ? 'true' : 'false');
+  }
+}
+
+function updateBatchSummary() {
+  if (!batchState.summary) {
+    return;
+  }
+  if (batchState.isRunning) {
+    const target = batchState.targetRuns;
+    const completed = Math.min(batchState.completedRuns, target);
+    batchState.summary.textContent =
+      target > 0 ? `Running batch… ${completed}/${target}` : 'Running batch…';
+    return;
+  }
+  if (batchState.lastRunCount > 0) {
+    const count = batchState.lastRunCount;
+    batchState.summary.textContent = `Last batch: ${count} run${count === 1 ? '' : 's'}`;
+    return;
+  }
+  batchState.summary.textContent = 'Run a batch to begin.';
+}
+
+function getBatchSegmentLabel(segment, percentValue) {
+  if (segment.percentage >= 0.3) {
+    return `${segment.label} · ${percentValue}%`;
+  }
+  if (segment.percentage >= 0.18) {
+    return `${percentValue}%`;
+  }
+  return '';
+}
+
+function renderBatchResults() {
+  if (!batchState.stack || !batchState.empty) {
+    return;
+  }
+  const results = Array.isArray(batchState.results) ? batchState.results : [];
+  batchState.stack.innerHTML = '';
+  const hasResults = results.length > 0;
+  batchState.stack.hidden = !hasResults;
+  const emptyMessage = batchState.isRunning ? 'Running batch…' : 'Run a batch to see results.';
+  batchState.empty.textContent = emptyMessage;
+  batchState.empty.hidden = hasResults;
+  if (!hasResults) {
+    return;
+  }
+
+  const maxTotalMinutes = results.reduce(
+    (max, run) => Math.max(max, Number.isFinite(run.totalMinutes) ? run.totalMinutes : 0),
+    0
+  );
+  const fragment = document.createDocumentFragment();
+  results
+    .slice()
+    .reverse()
+    .forEach((run) => {
+      const row = document.createElement('div');
+      row.className = 'batch-results__row';
+      row.dataset.index = String(run.index || 0);
+
+      const labelWrapper = document.createElement('div');
+      labelWrapper.className = 'batch-results__label';
+
+      const badge = document.createElement('span');
+      badge.className = 'batch-results__run';
+      badge.textContent = `Run #${run.index || 0}`;
+      labelWrapper.append(badge);
+
+      const duration = Number.isFinite(run.totalMinutes)
+        ? formatDuration(Math.round(run.totalMinutes))
+        : '';
+      if (duration) {
+        const meta = document.createElement('span');
+        meta.className = 'batch-results__duration';
+        meta.textContent = duration;
+        labelWrapper.append(meta);
+      }
+
+      const bar = document.createElement('div');
+      bar.className = 'batch-results__bar';
+
+      const track = document.createElement('div');
+      track.className = 'batch-results__track';
+      const scale =
+        batchState.scaleMode === 'absolute' && maxTotalMinutes > 0
+          ? Math.max(0, Math.min(1, (run.totalMinutes || 0) / maxTotalMinutes))
+          : 1;
+      track.style.setProperty('--batch-row-scale', String(scale));
+      track.setAttribute('role', 'list');
+
+      const segments = Array.isArray(run.segments) ? run.segments : [];
+      segments.forEach((segment) => {
+        const element = document.createElement('div');
+        element.className = 'activity-share__segment batch-results__segment';
+        element.style.setProperty('--segment-color', segment.color || '#6366f1');
+        element.style.setProperty(
+          '--segment-text-color',
+          computeSegmentTextColor(segment.color)
+        );
+        element.style.flexGrow = String(segment.minutes || 0);
+        element.setAttribute('role', 'listitem');
+        const total = run.totalMinutes || 0;
+        const percentValue = total > 0 ? Math.round((segment.minutes / total) * 100) : 0;
+        const labelText = getBatchSegmentLabel(segment, percentValue);
+        if (labelText) {
+          const label = document.createElement('span');
+          label.className = 'batch-results__segment-label';
+          label.textContent = labelText;
+          element.append(label);
+        }
+        const durationLabel = formatDuration(Math.round(segment.minutes || 0));
+        element.setAttribute(
+          'aria-label',
+          `${segment.label}: ${durationLabel}${percentValue ? ` (${percentValue}%)` : ''}`
+        );
+        element.tabIndex = -1;
+        track.append(element);
+      });
+
+      bar.append(track);
+      row.append(labelWrapper, bar);
+      fragment.append(row);
+    });
+
+  batchState.stack.append(fragment);
+}
+
+async function runBatchGenerations(count) {
+  const target = Number.parseInt(count, 10);
+  if (!Number.isFinite(target) || target <= 0) {
+    return;
+  }
+  if (batchState.isRunning) {
+    return;
+  }
+
+  batchState.isRunning = true;
+  batchState.targetRuns = target;
+  batchState.completedRuns = 0;
+  batchState.results = [];
+  renderBatchResults();
+  updateBatchSummary();
+  updateBatchControlsState();
+
+  const results = [];
+
+  try {
+    await ensureRuntimeLoaded();
+
+    const snapshot = typeof getConfigSnapshot === 'function' ? getConfigSnapshot() : {};
+
+    for (let index = 0; index < target; index += 1) {
+      let seedValue = snapshot.seed || '';
+      if (randomizeSeed) {
+        seedValue = String(Math.floor(Math.random() * 1_000_000_000));
+      }
+
+      const generationConfig = prepareCalendarGeneration({ snapshot, seedValue });
+      const { result = null } = await sendWorkerMessage('run', {
+        fn: generationConfig.runnerFn,
+        args: generationConfig.workerArgs,
+      });
+
+      if (!result || typeof result !== 'object') {
+        throw { error: 'No result returned from worker.', stdout: '', stderr: '' };
+      }
+
+      const entry = createBalanceHistoryEntry(result, { runNumber: index + 1 });
+      const totalMinutes = entry?.totalMinutes || 0;
+      const segments = Array.isArray(entry?.segments)
+        ? entry.segments.map((segment) => ({ ...segment }))
+        : [];
+      const activities = Array.isArray(entry?.activities)
+        ? entry.activities.map((activity) => ({
+            id: activity.id,
+            name: activity.label,
+            color: activity.color,
+            minutes: activity.minutes,
+          }))
+        : [];
+
+      results.push({
+        index: index + 1,
+        totalMinutes,
+        segments,
+        activities,
+      });
+
+      batchState.completedRuns = index + 1;
+      updateBatchSummary();
+
+      if (index % 20 === 19) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+  } catch (error) {
+    console.error('Batch generation failed:', error);
+    const summary = formatStructuredErrorSummary(error);
+    const description =
+      summary && summary.length > 0
+        ? summary
+        : typeof error?.error === 'string' && error.error
+        ? error.error
+        : error instanceof Error && error.message
+        ? error.message
+        : 'Batch generation failed.';
+    dispatchIntent({
+      type: INTENT_TYPES.SHOW_TOAST,
+      payload: {
+        message: 'Batch failed',
+        description,
+        intent: 'error',
+        duration: 5000,
+      },
+    });
+  } finally {
+    batchState.results = results;
+    if (results.length > 0) {
+      batchState.lastRunCount = results.length;
+    }
+    batchState.isRunning = false;
+    batchState.targetRuns = 0;
+    batchState.completedRuns = 0;
+    renderBatchResults();
+    updateBatchSummary();
+    updateBatchControlsState();
+  }
+}
+
+function hydrateBatchPanel() {
+  const panel = document.querySelector('[data-root-panel="batch"]');
+  if (!panel || panel.dataset.batchHydrated === '1') {
+    return;
+  }
+  panel.dataset.batchHydrated = '1';
+
+  batchState.panel = panel;
+  batchState.summary = panel.querySelector('[data-batch-summary]');
+  batchState.stack = panel.querySelector('[data-batch-stack]');
+  batchState.empty = panel.querySelector('[data-batch-empty]');
+
+  batchState.sizeButtons = new Map();
+  const sizeButtons = panel.querySelectorAll('[data-batch-size]');
+  sizeButtons.forEach((button) => {
+    const value = Number.parseInt(button.dataset.batchSize || '', 10);
+    if (!Number.isFinite(value) || value <= 0) {
+      return;
+    }
+    batchState.sizeButtons.set(value, button);
+    button.type = 'button';
+    button.setAttribute('aria-pressed', value === batchState.size ? 'true' : 'false');
+    button.addEventListener('click', () => {
+      if (batchState.isRunning) {
+        return;
+      }
+      setBatchSize(value);
+      updateBatchControlsState();
+    });
+  });
+
+  batchState.modeButtons = new Map();
+  const modeButtons = panel.querySelectorAll('[data-batch-mode]');
+  modeButtons.forEach((button) => {
+    const mode = button.dataset.batchMode === 'absolute' ? 'absolute' : 'proportional';
+    batchState.modeButtons.set(mode, button);
+    button.type = 'button';
+    button.setAttribute('aria-pressed', mode === batchState.scaleMode ? 'true' : 'false');
+    button.addEventListener('click', () => {
+      if (batchState.scaleMode === mode) {
+        return;
+      }
+      setBatchScaleMode(mode);
+    });
+  });
+
+  const runButton = panel.querySelector('[data-batch-run]');
+  if (runButton instanceof HTMLButtonElement) {
+    batchState.runButton = runButton;
+    runButton.addEventListener('click', () => {
+      runBatchGenerations(batchState.size);
+    });
+  }
+
+  setBatchSize(batchState.size);
+  setBatchScaleMode(batchState.scaleMode);
+  renderBatchResults();
+  updateBatchSummary();
+  updateBatchControlsState();
 }
 
 function setConsoleOutputContent(element, text, defaultMessage) {
