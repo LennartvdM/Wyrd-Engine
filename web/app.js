@@ -354,6 +354,16 @@ function appendActivityBalanceSnapshot(schedule) {
     next.splice(0, next.length - BALANCE_HISTORY_LIMIT);
   }
   visualsState.balanceHistory = next;
+  if (
+    visualsState.urchin &&
+    typeof visualsState.urchin.appendBalanceHistoryEntry === 'function'
+  ) {
+    try {
+      visualsState.urchin.appendBalanceHistoryEntry(entry);
+    } catch (error) {
+      console.warn('[visuals] failed to append balance history entry:', error);
+    }
+  }
   applyBalanceHistoryToUrchin();
 }
 
