@@ -30,6 +30,19 @@
       <button
         class="tab root-tab"
         type="button"
+        id="tab-batch"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-batch"
+        data-tab="batch"
+        data-root-tab="batch"
+        tabindex="-1"
+      >
+        Batch
+      </button>
+      <button
+        class="tab root-tab"
+        type="button"
         id="tab-config"
         role="tab"
         aria-selected="false"
@@ -120,6 +133,65 @@
       >
         <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Visuals</h2>
         <div id="visuals-container"></div>
+      </section>
+      <section
+        class="tab-panel root-panel is-hidden"
+        id="panel-batch"
+        role="tabpanel"
+        aria-labelledby="tab-batch"
+        data-tab="batch"
+        data-root-panel="batch"
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Batch</h2>
+        <div class="batch-panel" id="batch-panel" data-batch-panel>
+          <div class="visuals-history-panel batch-controls">
+            <div class="batch-controls__header">
+              <h3 class="batch-controls__title">Batch runner</h3>
+              <span class="batch-controls__summary" data-batch-summary>Run a batch to begin.</span>
+            </div>
+            <div class="batch-controls__body">
+              <div class="batch-size-group" role="group" aria-label="Batch size">
+                <span class="batch-controls__label">Batch size</span>
+                <div class="batch-size-buttons">
+                  <button type="button" class="batch-size-button is-active" data-batch-size="52">
+                    52
+                  </button>
+                  <button type="button" class="batch-size-button" data-batch-size="100">100</button>
+                  <button type="button" class="batch-size-button" data-batch-size="500">500</button>
+                </div>
+              </div>
+              <button type="button" class="batch-run-button" data-batch-run>Run batch</button>
+            </div>
+          </div>
+          <div class="visuals-history-panel batch-results">
+            <div class="batch-results__header">
+              <h3 class="batch-results__title">Batch results</h3>
+              <div class="batch-mode-toggle" role="group" aria-label="Batch scale mode">
+                <button
+                  type="button"
+                  class="batch-mode-button is-active"
+                  data-batch-mode="proportional"
+                  aria-pressed="true"
+                >
+                  Proportional
+                </button>
+                <button
+                  type="button"
+                  class="batch-mode-button"
+                  data-batch-mode="absolute"
+                  aria-pressed="false"
+                >
+                  Absolute
+                </button>
+              </div>
+            </div>
+            <div class="batch-results__body">
+              <div class="batch-results__stack" data-batch-stack></div>
+              <p class="batch-results__empty" data-batch-empty>Run a batch to see results.</p>
+            </div>
+          </div>
+        </div>
       </section>
       <section
         class="tab-panel root-panel is-hidden"
