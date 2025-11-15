@@ -1346,6 +1346,7 @@ body {
   flex-direction: column;
   gap: 4px;
   min-height: 0;
+  overflow: hidden;
 }
 
 .activity-balance-history--dense .activity-balance-history__stack {

@@ -25,7 +25,8 @@ const SPEED_OPTIONS = [
 
 const HOVER_DELAY = 180;
 
-export const MAX_HISTORY_ENTRIES = 100;
+export const MAX_HISTORY_ROWS = 50;
+export const MAX_HISTORY_ENTRIES = MAX_HISTORY_ROWS;
 
 export function extractScheduleTimestamp(schedule) {
   if (!schedule || typeof schedule !== 'object') {
@@ -122,8 +123,7 @@ export function createBalanceHistoryEntry(schedule, options = {}) {
     return null;
   }
 
-  const previousRunNumber = Number.isFinite(options.runNumber) ? options.runNumber : 1;
-  const runNumber = previousRunNumber;
+  const runNumber = Number.isFinite(options.runNumber) ? options.runNumber : 1;
   const timestamp = extractScheduleTimestamp(schedule);
   const entry = {
     id: options.id || `${runNumber}-${Date.now()}`,
@@ -267,8 +267,9 @@ export class RadialUrchin {
     this.shareContainer = null;
     this.historyView = null;
     this.balanceHistory = [];
+    this.totalRunCount = 0;
     this.isHistoryOpen = false;
-    this.maxHistoryEntries = MAX_HISTORY_ENTRIES;
+    this.maxHistoryEntries = MAX_HISTORY_ROWS;
 
     this.handleResize = this.handleResize.bind(this);
     this.handlePointerMove = this.handlePointerMove.bind(this);
@@ -569,7 +570,7 @@ export class RadialUrchin {
     this.updateHistoryUi();
   }
 
-  setBalanceHistory(entries) {
+  setBalanceHistory(entries, totalRunCount) {
     const next = Array.isArray(entries) ? entries.slice(-this.maxHistoryEntries) : [];
     this.balanceHistory = next.map((entry) => ({
       ...entry,
@@ -580,10 +581,22 @@ export class RadialUrchin {
         ? entry.activities.map((activity) => ({ ...activity }))
         : [],
     }));
+    if (Number.isFinite(totalRunCount)) {
+      this.totalRunCount = totalRunCount;
+    } else if (this.balanceHistory.length > 0) {
+      const latest = this.balanceHistory[this.balanceHistory.length - 1];
+      if (latest && Number.isFinite(latest.runNumber)) {
+        this.totalRunCount = latest.runNumber;
+      } else {
+        this.totalRunCount = this.balanceHistory.length;
+      }
+    } else {
+      this.totalRunCount = 0;
+    }
     this.updateHistoryUi({ refreshEntries: true });
   }
 
-  appendBalanceHistoryEntry(entry) {
+  appendBalanceHistoryEntry(entry, totalRunCount) {
     if (!entry || typeof entry !== 'object') {
       return;
     }
@@ -596,32 +609,34 @@ export class RadialUrchin {
         ? entry.activities.map((activity) => ({ ...activity }))
         : [],
     };
-    const next = [...this.balanceHistory, normalized];
-    if (next.length > this.maxHistoryEntries) {
-      next.splice(0, next.length - this.maxHistoryEntries);
-    }
+    const next =
+      this.balanceHistory.length >= this.maxHistoryEntries
+        ? [...this.balanceHistory.slice(1), normalized]
+        : [...this.balanceHistory, normalized];
     this.balanceHistory = next;
+    if (Number.isFinite(totalRunCount)) {
+      this.totalRunCount = totalRunCount;
+    } else if (Number.isFinite(normalized.runNumber)) {
+      const previousTotal = Number.isFinite(this.totalRunCount) ? this.totalRunCount : 0;
+      this.totalRunCount = Math.max(previousTotal, normalized.runNumber);
+    } else {
+      const previousTotal = Number.isFinite(this.totalRunCount) ? this.totalRunCount : 0;
+      this.totalRunCount = previousTotal + 1;
+    }
     this.updateHistoryUi({ refreshEntries: true });
   }
 
   captureBalanceSnapshot(schedule, signature) {
-    const previous =
-      this.balanceHistory.length > 0
-        ? this.balanceHistory[this.balanceHistory.length - 1]
-        : null;
-    const runNumber =
-      (previous && Number.isFinite(previous.runNumber)
-        ? previous.runNumber
-        : this.balanceHistory.length) + 1;
+    const nextRunNumber = (Number.isFinite(this.totalRunCount) ? this.totalRunCount : 0) + 1;
     const entry = createBalanceHistoryEntry(schedule, {
-      runNumber,
+      runNumber: nextRunNumber,
       highContrast: this.state.highContrast,
       signature,
     });
     if (!entry) {
       return;
     }
-    this.appendBalanceHistoryEntry(entry);
+    this.appendBalanceHistoryEntry(entry, nextRunNumber);
   }
 
   getRunMetaSlot() {

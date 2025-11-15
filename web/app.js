@@ -3,7 +3,7 @@ import {
   createRadialUrchin,
   createBalanceHistoryEntry,
   computeScheduleSignature,
-  MAX_HISTORY_ENTRIES as BALANCE_HISTORY_LIMIT,
+  MAX_HISTORY_ROWS as BALANCE_HISTORY_LIMIT,
 } from './ui/visuals/RadialUrchin.js';
 
 console.info('[app] app.js loaded');
@@ -104,6 +104,7 @@ const visualsState = {
   metaSlot: null,
   runLabel: null,
   balanceHistory: [],
+  totalRunCount: 0,
 };
 let lastVisualPayload = null;
 let lastVisualSchedule = null;
@@ -325,21 +326,20 @@ function applyBalanceHistoryToUrchin() {
   if (!visualsState.urchin || typeof visualsState.urchin.setBalanceHistory !== 'function') {
     return;
   }
-  visualsState.urchin.setBalanceHistory(visualsState.balanceHistory);
+  visualsState.urchin.setBalanceHistory(
+    visualsState.balanceHistory,
+    visualsState.totalRunCount
+  );
 }
 
 function appendActivityBalanceSnapshot(schedule) {
   if (!schedule || typeof schedule !== 'object') {
     return;
   }
-  const previous =
-    visualsState.balanceHistory.length > 0
-      ? visualsState.balanceHistory[visualsState.balanceHistory.length - 1]
-      : null;
-  const nextRunNumber =
-    (previous && Number.isFinite(previous.runNumber)
-      ? previous.runNumber
-      : visualsState.balanceHistory.length) + 1;
+  const previousTotal = Number.isFinite(visualsState.totalRunCount)
+    ? visualsState.totalRunCount
+    : 0;
+  const nextRunNumber = previousTotal + 1;
   const signature = computeScheduleSignature(schedule);
   const entry = createBalanceHistoryEntry(schedule, {
     runNumber: nextRunNumber,
@@ -349,17 +349,18 @@ function appendActivityBalanceSnapshot(schedule) {
   if (!entry) {
     return;
   }
-  const next = [...visualsState.balanceHistory, entry];
-  if (next.length > BALANCE_HISTORY_LIMIT) {
-    next.splice(0, next.length - BALANCE_HISTORY_LIMIT);
-  }
-  visualsState.balanceHistory = next;
+  visualsState.totalRunCount = nextRunNumber;
+  const nextHistory =
+    visualsState.balanceHistory.length >= BALANCE_HISTORY_LIMIT
+      ? [...visualsState.balanceHistory.slice(1), entry]
+      : [...visualsState.balanceHistory, entry];
+  visualsState.balanceHistory = nextHistory;
   if (
     visualsState.urchin &&
     typeof visualsState.urchin.appendBalanceHistoryEntry === 'function'
   ) {
     try {
-      visualsState.urchin.appendBalanceHistoryEntry(entry);
+      visualsState.urchin.appendBalanceHistoryEntry(entry, nextRunNumber);
     } catch (error) {
       console.warn('[visuals] failed to append balance history entry:', error);
     }
@@ -737,7 +738,9 @@ function updateActiveRunLabel() {
   }
 
   const entry = runHistory[index];
-  const runNumber = runHistory.length - index;
+  const runNumber = Number.isFinite(entry?.runNumber)
+    ? entry.runNumber
+    : runHistory.length - index;
   const parts = [`Run #${runNumber}`];
   if (entry.timestamp) {
     const formatted = formatHistoryTimestamp(entry.timestamp);
@@ -907,7 +910,12 @@ function renderCalendarHistorySummary() {
   });
 
   if (meta) {
-    const runNumber = activeIndex !== -1 ? runHistory.length - activeIndex : null;
+    const activeEntry = activeIndex !== -1 ? runHistory[activeIndex] : null;
+    const runNumber = activeEntry && Number.isFinite(activeEntry.runNumber)
+      ? activeEntry.runNumber
+      : activeIndex !== -1
+      ? runHistory.length - activeIndex
+      : null;
     const metaParts = [];
     if (Number.isFinite(runNumber)) {
       metaParts.push(`Run #${runNumber}`);
@@ -1049,6 +1057,9 @@ function recordCalendarHistoryEntry(entry) {
   const visualPayload = resolveVisualPayload(entry.calendarJson || entry.rawResult);
   const normalized = {
     id: entry.id || generateCalendarHistoryId(),
+    runNumber: Number.isFinite(visualsState.totalRunCount)
+      ? visualsState.totalRunCount
+      : undefined,
     timestamp: entry.timestamp || new Date().toISOString(),
     archetype: entry.archetype || '',
     seed:
