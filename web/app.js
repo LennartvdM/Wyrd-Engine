@@ -190,12 +190,61 @@ function persistVisualsLegacyFlag(enabled) {
   }
 }
 
+function ensureVisualsFallbackPanel() {
+  if (visualsState.fallback && visualsState.fallbackImg && visualsState.fallbackMessage) {
+    if (visualsState.fallback.parentElement || !visualsState.mainPanel) {
+      return;
+    }
+    visualsState.mainPanel.append(visualsState.fallback);
+    return;
+  }
+
+  if (!visualsState.mainPanel) {
+    return;
+  }
+
+  const fallback = document.createElement('div');
+  fallback.className = 'visuals-fallback-panel';
+  fallback.hidden = true;
+
+  const fallbackImg = document.createElement('img');
+  fallbackImg.className = 'visuals-fallback-panel__image';
+  fallbackImg.alt = 'Legacy visuals preview unavailable';
+  fallbackImg.hidden = true;
+
+  const fallbackMessage = document.createElement('p');
+  fallbackMessage.className = 'visuals-fallback-panel__message';
+  fallbackMessage.textContent = 'Legacy visuals preview unavailable.';
+  fallbackMessage.hidden = true;
+
+  fallback.append(fallbackImg, fallbackMessage);
+  visualsState.mainPanel.append(fallback);
+
+  visualsState.fallback = fallback;
+  visualsState.fallbackImg = fallbackImg;
+  visualsState.fallbackMessage = fallbackMessage;
+}
+
+function removeFallbackPanel() {
+  if (visualsState.fallback && visualsState.fallback.parentElement) {
+    visualsState.fallback.parentElement.removeChild(visualsState.fallback);
+  }
+}
+
 function syncVisualsVisibility() {
   if (visualsState.mount) {
     visualsState.mount.hidden = visualsState.useLegacy;
   }
-  if (visualsState.fallback) {
-    visualsState.fallback.hidden = !visualsState.useLegacy;
+  if (visualsState.useLegacy) {
+    ensureVisualsFallbackPanel();
+    if (visualsState.fallback) {
+      visualsState.fallback.hidden = false;
+    }
+  } else {
+    if (visualsState.fallback) {
+      visualsState.fallback.hidden = true;
+    }
+    removeFallbackPanel();
   }
 }
 
@@ -275,6 +324,7 @@ function updateVisuals(payload) {
   }
 
   if (visualsState.useLegacy) {
+    ensureVisualsFallbackPanel();
     resetVisualsInstance();
     const src = resolveLegacyPng(lastVisualPayload);
     if (visualsState.fallbackImg) {
@@ -432,22 +482,6 @@ function initVisualsMount() {
   mount.className = 'visuals-mount';
   mainPanel.append(mount);
   visualsState.mount = mount;
-
-  const fallback = document.createElement('div');
-  fallback.className = 'visuals-fallback-panel';
-  const fallbackImg = document.createElement('img');
-  fallbackImg.className = 'visuals-fallback-panel__image';
-  fallbackImg.alt = 'Legacy visuals preview unavailable';
-  fallbackImg.hidden = true;
-  const fallbackMessage = document.createElement('p');
-  fallbackMessage.className = 'visuals-fallback-panel__message';
-  fallbackMessage.textContent = 'Legacy visuals preview unavailable.';
-  fallbackMessage.hidden = true;
-  fallback.append(fallbackImg, fallbackMessage);
-  mainPanel.append(fallback);
-  visualsState.fallback = fallback;
-  visualsState.fallbackImg = fallbackImg;
-  visualsState.fallbackMessage = fallbackMessage;
 
   const overlay = document.createElement('div');
   overlay.className = 'visuals-status-overlay';
