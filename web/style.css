@@ -1614,11 +1614,13 @@ body {
   background: radial-gradient(circle at top, rgba(148, 163, 184, 0.15), rgba(15, 23, 42, 0.75));
   border: 1px solid rgba(148, 163, 184, 0.2);
   overflow: hidden;
+  transition: flex-basis 0.24s ease, min-height 0.24s ease;
 }
 
-.radial-urchin--history-open .radial-urchin__stage {
-  flex: 0 0 200px;
-  min-height: 200px;
+.radial-urchin--history-open .radial-urchin__stage,
+.radial-urchin__stage--tray {
+  flex: 0 0 120px;
+  min-height: 120px;
 }
 
 .radial-urchin__canvas {
