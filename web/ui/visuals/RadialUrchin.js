@@ -551,6 +551,9 @@ export class RadialUrchin {
     if (this.container) {
       this.container.classList.toggle('radial-urchin--history-open', open);
     }
+    if (this.canvasWrapper) {
+      this.canvasWrapper.classList.toggle('radial-urchin__stage--tray', open);
+    }
   }
 
   toggleBalanceHistory(force) {
