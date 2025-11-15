@@ -1,6 +1,8 @@
 import { formatDuration } from './useUrchinLayout.js';
 import { computeSegmentTextColor } from './ActivityShareBar.js';
 
+const DENSE_BARCODE_THRESHOLD = 19;
+
 export class ActivityBalanceHistory {
   constructor(container) {
     this.root = document.createElement('div');
@@ -72,36 +74,32 @@ export class ActivityBalanceHistory {
 
     const fragment = document.createDocumentFragment();
     const displayEntries = this.entries.slice().reverse();
+    const isDenseBarcode = displayEntries.length > DENSE_BARCODE_THRESHOLD;
+    this.root.classList.toggle('activity-balance-history--dense', isDenseBarcode);
+
     displayEntries.forEach((entry, index) => {
       const runNumber = Number.isFinite(entry?.runNumber)
         ? entry.runNumber
         : this.entries.length - index;
-      const badge = document.createElement('span');
-      badge.className = 'activity-balance-history__run';
-      badge.textContent = entry.label || `Run #${runNumber}`;
-      if (entry.timestampLabel) {
-        badge.title = entry.timestampLabel;
-      }
-
-      const meta = document.createElement('span');
-      meta.className = 'activity-balance-history__run-meta';
-      meta.textContent = entry.timestampLabel || '';
-      if (!meta.textContent) {
-        meta.hidden = true;
-      }
-
-      const labelWrapper = document.createElement('div');
-      labelWrapper.className = 'activity-balance-history__run-wrapper';
-      labelWrapper.append(badge);
-      if (!meta.hidden) {
-        labelWrapper.append(meta);
-      }
-
       const bar = document.createElement('div');
       bar.className = 'activity-balance-history__bar';
       bar.setAttribute('role', 'list');
       bar.dataset.index = String(runNumber);
       bar.addEventListener('mouseleave', this.boundHideTooltip);
+
+      if (isDenseBarcode) {
+        const tooltipParts = [];
+        const labelText = entry.label || `Run #${runNumber}`;
+        if (labelText) {
+          tooltipParts.push(labelText);
+        }
+        if (entry.timestampLabel) {
+          tooltipParts.push(entry.timestampLabel);
+        }
+        if (tooltipParts.length > 0) {
+          bar.title = tooltipParts.join(' · ');
+        }
+      }
 
       entry.segments.forEach((segment, segmentIndex) => {
         const element = document.createElement('div');
@@ -136,7 +134,33 @@ export class ActivityBalanceHistory {
       const row = document.createElement('div');
       row.className = 'activity-balance-history__row';
       row.dataset.index = String(runNumber);
-      row.append(labelWrapper, bar);
+
+      if (!isDenseBarcode) {
+        const badge = document.createElement('span');
+        badge.className = 'activity-balance-history__run';
+        badge.textContent = entry.label || `Run #${runNumber}`;
+        if (entry.timestampLabel) {
+          badge.title = entry.timestampLabel;
+        }
+
+        const meta = document.createElement('span');
+        meta.className = 'activity-balance-history__run-meta';
+        meta.textContent = entry.timestampLabel || '';
+        if (!meta.textContent) {
+          meta.hidden = true;
+        }
+
+        const labelWrapper = document.createElement('div');
+        labelWrapper.className = 'activity-balance-history__run-wrapper';
+        labelWrapper.append(badge);
+        if (!meta.hidden) {
+          labelWrapper.append(meta);
+        }
+
+        row.append(labelWrapper);
+      }
+
+      row.append(bar);
 
       fragment.append(row);
     });
