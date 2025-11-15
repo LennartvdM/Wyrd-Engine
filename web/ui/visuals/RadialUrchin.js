@@ -25,7 +25,123 @@ const SPEED_OPTIONS = [
 
 const HOVER_DELAY = 180;
 
-const MAX_HISTORY_ENTRIES = 100;
+export const MAX_HISTORY_ENTRIES = 100;
+
+export function extractScheduleTimestamp(schedule) {
+  if (!schedule || typeof schedule !== 'object') {
+    return null;
+  }
+  if (typeof schedule.generatedAt === 'string') {
+    return schedule.generatedAt;
+  }
+  const meta = schedule.metadata && typeof schedule.metadata === 'object' ? schedule.metadata : null;
+  if (meta) {
+    if (typeof meta.generatedAt === 'string') {
+      return meta.generatedAt;
+    }
+    if (typeof meta.timestamp === 'string') {
+      return meta.timestamp;
+    }
+  }
+  return null;
+}
+
+export function formatHistoryTimestamp(value) {
+  if (!value || typeof value !== 'string') {
+    return '';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  try {
+    return date.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch (error) {
+    return '';
+  }
+}
+
+export function computeScheduleSignature(schedule) {
+  if (!schedule || typeof schedule !== 'object') {
+    return null;
+  }
+
+  const timestamp = extractScheduleTimestamp(schedule);
+  if (timestamp) {
+    return `timestamp:${timestamp}`;
+  }
+
+  const events = Array.isArray(schedule.events) ? schedule.events : [];
+  if (!events.length) {
+    return null;
+  }
+
+  const parts = events.map((event) => {
+    const label = event?.label || event?.activity || '';
+    const start = typeof event?.start === 'string' ? event.start : '';
+    const end = typeof event?.end === 'string' ? event.end : '';
+    const agent =
+      typeof event?.agent === 'string'
+        ? event.agent
+        : typeof event?.metadata?.agent === 'string'
+        ? event.metadata.agent
+        : '';
+    return `${label}|${start}|${end}|${agent}`;
+  });
+
+  return `events:${parts.join(';')}`;
+}
+
+export function createBalanceHistoryEntry(schedule, options = {}) {
+  if (!schedule || typeof schedule !== 'object') {
+    return null;
+  }
+  const events = Array.isArray(schedule.events) ? schedule.events : [];
+  if (events.length === 0) {
+    return null;
+  }
+  const totals = computeLabelTotals(events);
+  if (!Array.isArray(totals) || totals.length === 0) {
+    return null;
+  }
+
+  const highContrast = Boolean(options.highContrast);
+  const activities = totals.map(({ label, minutes }) => ({
+    id: label,
+    label,
+    minutes,
+    color: mapLabelToColor(label, { highContrast }),
+  }));
+  const { segments, totalMinutes } = prepareActivityShareSegments(activities);
+  if (!segments.length || !(totalMinutes > 0)) {
+    return null;
+  }
+
+  const previousRunNumber = Number.isFinite(options.runNumber) ? options.runNumber : 1;
+  const runNumber = previousRunNumber;
+  const timestamp = extractScheduleTimestamp(schedule);
+  const entry = {
+    id: options.id || `${runNumber}-${Date.now()}`,
+    runNumber,
+    label: options.label || `Run #${runNumber}`,
+    timestamp,
+    timestampLabel: formatHistoryTimestamp(timestamp),
+    totalMinutes,
+    segments: segments.map((segment) => ({ ...segment })),
+    activities: activities.map((activity) => ({ ...activity })),
+  };
+
+  if (options.signature) {
+    entry.signature = options.signature;
+  }
+
+  return entry;
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -152,9 +268,7 @@ export class RadialUrchin {
     this.historyView = null;
     this.balanceHistory = [];
     this.isHistoryOpen = false;
-    this.historyRunCounter = 0;
     this.maxHistoryEntries = MAX_HISTORY_ENTRIES;
-    this.lastSnapshotSource = null;
 
     this.handleResize = this.handleResize.bind(this);
     this.handlePointerMove = this.handlePointerMove.bind(this);
@@ -452,88 +566,59 @@ export class RadialUrchin {
     this.updateHistoryUi();
   }
 
-  captureBalanceSnapshot(schedule) {
-    if (!schedule || typeof schedule !== 'object') {
-      return;
-    }
-    const events = Array.isArray(schedule.events) ? schedule.events : [];
-    if (events.length === 0) {
-      return;
-    }
-    const totals = computeLabelTotals(events);
-    if (!Array.isArray(totals) || totals.length === 0) {
-      return;
-    }
-
-    const activities = totals.map(({ label, minutes }) => ({
-      id: label,
-      label,
-      minutes,
-      color: mapLabelToColor(label, { highContrast: this.state.highContrast }),
+  setBalanceHistory(entries) {
+    const next = Array.isArray(entries) ? entries.slice(-this.maxHistoryEntries) : [];
+    this.balanceHistory = next.map((entry) => ({
+      ...entry,
+      segments: Array.isArray(entry.segments)
+        ? entry.segments.map((segment) => ({ ...segment }))
+        : [],
+      activities: Array.isArray(entry.activities)
+        ? entry.activities.map((activity) => ({ ...activity }))
+        : [],
     }));
-    const { segments, totalMinutes } = prepareActivityShareSegments(activities);
-    if (!segments.length || !(totalMinutes > 0)) {
-      return;
-    }
-
-    this.historyRunCounter += 1;
-    const runNumber = this.historyRunCounter;
-    const timestamp = this.extractScheduleTimestamp(schedule);
-    const entry = {
-      id: `${runNumber}-${Date.now()}`,
-      runNumber,
-      label: `Run #${runNumber}`,
-      timestamp,
-      timestampLabel: this.formatHistoryTimestamp(timestamp),
-      totalMinutes,
-      segments: segments.map((segment) => ({ ...segment })),
-    };
-
-    this.balanceHistory.unshift(entry);
-    if (this.balanceHistory.length > this.maxHistoryEntries) {
-      this.balanceHistory.length = this.maxHistoryEntries;
-    }
-
     this.updateHistoryUi({ refreshEntries: true });
   }
 
-  extractScheduleTimestamp(schedule) {
-    if (!schedule || typeof schedule !== 'object') {
-      return null;
+  appendBalanceHistoryEntry(entry) {
+    if (!entry || typeof entry !== 'object') {
+      return;
     }
-    if (typeof schedule.generatedAt === 'string') {
-      return schedule.generatedAt;
+    const normalized = {
+      ...entry,
+      segments: Array.isArray(entry.segments)
+        ? entry.segments.map((segment) => ({ ...segment }))
+        : [],
+      activities: Array.isArray(entry.activities)
+        ? entry.activities.map((activity) => ({ ...activity }))
+        : [],
+    };
+    const next = [...this.balanceHistory, normalized];
+    if (next.length > this.maxHistoryEntries) {
+      next.splice(0, next.length - this.maxHistoryEntries);
     }
-    const meta = schedule.metadata && typeof schedule.metadata === 'object' ? schedule.metadata : null;
-    if (meta) {
-      if (typeof meta.generatedAt === 'string') {
-        return meta.generatedAt;
-      }
-      if (typeof meta.timestamp === 'string') {
-        return meta.timestamp;
-      }
-    }
-    return null;
+    this.balanceHistory = next;
+    this.updateHistoryUi({ refreshEntries: true });
   }
 
-  formatHistoryTimestamp(value) {
-    if (!value || typeof value !== 'string') {
-      return '';
+  captureBalanceSnapshot(schedule, signature) {
+    const previous =
+      this.balanceHistory.length > 0
+        ? this.balanceHistory[this.balanceHistory.length - 1]
+        : null;
+    const runNumber =
+      (previous && Number.isFinite(previous.runNumber)
+        ? previous.runNumber
+        : this.balanceHistory.length) + 1;
+    const entry = createBalanceHistoryEntry(schedule, {
+      runNumber,
+      highContrast: this.state.highContrast,
+      signature,
+    });
+    if (!entry) {
+      return;
     }
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return '';
-    }
-    try {
-      return date.toLocaleString(undefined, {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } catch (error) {
-      return '';
-    }
+    this.appendBalanceHistoryEntry(entry);
   }
 
   getRunMetaSlot() {
@@ -599,19 +684,11 @@ export class RadialUrchin {
       this.updateLegend();
       this.refreshModeButtons();
       this.render();
-      this.lastSnapshotSource = null;
       if (this.isHistoryOpen) {
         this.isHistoryOpen = false;
       }
       this.updateHistoryUi();
       return;
-    }
-
-    if (payload && payload !== this.lastSnapshotSource) {
-      this.captureBalanceSnapshot(payload);
-    }
-    if (payload) {
-      this.lastSnapshotSource = payload;
     }
 
     try {

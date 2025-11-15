@@ -1,5 +1,10 @@
 import { DEBUG } from './debug.js';
-import { createRadialUrchin } from './ui/visuals/RadialUrchin.js';
+import {
+  createRadialUrchin,
+  createBalanceHistoryEntry,
+  computeScheduleSignature,
+  MAX_HISTORY_ENTRIES as BALANCE_HISTORY_LIMIT,
+} from './ui/visuals/RadialUrchin.js';
 
 console.info('[app] app.js loaded');
 
@@ -98,6 +103,7 @@ const visualsState = {
   metaBar: null,
   metaSlot: null,
   runLabel: null,
+  balanceHistory: [],
 };
 let lastVisualPayload = null;
 let lastVisualSchedule = null;
@@ -315,6 +321,42 @@ function resolveVisualPayload(payload) {
   return null;
 }
 
+function applyBalanceHistoryToUrchin() {
+  if (!visualsState.urchin || typeof visualsState.urchin.setBalanceHistory !== 'function') {
+    return;
+  }
+  visualsState.urchin.setBalanceHistory(visualsState.balanceHistory);
+}
+
+function appendActivityBalanceSnapshot(schedule) {
+  if (!schedule || typeof schedule !== 'object') {
+    return;
+  }
+  const previous =
+    visualsState.balanceHistory.length > 0
+      ? visualsState.balanceHistory[visualsState.balanceHistory.length - 1]
+      : null;
+  const nextRunNumber =
+    (previous && Number.isFinite(previous.runNumber)
+      ? previous.runNumber
+      : visualsState.balanceHistory.length) + 1;
+  const signature = computeScheduleSignature(schedule);
+  const entry = createBalanceHistoryEntry(schedule, {
+    runNumber: nextRunNumber,
+    highContrast: Boolean(visualsState.urchin?.state?.highContrast),
+    signature,
+  });
+  if (!entry) {
+    return;
+  }
+  const next = [...visualsState.balanceHistory, entry];
+  if (next.length > BALANCE_HISTORY_LIMIT) {
+    next.splice(0, next.length - BALANCE_HISTORY_LIMIT);
+  }
+  visualsState.balanceHistory = next;
+  applyBalanceHistoryToUrchin();
+}
+
 function updateVisuals(payload) {
   lastVisualPayload = payload && typeof payload === 'object' ? payload : null;
   lastVisualSchedule = resolveVisualPayload(payload);
@@ -376,6 +418,7 @@ function updateVisuals(payload) {
       visualsState.metaSlot.hidden = Boolean(visualsState.metaBar?.hidden);
     }
     visualsState.urchin.update({ data: lastVisualSchedule });
+    applyBalanceHistoryToUrchin();
   } catch (error) {
     console.error('[visuals] failed to update radial urchin:', error);
   }
@@ -444,6 +487,7 @@ function maybeCreateUrchinInstance(schedule) {
       instance.attachRunMeta(visualsState.metaBar);
     }
     visualsState.urchin = instance;
+    applyBalanceHistoryToUrchin();
   }
 }
 
@@ -2628,6 +2672,8 @@ async function handleGenerate(event) {
     if (workerArgs.yearly_budget) {
       inputsSnapshot.budget = true;
     }
+
+    appendActivityBalanceSnapshot(result);
 
     recordCalendarHistoryEntry({
       archetype,

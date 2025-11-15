@@ -71,10 +71,14 @@ export class ActivityBalanceHistory {
     }
 
     const fragment = document.createDocumentFragment();
-    this.entries.forEach((entry, index) => {
+    const displayEntries = this.entries.slice().reverse();
+    displayEntries.forEach((entry, index) => {
+      const runNumber = Number.isFinite(entry?.runNumber)
+        ? entry.runNumber
+        : this.entries.length - index;
       const badge = document.createElement('span');
       badge.className = 'activity-balance-history__run';
-      badge.textContent = entry.label || `Run #${index + 1}`;
+      badge.textContent = entry.label || `Run #${runNumber}`;
       if (entry.timestampLabel) {
         badge.title = entry.timestampLabel;
       }
@@ -96,7 +100,7 @@ export class ActivityBalanceHistory {
       const bar = document.createElement('div');
       bar.className = 'activity-balance-history__bar';
       bar.setAttribute('role', 'list');
-      bar.dataset.index = String(index);
+      bar.dataset.index = String(runNumber);
       bar.addEventListener('mouseleave', this.boundHideTooltip);
 
       entry.segments.forEach((segment, segmentIndex) => {
@@ -105,7 +109,7 @@ export class ActivityBalanceHistory {
         element.style.setProperty('--segment-color', segment.color || '#6366f1');
         element.style.setProperty('--segment-text-color', computeSegmentTextColor(segment.color));
         element.style.flexGrow = String(segment.minutes);
-        element.dataset.entryIndex = String(index);
+        element.dataset.entryIndex = String(runNumber);
         element.dataset.segmentIndex = String(segmentIndex);
         element.setAttribute('role', 'listitem');
 
@@ -131,7 +135,7 @@ export class ActivityBalanceHistory {
 
       const row = document.createElement('div');
       row.className = 'activity-balance-history__row';
-      row.dataset.index = String(index);
+      row.dataset.index = String(runNumber);
       row.append(labelWrapper, bar);
 
       fragment.append(row);
