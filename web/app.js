@@ -133,6 +133,8 @@ const RUNNER_FN_MAP = {
 };
 
 const BATCH_PRESETS = [52, 100, 500];
+const BATCH_FIT_MIN_ROW_HEIGHT = 2;
+const BATCH_FIT_MAX_ROW_HEIGHT = 40;
 const batchState = {
   panel: null,
   results: [],
@@ -144,10 +146,16 @@ const batchState = {
   runButton: null,
   summary: null,
   stack: null,
+  visualization: null,
   empty: null,
   sizeButtons: new Map(),
   modeButtons: new Map(),
   lastRunCount: 0,
+  fitButton: null,
+  isFitMode: false,
+  rowHeight: null,
+  pendingFitFrame: 0,
+  resizeHandler: null,
 };
 
 const RANDOMIZE_SEED_STORAGE_KEY = 'cfg.calendar.randomizeSeed';
@@ -2852,6 +2860,145 @@ function setBatchScaleMode(mode) {
   updateBatchControlsState();
 }
 
+function cancelBatchFitMeasurement() {
+  if (
+    batchState.pendingFitFrame &&
+    typeof window !== 'undefined' &&
+    typeof window.cancelAnimationFrame === 'function'
+  ) {
+    window.cancelAnimationFrame(batchState.pendingFitFrame);
+  }
+  batchState.pendingFitFrame = 0;
+}
+
+function applyBatchFitLayout() {
+  const container = batchState.visualization;
+  const stack = batchState.stack;
+  const hasRowHeight = Number.isFinite(batchState.rowHeight) && batchState.rowHeight > 0;
+  if (container) {
+    container.classList.toggle('batch-results__visualization--fit', batchState.isFitMode);
+  }
+  if (!stack) {
+    return;
+  }
+  stack.classList.toggle('batch-results__stack--fit', batchState.isFitMode);
+  const rows = stack.querySelectorAll('.batch-results__row');
+  rows.forEach((row) => {
+    if (!(row instanceof HTMLElement)) {
+      return;
+    }
+    const isActive = batchState.isFitMode && hasRowHeight;
+    row.classList.toggle('batch-results__row--fit', isActive);
+    if (isActive) {
+      const heightValue = `${batchState.rowHeight}px`;
+      row.style.height = heightValue;
+      row.style.minHeight = heightValue;
+    } else {
+      row.style.removeProperty('height');
+      row.style.removeProperty('min-height');
+    }
+    if (row.dataset.tooltip) {
+      row.title = row.dataset.tooltip;
+    }
+    const track = row.querySelector('.batch-results__track');
+    if (track instanceof HTMLElement) {
+      track.classList.toggle('batch-results__track--fit', isActive);
+    }
+  });
+}
+
+function computeBatchFitRowHeight() {
+  if (!batchState.isFitMode) {
+    batchState.rowHeight = null;
+    applyBatchFitLayout();
+    return;
+  }
+  const container = batchState.visualization;
+  const stack = batchState.stack;
+  if (!container || !stack) {
+    batchState.rowHeight = null;
+    applyBatchFitLayout();
+    return;
+  }
+  const rows = stack.querySelectorAll('.batch-results__row');
+  const rowCount = rows.length;
+  if (rowCount === 0) {
+    batchState.rowHeight = null;
+    applyBatchFitLayout();
+    return;
+  }
+  const containerHeight = container.clientHeight;
+  if (containerHeight <= 0) {
+    return;
+  }
+  const rawHeight = containerHeight / rowCount;
+  if (!Number.isFinite(rawHeight) || rawHeight <= 0) {
+    batchState.rowHeight = null;
+    applyBatchFitLayout();
+    return;
+  }
+  let nextHeight = Math.min(BATCH_FIT_MAX_ROW_HEIGHT, rawHeight);
+  if (rawHeight >= BATCH_FIT_MIN_ROW_HEIGHT) {
+    nextHeight = Math.max(BATCH_FIT_MIN_ROW_HEIGHT, nextHeight);
+  }
+  batchState.rowHeight = nextHeight;
+  applyBatchFitLayout();
+}
+
+function scheduleBatchFitMeasurement() {
+  if (!batchState.isFitMode) {
+    return;
+  }
+  applyBatchFitLayout();
+  cancelBatchFitMeasurement();
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    batchState.pendingFitFrame = window.requestAnimationFrame(() => {
+      batchState.pendingFitFrame = 0;
+      computeBatchFitRowHeight();
+    });
+  } else {
+    computeBatchFitRowHeight();
+  }
+}
+
+function setBatchFitMode(enabled) {
+  const next = Boolean(enabled);
+  if (batchState.isFitMode === next) {
+    if (next) {
+      scheduleBatchFitMeasurement();
+    } else {
+      batchState.rowHeight = null;
+      applyBatchFitLayout();
+    }
+    updateBatchControlsState();
+    return;
+  }
+  batchState.isFitMode = next;
+  if (!next) {
+    batchState.rowHeight = null;
+    cancelBatchFitMeasurement();
+  }
+  updateBatchControlsState();
+  if (next) {
+    scheduleBatchFitMeasurement();
+  } else {
+    applyBatchFitLayout();
+  }
+}
+
+function ensureBatchFitResizeListener() {
+  if (batchState.resizeHandler || typeof window === 'undefined') {
+    return;
+  }
+  const handler = () => {
+    if (batchState.isFitMode) {
+      scheduleBatchFitMeasurement();
+    }
+  };
+  batchState.resizeHandler = handler;
+  window.addEventListener('resize', handler);
+}
+
 function updateBatchControlsState() {
   batchState.sizeButtons.forEach((button) => {
     button.disabled = batchState.isRunning;
@@ -2866,6 +3013,12 @@ function updateBatchControlsState() {
     batchState.runButton.disabled = batchState.isRunning;
     batchState.runButton.textContent = batchState.isRunning ? 'Running…' : 'Run batch';
     batchState.runButton.setAttribute('aria-busy', batchState.isRunning ? 'true' : 'false');
+  }
+  if (batchState.fitButton) {
+    batchState.fitButton.classList.toggle('is-active', batchState.isFitMode);
+    batchState.fitButton.setAttribute('aria-pressed', batchState.isFitMode ? 'true' : 'false');
+    const hasResults = Array.isArray(batchState.results) && batchState.results.length > 0;
+    batchState.fitButton.disabled = batchState.isRunning && !hasResults;
   }
 }
 
@@ -2902,14 +3055,20 @@ function renderBatchResults() {
   if (!batchState.stack || !batchState.empty) {
     return;
   }
+  cancelBatchFitMeasurement();
   const results = Array.isArray(batchState.results) ? batchState.results : [];
   batchState.stack.innerHTML = '';
   const hasResults = results.length > 0;
   batchState.stack.hidden = !hasResults;
+  if (batchState.visualization) {
+    batchState.visualization.hidden = !hasResults;
+  }
   const emptyMessage = batchState.isRunning ? 'Running batch…' : 'Run a batch to see results.';
   batchState.empty.textContent = emptyMessage;
   batchState.empty.hidden = hasResults;
   if (!hasResults) {
+    batchState.rowHeight = null;
+    applyBatchFitLayout();
     return;
   }
 
@@ -2942,6 +3101,17 @@ function renderBatchResults() {
         meta.className = 'batch-results__duration';
         meta.textContent = duration;
         labelWrapper.append(meta);
+      }
+
+      const tooltipParts = [`Run #${run.index || 0}`];
+      if (duration) {
+        tooltipParts.push(duration);
+      }
+      const tooltipText = tooltipParts.join(' · ');
+      row.dataset.tooltip = tooltipText;
+      if (tooltipText) {
+        row.setAttribute('aria-label', tooltipText);
+        row.title = tooltipText;
       }
 
       const bar = document.createElement('div');
@@ -2991,6 +3161,12 @@ function renderBatchResults() {
     });
 
   batchState.stack.append(fragment);
+  if (batchState.isFitMode) {
+    scheduleBatchFitMeasurement();
+  } else {
+    batchState.rowHeight = null;
+    applyBatchFitLayout();
+  }
 }
 
 async function runBatchGenerations(count) {
@@ -3105,6 +3281,7 @@ function hydrateBatchPanel() {
   batchState.panel = panel;
   batchState.summary = panel.querySelector('[data-batch-summary]');
   batchState.stack = panel.querySelector('[data-batch-stack]');
+  batchState.visualization = panel.querySelector('[data-batch-visualization]');
   batchState.empty = panel.querySelector('[data-batch-empty]');
 
   batchState.sizeButtons = new Map();
@@ -3148,6 +3325,18 @@ function hydrateBatchPanel() {
       runBatchGenerations(batchState.size);
     });
   }
+
+  const fitButton = panel.querySelector('[data-batch-fit]');
+  if (fitButton instanceof HTMLButtonElement) {
+    batchState.fitButton = fitButton;
+    fitButton.type = 'button';
+    fitButton.setAttribute('aria-pressed', batchState.isFitMode ? 'true' : 'false');
+    fitButton.addEventListener('click', () => {
+      setBatchFitMode(!batchState.isFitMode);
+    });
+  }
+
+  ensureBatchFitResizeListener();
 
   setBatchSize(batchState.size);
   setBatchScaleMode(batchState.scaleMode);
