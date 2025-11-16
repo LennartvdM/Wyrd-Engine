@@ -3022,8 +3022,8 @@ function resolveBatchSequenceEvents(source) {
 }
 
 function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSegments = [] } = {}) {
-  const items = resolveBatchSequenceEvents(eventsOrSchedule);
-  if (!items.length) {
+  const events = resolveBatchSequenceEvents(eventsOrSchedule);
+  if (!events.length) {
     return [];
   }
 
@@ -3045,8 +3045,8 @@ function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSe
     addColor(segment.label, segment.color);
   });
 
-  const dateLookup = buildBatchDateOrderLookup(items);
-  const normalized = items
+  const dateLookup = buildBatchDateOrderLookup(events);
+  const normalized = events
     .map((event, index) => {
       if (!event || typeof event !== 'object') {
         return null;
@@ -3055,17 +3055,17 @@ function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSe
       const range = resolveBatchAbsoluteRange(event, dateLookup);
       let start = null;
       let end = null;
-      let minutes = 0;
+      let duration = 0;
 
       if (range && range.length >= 2) {
         start = range[0];
         end = range[1];
-        minutes = end - start;
+        duration = end - start;
       } else {
-        minutes = computeBatchEventDuration(event);
+        duration = computeBatchEventDuration(event);
       }
 
-      if (!(minutes > 0)) {
+      if (!(duration > 0)) {
         return null;
       }
 
@@ -3079,13 +3079,13 @@ function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSe
       }
 
       if (!Number.isFinite(end) && Number.isFinite(start)) {
-        end = start + minutes;
+        end = start + duration;
       }
 
       const label = event.label || event.activity || 'Activity';
       const activityId = typeof event.activity === 'string' ? event.activity : '';
       return {
-        minutes,
+        duration,
         label,
         activityId,
         start: Number.isFinite(start) ? start : null,
@@ -3111,25 +3111,33 @@ function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSe
     return [];
   }
 
-  const computedTotal = normalized.reduce((sum, entry) => sum + entry.minutes, 0);
+  const computedTotal = normalized.reduce((sum, entry) => sum + entry.duration, 0);
   if (!(computedTotal > 0)) {
     return [];
   }
 
-  return normalized.map((entry) => {
+  const segments = normalized.map((entry) => {
     const color =
       colorLookup.get(entry.label) || colorLookup.get(entry.activityId) || '#6366f1';
-    const percentage = entry.minutes / computedTotal;
+    const percentage = entry.duration / computedTotal;
+    const duration = entry.duration;
     return {
       id: entry.activityId || entry.label || `sequence-${entry.index}`,
       label: entry.label,
-      minutes: entry.minutes,
+      duration,
+      minutes: duration,
       color,
       percentage,
       startMinutes: entry.start,
       endMinutes: entry.end,
     };
   });
+
+  if (typeof console !== 'undefined' && typeof console.log === 'function') {
+    console.log('sequence segments durations', segments.map((segment) => segment.duration));
+  }
+
+  return segments;
 }
 
 function cancelBatchFitMeasurement() {
