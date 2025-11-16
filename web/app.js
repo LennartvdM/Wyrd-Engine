@@ -2918,6 +2918,93 @@ function computeBatchEventDuration(event) {
   return BATCH_FULL_DAY_MINUTES - startMinutes + endMinutes;
 }
 
+function coerceFiniteNumber(value) {
+  if (Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function buildBatchDateOrderLookup(events) {
+  const dateValues = Array.from(
+    new Set(
+      events
+        .map((event) => (typeof event?.date === 'string' && event.date ? event.date : null))
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+  const lookup = new Map();
+  dateValues.forEach((value, index) => {
+    lookup.set(value, index);
+  });
+  return lookup;
+}
+
+function resolveBatchEventDayIndex(event, dateLookup) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+  const numericDay = coerceFiniteNumber(event.day_index ?? event.dayIndex);
+  if (Number.isFinite(numericDay)) {
+    return numericDay;
+  }
+  const dateValue = typeof event.date === 'string' ? event.date : '';
+  if (dateValue && dateLookup.has(dateValue)) {
+    return dateLookup.get(dateValue);
+  }
+  const dayName = typeof event.day === 'string' ? event.day : '';
+  if (dayName) {
+    const computed = computeBatchDayIndex(dayName);
+    if (Number.isFinite(computed) && computed !== Number.MAX_SAFE_INTEGER) {
+      return computed;
+    }
+  }
+  return null;
+}
+
+function resolveBatchAbsoluteRange(event, dateLookup) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+  const rawRange = Array.isArray(event.minute_range)
+    ? event.minute_range
+    : Array.isArray(event.minuteRange)
+    ? event.minuteRange
+    : null;
+  if (rawRange && rawRange.length >= 2) {
+    const start = coerceFiniteNumber(rawRange[0]);
+    const end = coerceFiniteNumber(rawRange[1]);
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      return [start, end];
+    }
+  }
+  const startMinutes =
+    coerceFiniteNumber(event.start_minutes ?? event.startMinutes) ??
+    parseBatchTimeToMinutes(event.start);
+  const endMinutes =
+    coerceFiniteNumber(event.end_minutes ?? event.endMinutes) ?? parseBatchTimeToMinutes(event.end);
+  if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes)) {
+    return null;
+  }
+  let dayIndex = resolveBatchEventDayIndex(event, dateLookup);
+  if (!Number.isFinite(dayIndex)) {
+    dayIndex = 0;
+  }
+  let absoluteStart = startMinutes + dayIndex * BATCH_FULL_DAY_MINUTES;
+  let absoluteEnd = endMinutes + dayIndex * BATCH_FULL_DAY_MINUTES;
+  if (absoluteEnd <= absoluteStart) {
+    absoluteEnd = absoluteStart + Math.max(0, endMinutes - startMinutes);
+  }
+  if (absoluteEnd <= absoluteStart) {
+    return null;
+  }
+  return [absoluteStart, absoluteEnd];
+}
+
 function buildBatchSequenceSegments(events, { totalMinutes = 0, activities = [], shareSegments = [] } = {}) {
   const items = Array.isArray(events) ? events : [];
   if (!items.length) {
@@ -2939,40 +3026,37 @@ function buildBatchSequenceSegments(events, { totalMinutes = 0, activities = [],
     addColor(segment.label, segment.color);
   });
 
+  const dateLookup = buildBatchDateOrderLookup(items);
   const normalized = items
     .map((event, index) => {
       if (!event || typeof event !== 'object') {
         return null;
       }
-      const minutes = computeBatchEventDuration(event);
+      const range = resolveBatchAbsoluteRange(event, dateLookup);
+      const minutes = range ? range[1] - range[0] : computeBatchEventDuration(event);
       if (!(minutes > 0)) {
         return null;
       }
       const label = event.label || event.activity || 'Activity';
-      const dateValue = typeof event.date === 'string' ? event.date : '';
-      const dayIndex = computeBatchDayIndex(event.day || event.metadata?.day);
-      const startMinutes = parseBatchTimeToMinutes(event.start);
       const activityId = typeof event.activity === 'string' ? event.activity : '';
       return {
         minutes,
         label,
         activityId,
-        dateValue,
-        dayIndex,
-        startMinutes: Number.isFinite(startMinutes) ? startMinutes : 0,
+        start: range ? range[0] : null,
         index,
       };
     })
     .filter(Boolean)
     .sort((a, b) => {
-      if (a.dateValue !== b.dateValue) {
-        return a.dateValue.localeCompare(b.dateValue);
+      if (Number.isFinite(a.start) && Number.isFinite(b.start) && a.start !== b.start) {
+        return a.start - b.start;
       }
-      if (a.dayIndex !== b.dayIndex) {
-        return a.dayIndex - b.dayIndex;
+      if (Number.isFinite(a.start) && !Number.isFinite(b.start)) {
+        return -1;
       }
-      if (a.startMinutes !== b.startMinutes) {
-        return a.startMinutes - b.startMinutes;
+      if (!Number.isFinite(a.start) && Number.isFinite(b.start)) {
+        return 1;
       }
       return a.index - b.index;
     });
@@ -2982,14 +3066,14 @@ function buildBatchSequenceSegments(events, { totalMinutes = 0, activities = [],
   }
 
   const computedTotal = normalized.reduce((sum, entry) => sum + entry.minutes, 0);
-  const effectiveTotal = totalMinutes > 0 ? totalMinutes : computedTotal;
+  const effectiveTotal = computedTotal > 0 ? computedTotal : totalMinutes;
 
   return normalized.map((entry) => {
     const color =
       colorLookup.get(entry.label) || colorLookup.get(entry.activityId) || '#6366f1';
     const percentage = effectiveTotal > 0 ? entry.minutes / effectiveTotal : 0;
     return {
-      id: entry.activityId || entry.label,
+      id: entry.activityId || entry.label || `sequence-${entry.index}`,
       label: entry.label,
       minutes: entry.minutes,
       color,
