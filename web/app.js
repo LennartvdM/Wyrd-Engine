@@ -3005,22 +3005,25 @@ function resolveBatchAbsoluteRange(event, dateLookup) {
   return [absoluteStart, absoluteEnd];
 }
 
-function buildBatchSequenceSegments(events, { totalMinutes = 0, activities = [], shareSegments = [] } = {}) {
+function buildBatchSequenceSegments(events, { activities = [], shareSegments = [] } = {}) {
   const items = Array.isArray(events) ? events : [];
   if (!items.length) {
     return [];
   }
+
   const colorLookup = new Map();
   const addColor = (key, color) => {
     if (typeof key === 'string' && typeof color === 'string' && color.length > 0) {
       colorLookup.set(key, color);
     }
   };
+
   (Array.isArray(activities) ? activities : []).forEach((activity) => {
     addColor(activity.id, activity.color);
     addColor(activity.name, activity.color);
     addColor(activity.label, activity.color);
   });
+
   (Array.isArray(shareSegments) ? shareSegments : []).forEach((segment) => {
     addColor(segment.id, segment.color);
     addColor(segment.label, segment.color);
@@ -3032,18 +3035,45 @@ function buildBatchSequenceSegments(events, { totalMinutes = 0, activities = [],
       if (!event || typeof event !== 'object') {
         return null;
       }
+
       const range = resolveBatchAbsoluteRange(event, dateLookup);
-      const minutes = range ? range[1] - range[0] : computeBatchEventDuration(event);
+      let start = null;
+      let end = null;
+      let minutes = 0;
+
+      if (range && range.length >= 2) {
+        start = range[0];
+        end = range[1];
+        minutes = end - start;
+      } else {
+        minutes = computeBatchEventDuration(event);
+      }
+
       if (!(minutes > 0)) {
         return null;
       }
+
+      if (!Number.isFinite(start)) {
+        const fallbackStart =
+          coerceFiniteNumber(event.start_minutes ?? event.startMinutes) ??
+          parseBatchTimeToMinutes(event.start);
+        if (Number.isFinite(fallbackStart)) {
+          start = fallbackStart;
+        }
+      }
+
+      if (!Number.isFinite(end) && Number.isFinite(start)) {
+        end = start + minutes;
+      }
+
       const label = event.label || event.activity || 'Activity';
       const activityId = typeof event.activity === 'string' ? event.activity : '';
       return {
         minutes,
         label,
         activityId,
-        start: range ? range[0] : null,
+        start: Number.isFinite(start) ? start : null,
+        end: Number.isFinite(end) ? end : null,
         index,
       };
     })
@@ -3066,18 +3096,22 @@ function buildBatchSequenceSegments(events, { totalMinutes = 0, activities = [],
   }
 
   const computedTotal = normalized.reduce((sum, entry) => sum + entry.minutes, 0);
-  const effectiveTotal = computedTotal > 0 ? computedTotal : totalMinutes;
+  if (!(computedTotal > 0)) {
+    return [];
+  }
 
   return normalized.map((entry) => {
     const color =
       colorLookup.get(entry.label) || colorLookup.get(entry.activityId) || '#6366f1';
-    const percentage = effectiveTotal > 0 ? entry.minutes / effectiveTotal : 0;
+    const percentage = entry.minutes / computedTotal;
     return {
       id: entry.activityId || entry.label || `sequence-${entry.index}`,
       label: entry.label,
       minutes: entry.minutes,
       color,
       percentage,
+      startMinutes: entry.start,
+      endMinutes: entry.end,
     };
   });
 }
