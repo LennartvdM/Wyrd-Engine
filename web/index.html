@@ -177,23 +177,43 @@
           <div class="visuals-history-panel batch-results">
             <div class="batch-results__header">
               <h3 class="batch-results__title">Batch results</h3>
-              <div class="batch-mode-toggle" role="group" aria-label="Batch scale mode">
-                <button
-                  type="button"
-                  class="batch-mode-button is-active"
-                  data-batch-mode="proportional"
-                  aria-pressed="true"
-                >
-                  Proportional
-                </button>
-                <button
-                  type="button"
-                  class="batch-mode-button"
-                  data-batch-mode="absolute"
-                  aria-pressed="false"
-                >
-                  Absolute
-                </button>
+              <div class="batch-results__controls">
+                <div class="batch-mode-toggle" role="group" aria-label="Batch scale mode">
+                  <button
+                    type="button"
+                    class="batch-mode-button is-active"
+                    data-batch-mode="proportional"
+                    aria-pressed="true"
+                  >
+                    Proportional
+                  </button>
+                  <button
+                    type="button"
+                    class="batch-mode-button"
+                    data-batch-mode="absolute"
+                    aria-pressed="false"
+                  >
+                    Absolute
+                  </button>
+                </div>
+                <div class="batch-mode-toggle" role="group" aria-label="Batch order mode">
+                  <button
+                    type="button"
+                    class="batch-mode-button"
+                    data-batch-order="sequence"
+                    aria-pressed="false"
+                  >
+                    Sequence
+                  </button>
+                  <button
+                    type="button"
+                    class="batch-mode-button is-active"
+                    data-batch-order="share"
+                    aria-pressed="true"
+                  >
+                    Share
+                  </button>
+                </div>
               </div>
             </div>
             <div class="batch-results__body">

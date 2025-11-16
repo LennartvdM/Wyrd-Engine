@@ -734,6 +734,13 @@ body {
   flex-wrap: wrap;
 }
 
+.batch-results__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .batch-controls__title,
 .batch-results__title {
   margin: 0;
