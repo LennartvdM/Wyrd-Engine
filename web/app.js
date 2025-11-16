@@ -135,6 +135,8 @@ const RUNNER_FN_MAP = {
 const BATCH_PRESETS = [52, 100, 500];
 const BATCH_FIT_MIN_ROW_HEIGHT = 2;
 const BATCH_FIT_MAX_ROW_HEIGHT = 40;
+const BATCH_FULL_DAY_MINUTES = 24 * 60;
+const BATCH_DAY_ORDER = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const batchState = {
   panel: null,
   results: [],
@@ -143,6 +145,7 @@ const batchState = {
   targetRuns: 0,
   completedRuns: 0,
   scaleMode: 'proportional',
+  orderMode: 'share',
   runButton: null,
   summary: null,
   stack: null,
@@ -150,6 +153,7 @@ const batchState = {
   empty: null,
   sizeButtons: new Map(),
   modeButtons: new Map(),
+  orderButtons: new Map(),
   lastRunCount: 0,
   fitButton: null,
   isFitMode: false,
@@ -2860,6 +2864,140 @@ function setBatchScaleMode(mode) {
   updateBatchControlsState();
 }
 
+function setBatchOrderMode(mode) {
+  const normalized = mode === 'sequence' ? 'sequence' : 'share';
+  if (batchState.orderMode === normalized) {
+    updateBatchControlsState();
+    return;
+  }
+  batchState.orderMode = normalized;
+  renderBatchResults();
+  updateBatchControlsState();
+}
+
+function parseBatchTimeToMinutes(value) {
+  if (typeof value !== 'string') {
+    return Number.NaN;
+  }
+  const [hours, minutes] = value.split(':').map((part) => Number.parseInt(part, 10));
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return Number.NaN;
+  }
+  const total = hours * 60 + minutes;
+  if (!Number.isFinite(total)) {
+    return Number.NaN;
+  }
+  const wrapped = total % BATCH_FULL_DAY_MINUTES;
+  return wrapped < 0 ? wrapped + BATCH_FULL_DAY_MINUTES : wrapped;
+}
+
+function computeBatchDayIndex(value) {
+  if (typeof value !== 'string') {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  const index = BATCH_DAY_ORDER.indexOf(value.toLowerCase());
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+function computeBatchEventDuration(event) {
+  if (!event || typeof event !== 'object') {
+    return 0;
+  }
+  const explicitDuration = Number.isFinite(event.duration_minutes) ? event.duration_minutes : null;
+  if (explicitDuration && explicitDuration > 0) {
+    return explicitDuration;
+  }
+  const startMinutes = parseBatchTimeToMinutes(event.start);
+  const endMinutes = parseBatchTimeToMinutes(event.end);
+  if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes)) {
+    return 0;
+  }
+  if (endMinutes >= startMinutes) {
+    return endMinutes - startMinutes;
+  }
+  return BATCH_FULL_DAY_MINUTES - startMinutes + endMinutes;
+}
+
+function buildBatchSequenceSegments(events, { totalMinutes = 0, activities = [], shareSegments = [] } = {}) {
+  const items = Array.isArray(events) ? events : [];
+  if (!items.length) {
+    return [];
+  }
+  const colorLookup = new Map();
+  const addColor = (key, color) => {
+    if (typeof key === 'string' && typeof color === 'string' && color.length > 0) {
+      colorLookup.set(key, color);
+    }
+  };
+  (Array.isArray(activities) ? activities : []).forEach((activity) => {
+    addColor(activity.id, activity.color);
+    addColor(activity.name, activity.color);
+    addColor(activity.label, activity.color);
+  });
+  (Array.isArray(shareSegments) ? shareSegments : []).forEach((segment) => {
+    addColor(segment.id, segment.color);
+    addColor(segment.label, segment.color);
+  });
+
+  const normalized = items
+    .map((event, index) => {
+      if (!event || typeof event !== 'object') {
+        return null;
+      }
+      const minutes = computeBatchEventDuration(event);
+      if (!(minutes > 0)) {
+        return null;
+      }
+      const label = event.label || event.activity || 'Activity';
+      const dateValue = typeof event.date === 'string' ? event.date : '';
+      const dayIndex = computeBatchDayIndex(event.day || event.metadata?.day);
+      const startMinutes = parseBatchTimeToMinutes(event.start);
+      const activityId = typeof event.activity === 'string' ? event.activity : '';
+      return {
+        minutes,
+        label,
+        activityId,
+        dateValue,
+        dayIndex,
+        startMinutes: Number.isFinite(startMinutes) ? startMinutes : 0,
+        index,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.dateValue !== b.dateValue) {
+        return a.dateValue.localeCompare(b.dateValue);
+      }
+      if (a.dayIndex !== b.dayIndex) {
+        return a.dayIndex - b.dayIndex;
+      }
+      if (a.startMinutes !== b.startMinutes) {
+        return a.startMinutes - b.startMinutes;
+      }
+      return a.index - b.index;
+    });
+
+  if (!normalized.length) {
+    return [];
+  }
+
+  const computedTotal = normalized.reduce((sum, entry) => sum + entry.minutes, 0);
+  const effectiveTotal = totalMinutes > 0 ? totalMinutes : computedTotal;
+
+  return normalized.map((entry) => {
+    const color =
+      colorLookup.get(entry.label) || colorLookup.get(entry.activityId) || '#6366f1';
+    const percentage = effectiveTotal > 0 ? entry.minutes / effectiveTotal : 0;
+    return {
+      id: entry.activityId || entry.label,
+      label: entry.label,
+      minutes: entry.minutes,
+      color,
+      percentage,
+    };
+  });
+}
+
 function cancelBatchFitMeasurement() {
   if (
     batchState.pendingFitFrame &&
@@ -3009,6 +3147,12 @@ function updateBatchControlsState() {
     button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     button.disabled = batchState.isRunning && mode !== batchState.scaleMode;
   });
+  batchState.orderButtons.forEach((button, mode) => {
+    const isActive = mode === batchState.orderMode;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    button.disabled = batchState.isRunning && mode !== batchState.orderMode;
+  });
   if (batchState.runButton) {
     batchState.runButton.disabled = batchState.isRunning;
     batchState.runButton.textContent = batchState.isRunning ? 'Running…' : 'Run batch';
@@ -3126,7 +3270,16 @@ function renderBatchResults() {
       track.style.setProperty('--batch-row-scale', String(scale));
       track.setAttribute('role', 'list');
 
-      const segments = Array.isArray(run.segments) ? run.segments : [];
+      let segments = [];
+      if (batchState.orderMode === 'sequence') {
+        if (Array.isArray(run.sequenceSegments) && run.sequenceSegments.length > 0) {
+          segments = run.sequenceSegments;
+        } else {
+          segments = Array.isArray(run.segments) ? run.segments : [];
+        }
+      } else {
+        segments = Array.isArray(run.segments) ? run.segments : [];
+      }
       segments.forEach((segment) => {
         const element = document.createElement('div');
         element.className = 'activity-share__segment batch-results__segment';
@@ -3223,10 +3376,17 @@ async function runBatchGenerations(count) {
           }))
         : [];
 
+      const sequenceSegments = buildBatchSequenceSegments(result?.events, {
+        totalMinutes,
+        activities,
+        shareSegments: segments,
+      });
+
       results.push({
         index: index + 1,
         totalMinutes,
         segments,
+        sequenceSegments,
         activities,
       });
 
@@ -3318,6 +3478,21 @@ function hydrateBatchPanel() {
     });
   });
 
+  batchState.orderButtons = new Map();
+  const orderButtons = panel.querySelectorAll('[data-batch-order]');
+  orderButtons.forEach((button) => {
+    const mode = button.dataset.batchOrder === 'sequence' ? 'sequence' : 'share';
+    batchState.orderButtons.set(mode, button);
+    button.type = 'button';
+    button.setAttribute('aria-pressed', mode === batchState.orderMode ? 'true' : 'false');
+    button.addEventListener('click', () => {
+      if (batchState.orderMode === mode) {
+        return;
+      }
+      setBatchOrderMode(mode);
+    });
+  });
+
   const runButton = panel.querySelector('[data-batch-run]');
   if (runButton instanceof HTMLButtonElement) {
     batchState.runButton = runButton;
@@ -3340,6 +3515,7 @@ function hydrateBatchPanel() {
 
   setBatchSize(batchState.size);
   setBatchScaleMode(batchState.scaleMode);
+  setBatchOrderMode(batchState.orderMode);
   renderBatchResults();
   updateBatchSummary();
   updateBatchControlsState();
