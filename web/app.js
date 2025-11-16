@@ -3005,8 +3005,24 @@ function resolveBatchAbsoluteRange(event, dateLookup) {
   return [absoluteStart, absoluteEnd];
 }
 
-function buildBatchSequenceSegments(events, { activities = [], shareSegments = [] } = {}) {
-  const items = Array.isArray(events) ? events : [];
+function resolveBatchSequenceEvents(source) {
+  if (Array.isArray(source)) {
+    return source;
+  }
+  if (source && typeof source === 'object') {
+    if (Array.isArray(source.events)) {
+      return source.events;
+    }
+    const resolved = resolveVisualPayload(source);
+    if (resolved && Array.isArray(resolved.events)) {
+      return resolved.events;
+    }
+  }
+  return [];
+}
+
+function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSegments = [] } = {}) {
+  const items = resolveBatchSequenceEvents(eventsOrSchedule);
   if (!items.length) {
     return [];
   }
@@ -3494,7 +3510,7 @@ async function runBatchGenerations(count) {
           }))
         : [];
 
-      const sequenceSegments = buildBatchSequenceSegments(result?.events, {
+      const sequenceSegments = buildBatchSequenceSegments(result, {
         totalMinutes,
         activities,
         shareSegments: segments,
