@@ -3133,11 +3133,22 @@ function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSe
     };
   });
 
-  if (typeof console !== 'undefined' && typeof console.log === 'function') {
-    console.log('sequence segments durations', segments.map((segment) => segment.duration));
-  }
-
   return segments;
+}
+
+function getBatchSegmentMinutes(segment) {
+  if (!segment || typeof segment !== 'object') {
+    return 0;
+  }
+  const minutes = Number(segment.minutes);
+  if (Number.isFinite(minutes) && minutes > 0) {
+    return minutes;
+  }
+  const duration = Number(segment.duration);
+  if (Number.isFinite(duration) && duration > 0) {
+    return duration;
+  }
+  return 0;
 }
 
 function cancelBatchFitMeasurement() {
@@ -3422,7 +3433,16 @@ function renderBatchResults() {
       } else {
         segments = Array.isArray(run.segments) ? run.segments : [];
       }
+      const segmentTotalMinutes = segments.reduce(
+        (sum, segment) => sum + getBatchSegmentMinutes(segment),
+        0
+      );
+      const rowTotalMinutes =
+        segmentTotalMinutes > 0 ? segmentTotalMinutes : Math.max(run.totalMinutes || 0, 0);
+
       segments.forEach((segment) => {
+        const segmentMinutesValue = getBatchSegmentMinutes(segment);
+        const widthPercentage = rowTotalMinutes > 0 ? (segmentMinutesValue / rowTotalMinutes) * 100 : 0;
         const element = document.createElement('div');
         element.className = 'activity-share__segment batch-results__segment';
         element.style.setProperty('--segment-color', segment.color || '#6366f1');
@@ -3430,10 +3450,20 @@ function renderBatchResults() {
           '--segment-text-color',
           computeSegmentTextColor(segment.color)
         );
-        element.style.flexGrow = String(segment.minutes || 0);
+        if (widthPercentage > 0) {
+          const widthValue = `${widthPercentage}%`;
+          element.style.flex = `0 0 ${widthValue}`;
+          element.style.width = widthValue;
+          element.style.flexBasis = widthValue;
+          element.style.maxWidth = widthValue;
+        } else {
+          element.style.flex = '0 0 auto';
+          element.style.removeProperty('width');
+          element.style.removeProperty('flex-basis');
+          element.style.removeProperty('max-width');
+        }
         element.setAttribute('role', 'listitem');
-        const total = run.totalMinutes || 0;
-        const percentValue = total > 0 ? Math.round((segment.minutes / total) * 100) : 0;
+        const percentValue = Math.round(widthPercentage);
         const labelText = getBatchSegmentLabel(segment, percentValue);
         if (labelText) {
           const label = document.createElement('span');
@@ -3441,7 +3471,7 @@ function renderBatchResults() {
           label.textContent = labelText;
           element.append(label);
         }
-        const durationLabel = formatDuration(Math.round(segment.minutes || 0));
+        const durationLabel = formatDuration(Math.round(segmentMinutesValue || 0));
         element.setAttribute(
           'aria-label',
           `${segment.label}: ${durationLabel}${percentValue ? ` (${percentValue}%)` : ''}`
