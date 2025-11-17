@@ -130,7 +130,43 @@ const calendarHistoryState = {
 const RUNNER_FN_MAP = {
   mk1: { default: 'mk1_run' },
   mk2: { calendar: 'mk2_run_calendar', workforce: 'mk2_run_workforce' },
+  mk2_1: { calendar: 'mk2_1_run_calendar', workforce: 'mk2_1_run_workforce' },
 };
+const MK2_FAMILY_VARIANTS = new Set(['mk2', 'mk2_1']);
+const VARIANT_DOM_ALIASES = new Map([
+  ['mk2_1', 'mk2'],
+]);
+
+function isMk2Variant(value) {
+  if (!value) {
+    return false;
+  }
+  return MK2_FAMILY_VARIANTS.has(String(value).toLowerCase());
+}
+
+function applyEngineMetadata(result, { variantId, rigId }) {
+  if (!result || typeof result !== 'object') {
+    return result;
+  }
+  const metadata = { ...(result.metadata || {}) };
+  if (variantId) {
+    const normalized = String(variantId);
+    if (!metadata.engine_version) {
+      metadata.engine_version = normalized;
+    }
+    if (!metadata.engine) {
+      metadata.engine = normalized;
+    }
+    if (!metadata.variant) {
+      metadata.variant = normalized;
+    }
+  }
+  if (rigId && !metadata.rig) {
+    metadata.rig = rigId;
+  }
+  result.metadata = metadata;
+  return result;
+}
 
 const BATCH_PRESETS = [52, 100, 500];
 const BATCH_FIT_MIN_ROW_HEIGHT = 2;
@@ -386,7 +422,7 @@ function applyBalanceHistoryToUrchin() {
   );
 }
 
-function appendActivityBalanceSnapshot(schedule) {
+function appendActivityBalanceSnapshot(schedule, options = {}) {
   if (!schedule || typeof schedule !== 'object') {
     return;
   }
@@ -395,10 +431,13 @@ function appendActivityBalanceSnapshot(schedule) {
     : 0;
   const nextRunNumber = previousTotal + 1;
   const signature = computeScheduleSignature(schedule);
+  const variantOption =
+    typeof options.variant === 'string' && options.variant ? options.variant : '';
   const entry = createBalanceHistoryEntry(schedule, {
     runNumber: nextRunNumber,
     highContrast: Boolean(visualsState.urchin?.state?.highContrast),
     signature,
+    variant: variantOption,
   });
   if (!entry) {
     return;
@@ -2675,7 +2714,7 @@ function prepareCalendarGeneration({ snapshot, seedValue } = {}) {
   };
 
   let yearlyBudget = null;
-  if (variantId === 'mk2' && rigId === 'workforce') {
+  if (isMk2Variant(variantId) && rigId === 'workforce') {
     const budgetText = config?.mk2?.workforce?.budgetText || '';
     if (budgetText && budgetText.trim()) {
       try {
@@ -2789,6 +2828,7 @@ async function handleGenerate(event) {
       return;
     }
 
+    applyEngineMetadata(result, { variantId, rigId });
     setJsonPayload(result, {
       variant: variantId,
       rig: rigId,
@@ -2800,7 +2840,7 @@ async function handleGenerate(event) {
     const eventsCount = Array.isArray(result.events) ? result.events.length : 0;
     inputsSnapshot.seed = seedValue;
 
-    appendActivityBalanceSnapshot(result);
+    appendActivityBalanceSnapshot(result, { variant: variantId });
 
     recordCalendarHistoryEntry({
       archetype,
@@ -3534,7 +3574,7 @@ function auditBatchRunPurity(truth) {
   }
 }
 
-function computeBatchPuritySummary(batchRunsTruth, cachedResults) {
+function computeBatchPuritySummary(batchRunsTruth, cachedResults, options = {}) {
   const fallbackSummary = {
     totalRuns: 0,
     pureRuns: 0,
@@ -3542,9 +3582,15 @@ function computeBatchPuritySummary(batchRunsTruth, cachedResults) {
     hasAnyError: false,
     runs: [],
     didCheckerError: false,
+    engineVersion: '',
   };
 
   try {
+    const optionsObject = options && typeof options === 'object' ? options : {};
+    const preferredEngineVersion =
+      typeof optionsObject.engineVersion === 'string' && optionsObject.engineVersion
+        ? optionsObject.engineVersion
+        : '';
     const runResults =
       Array.isArray(cachedResults) && cachedResults.length > 0
         ? cachedResults
@@ -3559,6 +3605,12 @@ function computeBatchPuritySummary(batchRunsTruth, cachedResults) {
             })
           );
 
+    const truthRuns = Array.isArray(batchRunsTruth) ? batchRunsTruth : [];
+    const truthEngineVersion = truthRuns.find(
+      (truth) => typeof truth?.engineVersion === 'string' && truth.engineVersion
+    )?.engineVersion;
+    const resolvedEngineVersion = preferredEngineVersion || truthEngineVersion || '';
+
     const summary = {
       totalRuns: runResults.length,
       pureRuns: 0,
@@ -3567,6 +3619,7 @@ function computeBatchPuritySummary(batchRunsTruth, cachedResults) {
       runs: runResults.slice(),
       didCheckerError: false,
       analysis: null,
+      engineVersion: resolvedEngineVersion,
     };
 
     runResults.forEach((result) => {
@@ -3749,6 +3802,13 @@ function formatPurityPercent(value) {
 
 function buildPurityObservations(summary) {
   const lines = [];
+  const engineLabel =
+    typeof summary?.engineVersion === 'string' && summary.engineVersion
+      ? summary.engineVersion
+      : '';
+  if (engineLabel) {
+    lines.push(`Engine version: ${engineLabel}.`);
+  }
   const totalRuns = Number.isFinite(summary?.totalRuns) ? summary.totalRuns : 0;
   const impureRuns = Number.isFinite(summary?.impureRuns) ? summary.impureRuns : 0;
   const runs = Array.isArray(summary?.runs) ? summary.runs : [];
@@ -4051,7 +4111,11 @@ function buildBatchPuritySummaryTooltip(summary) {
   if (!summary || summary.totalRuns === 0) {
     return '';
   }
+  const engineLabel = typeof summary.engineVersion === 'string' && summary.engineVersion
+    ? summary.engineVersion
+    : 'unknown';
   const lines = [
+    `Engine: ${engineLabel}`,
     `Total runs: ${summary.totalRuns}`,
     `Pure runs: ${summary.pureRuns}`,
     `Impure runs: ${summary.impureRuns}`,
@@ -4341,7 +4405,8 @@ function logBatchPurityReport(summary) {
     const shareDriftMinutes = avgShare - avgRaw;
     const shareDriftPercentValue = avgRaw === 0 ? null : shareDriftMinutes / avgRaw;
     const shareDriftPercent = shareDriftPercentValue ?? 0;
-    const humanHeader = `Batch analysis: ${totalRuns} runs | pure=${pureRuns}, impure=${impureRuns}`;
+    const engineVersion = summary?.engineVersion || 'unknown';
+    const humanHeader = `Batch analysis (engine=${engineVersion}): ${totalRuns} runs | pure=${pureRuns}, impure=${impureRuns}`;
 
     const activityAnalyses = Array.isArray(analysis?.activities) ? analysis.activities : [];
     const activityAverages = activityAnalyses.map((activity, index) => {
@@ -4422,6 +4487,7 @@ function logBatchPurityReport(summary) {
 
     const purityReport = {
       kind: 'purity_batch_report',
+      engineVersion,
       batchSize: totalRuns,
       pureRuns,
       impureRuns,
@@ -4449,7 +4515,7 @@ function logBatchPurityReport(summary) {
 
   appendLogEntry({
     level: 'warn',
-    message: `[Purity] Batch analysis: ${totalRuns} runs, pure=${pureRuns}, impure=${impureRuns}`,
+    message: `[Purity] Batch analysis (engine=${summary?.engineVersion || 'unknown'}): ${totalRuns} runs, pure=${pureRuns}, impure=${impureRuns}`,
   });
 
   try {
@@ -4879,6 +4945,7 @@ async function runBatchGenerations(count) {
   const results = [];
   const batchRunsTruth = [];
   const batchPurityRunResults = [];
+  let batchEngineVariant = null;
   let puritySummary = null;
 
   try {
@@ -4893,6 +4960,9 @@ async function runBatchGenerations(count) {
       }
 
       const generationConfig = prepareCalendarGeneration({ snapshot, seedValue });
+      const currentVariant = generationConfig.variantId;
+      const currentRig = generationConfig.rigId;
+      batchEngineVariant = currentVariant;
       const { result = null } = await sendWorkerMessage('run', {
         fn: generationConfig.runnerFn,
         args: generationConfig.workerArgs,
@@ -4902,7 +4972,12 @@ async function runBatchGenerations(count) {
         throw { error: 'No result returned from worker.', stdout: '', stderr: '' };
       }
 
-      const entry = createBalanceHistoryEntry(result, { runNumber: index + 1 });
+      applyEngineMetadata(result, { variantId: currentVariant, rigId: currentRig });
+
+      const entry = createBalanceHistoryEntry(result, {
+        runNumber: index + 1,
+        variant: currentVariant,
+      });
       const totalMinutes = entry?.totalMinutes || 0;
       const segments = Array.isArray(entry?.segments)
         ? entry.segments.map((segment) => {
@@ -4946,6 +5021,7 @@ async function runBatchGenerations(count) {
       const rawEvents = buildBatchRawEvents(result);
       const runTruth = {
         runIndex: index + 1,
+        engineVersion: currentVariant,
         rawEvents,
         shareSegments: segments,
         sequenceSegments,
@@ -5000,12 +5076,17 @@ async function runBatchGenerations(count) {
     renderBatchResults();
     updateBatchSummary();
     updateBatchControlsState();
-    puritySummary = computeBatchPuritySummary(batchRunsTruth, batchPurityRunResults);
+    puritySummary = computeBatchPuritySummary(
+      batchRunsTruth,
+      batchPurityRunResults,
+      { engineVersion: batchEngineVariant }
+    );
     batchState.puritySummary = puritySummary;
     updateBatchPurityIndicator();
     if (puritySummary && (puritySummary.totalRuns > 0 || puritySummary.didCheckerError)) {
+      const summaryEngine = puritySummary.engineVersion || batchEngineVariant || 'unknown';
       console.log(
-        `[Purity] Batch complete: ${puritySummary.pureRuns}/${puritySummary.totalRuns} runs pure`
+        `[Purity] Batch complete (engine=${summaryEngine}): ${puritySummary.pureRuns}/${puritySummary.totalRuns} runs pure`
       );
       try {
         logBatchPurityReport(puritySummary);
@@ -6111,6 +6192,22 @@ function hydrateConfigPanel() {
     });
   }
 
+  const resolveDomVariantKey = (variantId) => {
+    if (!variantId) {
+      return variantId;
+    }
+    if (variantPanels.has(variantId)) {
+      return variantId;
+    }
+    const alias = VARIANT_DOM_ALIASES.get(variantId);
+    if (alias && variantPanels.has(alias)) {
+      return alias;
+    }
+    return variantId;
+  };
+
+  const variantUsesDomKey = (variantId, domKey) => resolveDomVariantKey(variantId) === domKey;
+
   const calendarCommonSection = calendarPanel
     ? calendarPanel.querySelector('[data-calendar="common"]')
     : null;
@@ -6142,6 +6239,13 @@ function hydrateConfigPanel() {
       defaultRigByVariant[variantId] = defaultButton.dataset.rig;
     }
   });
+
+  if (variantRigs.mk2 && !variantRigs.mk2_1) {
+    variantRigs.mk2_1 = [...variantRigs.mk2];
+    if (!defaultRigByVariant.mk2_1) {
+      defaultRigByVariant.mk2_1 = defaultRigByVariant.mk2 || variantRigs.mk2[0];
+    }
+  }
 
   const variantIds = Object.keys(variantRigs);
   const defaultVariantButton =
@@ -6608,29 +6712,34 @@ function hydrateConfigPanel() {
   };
 
   const syncVariantUI = () => {
+    const activeVariant = cfg.variant;
+    const activeDomVariant = resolveDomVariantKey(activeVariant);
     variantButtons.forEach((button) => {
-      const isActive = button.dataset.variant === cfg.variant;
+      const isActive = button.dataset.variant === activeVariant;
       button.classList.toggle('active', isActive);
       button.dataset.active = isActive ? '1' : '0';
       button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
     variantPanels.forEach((panel, variantId) => {
-      const isActive = variantId === cfg.variant;
+      const isActive = variantId === activeDomVariant;
       panel.hidden = !isActive;
       panel.classList.toggle('active', isActive);
     });
     rigTabsByVariant.forEach((row, variantId) => {
-      const isActive = variantId === cfg.variant;
+      const isActive = variantId === activeDomVariant;
       row.hidden = !isActive;
       row.dataset.active = isActive ? '1' : '0';
     });
   };
 
   const syncRigUI = () => {
+    const activeVariant = cfg.variant;
+    const activeDomVariant = resolveDomVariantKey(activeVariant);
+    const activeRig = cfg.rig[activeVariant];
     rigButtonsByVariant.forEach((buttons, variantId) => {
+      const isRowActive = variantId === activeDomVariant;
       buttons.forEach((button) => {
-        const isActive =
-          variantId === cfg.variant && button.dataset.rig === cfg.rig[variantId];
+        const isActive = isRowActive && button.dataset.rig === activeRig;
         button.classList.toggle('active', isActive);
         button.dataset.active = isActive ? '1' : '0';
         button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
@@ -6641,7 +6750,8 @@ function hydrateConfigPanel() {
   const syncRigPanels = () => {
     const activeVariant = cfg.variant;
     const activeRig = cfg.rig[activeVariant];
-    const targetKey = activeVariant && activeRig ? `${activeVariant}:${activeRig}` : '';
+    const domVariant = resolveDomVariantKey(activeVariant);
+    const targetKey = domVariant && activeRig ? `${domVariant}:${activeRig}` : '';
     rigPanels.forEach((panel, panelKey) => {
       const isActive = panelKey === targetKey;
       panel.classList.toggle('active', isActive);
@@ -6744,10 +6854,14 @@ function hydrateConfigPanel() {
         if (!rigId) {
           return;
         }
-        if (variantId !== cfg.variant) {
-          applyVariant(variantId);
+        const activeVariant = cfg.variant;
+        const targetVariant = variantUsesDomKey(activeVariant, variantId)
+          ? activeVariant
+          : variantId;
+        if (targetVariant !== cfg.variant) {
+          applyVariant(targetVariant);
         }
-        applyRig(variantId, rigId);
+        applyRig(targetVariant, rigId);
       });
     });
   });
@@ -6763,7 +6877,7 @@ function hydrateConfigPanel() {
       seedValue = String(calendarConfig.common.seed);
     }
     const hasBudget =
-      activeVariant === 'mk2' &&
+      isMk2Variant(activeVariant) &&
       activeRig === 'workforce' &&
       typeof calendarConfig.mk2.workforce.budgetText === 'string' &&
       calendarConfig.mk2.workforce.budgetText.trim().length > 0;

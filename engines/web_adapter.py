@@ -8,7 +8,7 @@ from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional
 
 from engines.base import ScheduleInput
 from engines.engine_mk1 import EngineMK1
-from engines.engine_mk2 import EngineMK2
+from engines.engine_mk2 import EngineMK2, EngineMK21
 from modules.unique_events import UniqueDay
 from rigs.simple_rig import SimpleRig
 from rigs.workforce_rig import WorkforceRig
@@ -175,12 +175,16 @@ def _coerce_start_date(value: Any) -> Optional[date]:
     return None
 
 
-def _ensure_schema(payload: MutableMapping[str, Any], *, rig: str, seed: int, archetype: str) -> SchemaPayload:
+def _ensure_schema(
+    payload: MutableMapping[str, Any], *, rig: str, seed: int, archetype: str, engine_version: Optional[str] = None
+) -> SchemaPayload:
     metadata = dict(payload.get("metadata", {}))
     metadata.setdefault("summary_hours", {})
+    resolved_engine = engine_version or ("mk2" if rig in {"calendar", "workforce"} else "mk1")
     metadata.update(
         {
-            "engine": "mk2" if rig in {"calendar", "workforce"} else "mk1",
+            "engine": resolved_engine,
+            "engine_version": resolved_engine,
             "rig": rig,
             "seed": seed,
             "archetype": archetype,
@@ -243,6 +247,8 @@ _MK1_RIG = SimpleRig(engine=_MK1_ENGINE)
 
 _MK2_ENGINE = EngineMK2()
 _MK2_RIG = WorkforceRig(engine=_MK2_ENGINE)
+_MK2_1_ENGINE = EngineMK21()
+_MK2_1_RIG = WorkforceRig(engine=_MK2_1_ENGINE)
 
 
 def mk1_run_web(archetype: str, week_start: Optional[str], seed: Any) -> SchemaPayload:
@@ -278,49 +284,34 @@ def mk1_run_web(archetype: str, week_start: Optional[str], seed: Any) -> SchemaP
         },
     }
 
-    return _ensure_schema(payload, rig="default", seed=seed_value, archetype=archetype_key or "office")
-
-
-def mk2_run_calendar_web(
-    archetype: str, week_start: Optional[str], seed: Any, debug: bool = False
-) -> SchemaPayload:
-    archetype_key = str(archetype or "office").strip().lower()
-    seed_value = _coerce_seed(seed)
-    start_date = _coerce_start_date(week_start) or date.today()
-
-    profile, templates = _MK2_RIG.select_profile(archetype_key)
-    result = _MK2_RIG.generate_complete_week(
-        profile, start_date, seed_value, templates, None, debug=debug
+    return _ensure_schema(
+        payload,
+        rig="default",
+        seed=seed_value,
+        archetype=archetype_key or "office",
+        engine_version="mk1",
     )
 
-    payload: MutableMapping[str, Any] = dict(result)
-    payload.setdefault("issues", [])
-    payload.setdefault("events", [])
-    payload.setdefault("week_start", start_date.isoformat())
-    payload["person"] = profile.name
-    payload["metadata"] = {
-        **payload.get("metadata", {}),
-        "profile": profile.name,
-    }
 
-    return _ensure_schema(payload, rig="calendar", seed=seed_value, archetype=archetype_key)
-
-
-def mk2_run_workforce_web(
+def _run_mk2_variant(
+    rig_instance: WorkforceRig,
     archetype: str,
     week_start: Optional[str],
     seed: Any,
-    yearly_budget: Optional[Mapping[str, Any]],
+    *,
+    engine_version: str,
+    rig_label: str,
+    yearly_budget: Optional[Mapping[str, Any]] = None,
     debug: bool = False,
 ) -> SchemaPayload:
     archetype_key = str(archetype or "office").strip().lower()
     seed_value = _coerce_seed(seed)
     start_date = _coerce_start_date(week_start) or date.today()
 
-    profile, templates = _MK2_RIG.select_profile(archetype_key)
-    budget = _build_yearly_budget(yearly_budget)
+    profile, templates = rig_instance.select_profile(archetype_key)
+    budget = _build_yearly_budget(yearly_budget) if yearly_budget is not None else None
 
-    result = _MK2_RIG.generate_complete_week(
+    result = rig_instance.generate_complete_week(
         profile, start_date, seed_value, templates, budget, debug=debug
     )
 
@@ -331,6 +322,7 @@ def mk2_run_workforce_web(
     payload["person"] = profile.name
     metadata = dict(payload.get("metadata", {}))
     metadata["profile"] = profile.name
+    metadata["engine_version"] = engine_version
     if budget is not None:
         metadata["yearly_budget"] = {
             "person_id": budget.person_id,
@@ -341,11 +333,87 @@ def mk2_run_workforce_web(
         }
     payload["metadata"] = metadata
 
-    return _ensure_schema(payload, rig="workforce", seed=seed_value, archetype=archetype_key)
+    return _ensure_schema(
+        payload,
+        rig=rig_label,
+        seed=seed_value,
+        archetype=archetype_key,
+        engine_version=engine_version,
+    )
+
+
+def mk2_run_calendar_web(
+    archetype: str, week_start: Optional[str], seed: Any, debug: bool = False
+) -> SchemaPayload:
+    return _run_mk2_variant(
+        _MK2_RIG,
+        archetype,
+        week_start,
+        seed,
+        engine_version="mk2",
+        rig_label="calendar",
+        yearly_budget=None,
+        debug=debug,
+    )
+
+
+def mk2_run_workforce_web(
+    archetype: str,
+    week_start: Optional[str],
+    seed: Any,
+    yearly_budget: Optional[Mapping[str, Any]],
+    debug: bool = False,
+) -> SchemaPayload:
+    return _run_mk2_variant(
+        _MK2_RIG,
+        archetype,
+        week_start,
+        seed,
+        engine_version="mk2",
+        rig_label="workforce",
+        yearly_budget=yearly_budget,
+        debug=debug,
+    )
+
+
+def mk2_1_run_calendar_web(
+    archetype: str, week_start: Optional[str], seed: Any, debug: bool = False
+) -> SchemaPayload:
+    return _run_mk2_variant(
+        _MK2_1_RIG,
+        archetype,
+        week_start,
+        seed,
+        engine_version="mk2_1",
+        rig_label="calendar",
+        yearly_budget=None,
+        debug=debug,
+    )
+
+
+def mk2_1_run_workforce_web(
+    archetype: str,
+    week_start: Optional[str],
+    seed: Any,
+    yearly_budget: Optional[Mapping[str, Any]],
+    debug: bool = False,
+) -> SchemaPayload:
+    return _run_mk2_variant(
+        _MK2_1_RIG,
+        archetype,
+        week_start,
+        seed,
+        engine_version="mk2_1",
+        rig_label="workforce",
+        yearly_budget=yearly_budget,
+        debug=debug,
+    )
 
 
 __all__ = [
     "mk1_run_web",
     "mk2_run_calendar_web",
     "mk2_run_workforce_web",
+    "mk2_1_run_calendar_web",
+    "mk2_1_run_workforce_web",
 ]

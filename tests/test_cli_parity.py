@@ -19,6 +19,16 @@ import cli
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _override_metadata_engine(payload: dict, engine_value: str) -> dict:
+    """Return a deep copy of payload with metadata engine fields normalised."""
+
+    clone = json.loads(json.dumps(payload))
+    metadata = clone.setdefault("metadata", {})
+    if engine_value:
+        metadata["engine_version"] = engine_value
+    return clone
+
+
 @pytest.mark.parametrize(
     "cli_args, legacy_runner",
     [
@@ -37,6 +47,21 @@ ROOT = Path(__file__).resolve().parents[1]
             [
                 "--engine",
                 "mk2",
+                "--rig",
+                "workforce",
+                "--archetype",
+                "office",
+                "--seed",
+                "7",
+                "--start-date",
+                "2025-01-06",
+            ],
+            "run_calendar_gen_v2",
+        ),
+        (
+            [
+                "--engine",
+                "mk2_1",
                 "--rig",
                 "workforce",
                 "--archetype",
@@ -98,7 +123,15 @@ def test_cli_matches_legacy(tmp_path: Path, cli_args, legacy_runner) -> None:
 
     cli_data = json.loads(cli_output.read_text())
     legacy_data = json.loads(legacy_output.read_text())
-    assert cli_data == legacy_data
+    engine_choice = None
+    if "--engine" in cli_args:
+        engine_index = cli_args.index("--engine")
+        if engine_index + 1 < len(cli_args):
+            engine_choice = cli_args[engine_index + 1]
+    comparison_target = legacy_data
+    if engine_choice == "mk2_1":
+        comparison_target = _override_metadata_engine(legacy_data, engine_choice)
+    assert cli_data == comparison_target
 
     def normalise_output(text: str, output_path: Path) -> str:
         return text.replace(str(output_path), "<OUTPUT>")

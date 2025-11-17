@@ -10,7 +10,36 @@ import { ActivityBalanceHistory } from './ActivityBalanceHistory.js';
 import { mapLabelToColor, resolveSurface, resolveStateLayer } from './palette.js';
 
 const FULL_DAY_MINUTES = 24 * 60;
+const MAX_CROSS_DAY_SHIFTS = 14;
+const MINUTE_RANGE_KEYS = ['minute_range', 'minuteRange'];
+const START_MINUTE_KEYS = [
+  'start_minutes',
+  'startMinutes',
+  'start_minute',
+  'startMinute',
+  'minute_start',
+  'minuteStart',
+];
+const END_MINUTE_KEYS = [
+  'end_minutes',
+  'endMinutes',
+  'end_minute',
+  'endMinute',
+  'minute_end',
+  'minuteEnd',
+];
+const DURATION_KEYS = [
+  'duration_minutes',
+  'durationMinutes',
+  'minutes',
+  'length_minutes',
+  'lengthMinutes',
+  'duration',
+];
+const DAY_INDEX_KEYS = ['day_index', 'dayIndex', 'day_offset', 'dayOffset'];
+const WEEKDAY_INDEX_KEYS = ['weekday_index', 'weekdayIndex'];
 const TAU = Math.PI * 2;
+const WEEKDAY_ORDER = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
 const MODE_LABELS = {
   'day-rings': 'Ring by Day',
@@ -98,6 +127,271 @@ export function computeScheduleSignature(schedule) {
   return `events:${parts.join(';')}`;
 }
 
+function getScheduleMetadata(schedule) {
+  if (!schedule || typeof schedule !== 'object') {
+    return null;
+  }
+  const metadata = schedule.metadata;
+  return metadata && typeof metadata === 'object' ? metadata : null;
+}
+
+function normalizeVariant(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  const trimmed = value.trim();
+  return trimmed;
+}
+
+function inferScheduleVariant(schedule) {
+  if (!schedule || typeof schedule !== 'object') {
+    return '';
+  }
+  const metadata = getScheduleMetadata(schedule);
+  const candidates = [
+    schedule.variant,
+    schedule.engineVersion,
+    schedule.engine_version,
+    metadata?.engine_version,
+    metadata?.engineVersion,
+    metadata?.engine,
+    metadata?.variant,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeVariant(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return '';
+}
+
+function coerceFiniteNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const numeric = Number(trimmed);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+  return null;
+}
+
+function parseEventTimeToMinutes(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+  return hours * 60 + clamp(minutes, 0, 59);
+}
+
+function buildScheduleDateOrderLookup(events) {
+  const lookup = new Map();
+  if (!Array.isArray(events) || events.length === 0) {
+    return lookup;
+  }
+  const unique = Array.from(
+    new Set(
+      events
+        .map((event) => (typeof event?.date === 'string' && event.date ? event.date : null))
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+  unique.forEach((value, index) => {
+    lookup.set(value, index);
+  });
+  return lookup;
+}
+
+function resolveScheduleEventDayIndex(event, dateLookup) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+  for (const key of DAY_INDEX_KEYS) {
+    const value = coerceFiniteNumber(event[key]);
+    if (Number.isFinite(value)) {
+      return Math.trunc(value);
+    }
+  }
+  if (dateLookup && typeof event.date === 'string' && event.date && dateLookup.has(event.date)) {
+    return dateLookup.get(event.date);
+  }
+  for (const key of WEEKDAY_INDEX_KEYS) {
+    const value = coerceFiniteNumber(event[key]);
+    if (Number.isFinite(value)) {
+      return Math.trunc(value);
+    }
+  }
+  const dayName = typeof event.day === 'string' ? event.day.trim().toLowerCase() : '';
+  if (dayName) {
+    const weekdayIndex = WEEKDAY_ORDER.indexOf(dayName);
+    if (weekdayIndex >= 0) {
+      return weekdayIndex;
+    }
+  }
+  return null;
+}
+
+function normalizeAbsoluteMinuteRange(value) {
+  if (Array.isArray(value) && value.length >= 2) {
+    const start = coerceFiniteNumber(value[0]);
+    const end = coerceFiniteNumber(value[1]);
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      return [start, end];
+    }
+  } else if (value && typeof value === 'object') {
+    const start =
+      coerceFiniteNumber(value.start ?? value.from ?? value.begin ?? value[0]) ?? null;
+    const end = coerceFiniteNumber(value.end ?? value.to ?? value.finish ?? value[1]) ?? null;
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      return [start, end];
+    }
+  }
+  return null;
+}
+
+function resolveScheduleAbsoluteRange(event, dateLookup) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+  for (const key of MINUTE_RANGE_KEYS) {
+    const candidate = normalizeAbsoluteMinuteRange(event[key]);
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  let startMinutes = null;
+  for (const key of START_MINUTE_KEYS) {
+    const candidate = coerceFiniteNumber(event[key]);
+    if (Number.isFinite(candidate)) {
+      startMinutes = candidate;
+      break;
+    }
+  }
+  if (!Number.isFinite(startMinutes)) {
+    startMinutes = parseEventTimeToMinutes(event.start);
+  }
+  if (!Number.isFinite(startMinutes)) {
+    return null;
+  }
+
+  let endMinutes = null;
+  for (const key of END_MINUTE_KEYS) {
+    const candidate = coerceFiniteNumber(event[key]);
+    if (Number.isFinite(candidate)) {
+      endMinutes = candidate;
+      break;
+    }
+  }
+  if (!Number.isFinite(endMinutes)) {
+    endMinutes = parseEventTimeToMinutes(event.end);
+  }
+
+  let durationMinutes = null;
+  for (const key of DURATION_KEYS) {
+    const candidate = coerceFiniteNumber(event[key]);
+    if (Number.isFinite(candidate) && candidate > 0) {
+      durationMinutes = candidate;
+      break;
+    }
+  }
+
+  let dayIndex = resolveScheduleEventDayIndex(event, dateLookup);
+  if (!Number.isFinite(dayIndex)) {
+    dayIndex = 0;
+  }
+  const dayOffset = Math.trunc(dayIndex) * FULL_DAY_MINUTES;
+  const absoluteStart = startMinutes + dayOffset;
+  let absoluteEnd = Number.isFinite(endMinutes) ? endMinutes + dayOffset : null;
+
+  if (!Number.isFinite(absoluteEnd) && Number.isFinite(durationMinutes)) {
+    absoluteEnd = absoluteStart + durationMinutes;
+  }
+
+  if (!Number.isFinite(absoluteEnd)) {
+    return null;
+  }
+
+  if (absoluteEnd <= absoluteStart) {
+    if (Number.isFinite(durationMinutes) && durationMinutes > 0) {
+      absoluteEnd = absoluteStart + durationMinutes;
+    } else {
+      let adjustedEnd = absoluteEnd;
+      let attempts = 0;
+      while (adjustedEnd <= absoluteStart && attempts < MAX_CROSS_DAY_SHIFTS) {
+        adjustedEnd += FULL_DAY_MINUTES;
+        attempts += 1;
+      }
+      if (adjustedEnd > absoluteStart) {
+        absoluteEnd = adjustedEnd;
+      }
+    }
+  }
+
+  if (absoluteEnd <= absoluteStart) {
+    return null;
+  }
+
+  return [absoluteStart, absoluteEnd];
+}
+
+function resolveEventLabel(event) {
+  if (!event || typeof event !== 'object') {
+    return 'Activity';
+  }
+  const labelCandidate = event.label || event.activity || event.name;
+  if (typeof labelCandidate === 'string' && labelCandidate.trim()) {
+    return labelCandidate;
+  }
+  return 'Activity';
+}
+
+function computeLosslessLabelTotals(events) {
+  const sourceEvents = Array.isArray(events) ? events : [];
+  if (sourceEvents.length === 0) {
+    return [];
+  }
+  const dateLookup = buildScheduleDateOrderLookup(sourceEvents);
+  const totals = new Map();
+  sourceEvents.forEach((event) => {
+    const range = resolveScheduleAbsoluteRange(event, dateLookup);
+    if (!range) {
+      return;
+    }
+    const [start, end] = range;
+    const duration = end - start;
+    if (!(duration > 0)) {
+      return;
+    }
+    const label = resolveEventLabel(event);
+    const previous = totals.get(label) || 0;
+    totals.set(label, previous + duration);
+  });
+  if (totals.size === 0) {
+    return computeLabelTotals(sourceEvents);
+  }
+  return Array.from(totals.entries())
+    .map(([label, minutes]) => ({ label, minutes }))
+    .sort((a, b) => b.minutes - a.minutes);
+}
+
 export function createBalanceHistoryEntry(schedule, options = {}) {
   if (!schedule || typeof schedule !== 'object') {
     return null;
@@ -106,7 +400,14 @@ export function createBalanceHistoryEntry(schedule, options = {}) {
   if (events.length === 0) {
     return null;
   }
-  const totals = computeLabelTotals(events);
+  const variantOverride =
+    typeof options.variant === 'string' && options.variant ? options.variant : '';
+  const scheduleVariant = variantOverride || inferScheduleVariant(schedule);
+  const normalizedVariant = (scheduleVariant || '').toLowerCase();
+  const totals =
+    normalizedVariant === 'mk2_1'
+      ? computeLosslessLabelTotals(events)
+      : computeLabelTotals(events);
   if (!Array.isArray(totals) || totals.length === 0) {
     return null;
   }
@@ -134,6 +435,7 @@ export function createBalanceHistoryEntry(schedule, options = {}) {
     totalMinutes,
     segments: segments.map((segment) => ({ ...segment })),
     activities: activities.map((activity) => ({ ...activity })),
+    variant: scheduleVariant,
   };
 
   if (options.signature) {
@@ -626,12 +928,19 @@ export class RadialUrchin {
     this.updateHistoryUi({ refreshEntries: true });
   }
 
-  captureBalanceSnapshot(schedule, signature) {
+  captureBalanceSnapshot(schedule, signature, options = {}) {
     const nextRunNumber = (Number.isFinite(this.totalRunCount) ? this.totalRunCount : 0) + 1;
+    let variantOverride = '';
+    if (typeof options === 'string' && options) {
+      variantOverride = options;
+    } else if (options && typeof options === 'object' && typeof options.variant === 'string') {
+      variantOverride = options.variant;
+    }
     const entry = createBalanceHistoryEntry(schedule, {
       runNumber: nextRunNumber,
       highContrast: this.state.highContrast,
       signature,
+      variant: variantOverride,
     });
     if (!entry) {
       return;

@@ -14,7 +14,7 @@ from calendar_gen import write_output as _write_simple_output
 from calendar_gen_v2 import _load_yearly_budget
 from engines.base import ScheduleInput
 from engines.engine_mk1 import EngineMK1
-from engines.engine_mk2 import EngineMK2
+from engines.engine_mk2 import EngineMK2, EngineMK21
 from rigs.simple_rig import SimpleRig
 from rigs.workforce_rig import WorkforceRig
 
@@ -24,6 +24,8 @@ def _build_engine(engine_name: str) -> object:
         return EngineMK1()
     if engine_name == "mk2":
         return EngineMK2()
+    if engine_name == "mk2_1":
+        return EngineMK21()
     raise ValueError(f"Unknown engine '{engine_name}'")
 
 
@@ -96,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Unified Wyrd Engine CLI")
     parser.add_argument(
         "--engine",
-        choices=["mk1", "mk2"],
+        choices=["mk1", "mk2", "mk2_1"],
         required=True,
         help="Select which engine implementation to use",
     )
@@ -157,8 +159,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         return
 
     if args.rig in {"calendar", "workforce"}:
-        if args.engine != "mk2":
-            parser.error(f"The {args.rig} rig requires the mk2 engine")
+        if args.engine not in {"mk2", "mk2_1"}:
+            parser.error(
+                f"The {args.rig} rig requires an MK2-series engine (mk2 or mk2_1)"
+            )
         _run_workforce(args)
         return
 
