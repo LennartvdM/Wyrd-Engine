@@ -167,6 +167,8 @@ const batchState = {
   legendActivities: [],
   highlightedActivityId: null,
   highlightedActivityKey: '',
+  purityIndicator: null,
+  puritySummary: null,
 };
 
 const RANDOMIZE_SEED_STORAGE_KEY = 'cfg.calendar.randomizeSeed';
@@ -3338,9 +3340,35 @@ function accumulateActivityMinutes(items, resolveId, resolveMinutes) {
   return map;
 }
 
+/**
+ * @typedef {Object} BatchPurityRunResult
+ * @property {number} runIndex
+ * @property {boolean} isPure
+ * @property {number} totalRaw
+ * @property {number} totalShare
+ * @property {number} totalSequence
+ * @property {string[]} mismatchedActivities
+ */
+
+/**
+ * @typedef {Object} BatchPuritySummary
+ * @property {number} totalRuns
+ * @property {number} pureRuns
+ * @property {number} impureRuns
+ * @property {boolean} hasAnyError
+ * @property {BatchPurityRunResult[]} runs
+ */
+
 function auditBatchRunPurity(truth) {
   if (!truth || typeof truth !== 'object') {
-    return false;
+    return {
+      runIndex: 0,
+      isPure: false,
+      totalRaw: 0,
+      totalShare: 0,
+      totalSequence: 0,
+      mismatchedActivities: [],
+    };
   }
   const runIndex = Number.isFinite(truth.runIndex) ? truth.runIndex : 0;
   const rawEvents = Array.isArray(truth.rawEvents) ? truth.rawEvents : [];
@@ -3384,6 +3412,7 @@ function auditBatchRunPurity(truth) {
   ]);
 
   let allActivitiesMatch = true;
+  const mismatchedActivities = [];
   activityKeys.forEach((key) => {
     const rawValue = rawByActivity.get(key)?.minutes ?? 0;
     const shareValue = shareByActivity.get(key)?.minutes ?? 0;
@@ -3396,6 +3425,8 @@ function auditBatchRunPurity(truth) {
       'activity';
     if (!(rawValue === shareValue && rawValue === sequenceValue)) {
       allActivitiesMatch = false;
+      const mismatchLabel = label || key || `activity-${mismatchedActivities.length + 1}`;
+      mismatchedActivities.push(String(mismatchLabel));
     }
     console.log(
       `[Purity] Run #${runIndex} activity=${label} raw/share/sequence =`,
@@ -3407,7 +3438,46 @@ function auditBatchRunPurity(truth) {
 
   const isPure = rawTotal === shareTotal && rawTotal === sequenceTotal && allActivitiesMatch;
   console.log(`[Purity] Run #${runIndex} ${isPure ? 'OK' : 'MISMATCH'}`);
-  return isPure;
+  return {
+    runIndex,
+    isPure,
+    totalRaw: rawTotal,
+    totalShare: shareTotal,
+    totalSequence,
+    mismatchedActivities,
+  };
+}
+
+function computeBatchPuritySummary(batchRunsTruth, cachedResults) {
+  const runResults = Array.isArray(cachedResults) && cachedResults.length > 0
+    ? cachedResults
+    : (Array.isArray(batchRunsTruth) ? batchRunsTruth : []).map((truth, index) =>
+        auditBatchRunPurity({
+          runIndex: Number.isFinite(truth?.runIndex) ? truth.runIndex : index + 1,
+          rawEvents: Array.isArray(truth?.rawEvents) ? truth.rawEvents : [],
+          shareSegments: Array.isArray(truth?.shareSegments) ? truth.shareSegments : [],
+          sequenceSegments: Array.isArray(truth?.sequenceSegments) ? truth.sequenceSegments : [],
+        })
+      );
+
+  const summary = {
+    totalRuns: runResults.length,
+    pureRuns: 0,
+    impureRuns: 0,
+    hasAnyError: false,
+    runs: runResults.slice(),
+  };
+
+  runResults.forEach((result) => {
+    if (result?.isPure) {
+      summary.pureRuns += 1;
+    } else {
+      summary.impureRuns += 1;
+    }
+  });
+
+  summary.hasAnyError = summary.impureRuns > 0;
+  return summary;
 }
 
 function cancelBatchFitMeasurement() {
@@ -3595,6 +3665,70 @@ function updateBatchSummary() {
     return;
   }
   batchState.summary.textContent = 'Run a batch to begin.';
+}
+
+function buildBatchPuritySummaryTooltip(summary) {
+  if (!summary || summary.totalRuns === 0) {
+    return '';
+  }
+  const lines = [
+    `Total runs: ${summary.totalRuns}`,
+    `Pure runs: ${summary.pureRuns}`,
+    `Impure runs: ${summary.impureRuns}`,
+  ];
+  if (summary.hasAnyError) {
+    const impureRuns = summary.runs.filter((run) => !run.isPure);
+    if (impureRuns.length > 0) {
+      const preview = impureRuns.slice(0, 3).map((run) => {
+        const driftCount = Array.isArray(run?.mismatchedActivities)
+          ? run.mismatchedActivities.length
+          : 0;
+        const driftLabel =
+          driftCount > 0
+            ? `${driftCount} ${driftCount === 1 ? 'activity' : 'activities'}`
+            : 'totals mismatch';
+        return `#${run.runIndex || 0} (${driftLabel})`;
+      });
+      let detail = preview.join(', ');
+      if (impureRuns.length > preview.length) {
+        detail += ', …';
+      }
+      lines.push(`Drift on runs: ${detail}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function updateBatchPurityIndicator(summaryOverride) {
+  if (!batchState.purityIndicator) {
+    return;
+  }
+  const summary =
+    typeof summaryOverride === 'undefined' ? batchState.puritySummary : summaryOverride;
+  const indicator = batchState.purityIndicator;
+  indicator.classList.remove('purity-pill--ok', 'purity-pill--error');
+  indicator.textContent = 'Purity: n/a';
+  indicator.removeAttribute('title');
+  indicator.setAttribute('aria-label', 'Purity status: not available');
+  if (!summary || summary.totalRuns === 0) {
+    return;
+  }
+  const isOk = !summary.hasAnyError;
+  indicator.classList.add(isOk ? 'purity-pill--ok' : 'purity-pill--error');
+  const text = isOk
+    ? `Purity: OK (${summary.pureRuns}/${summary.totalRuns})`
+    : `Purity: FAILED (${summary.impureRuns}/${summary.totalRuns})`;
+  indicator.textContent = text;
+  indicator.setAttribute(
+    'aria-label',
+    isOk
+      ? `Batch purity ok (${summary.pureRuns} of ${summary.totalRuns} runs pure)`
+      : `Batch purity failed (${summary.impureRuns} of ${summary.totalRuns} runs impure)`
+  );
+  const tooltip = buildBatchPuritySummaryTooltip(summary);
+  if (tooltip) {
+    indicator.title = tooltip;
+  }
 }
 
 function getBatchSegmentLabel(segment, percentValue) {
@@ -3957,12 +4091,16 @@ async function runBatchGenerations(count) {
   batchState.targetRuns = target;
   batchState.completedRuns = 0;
   batchState.results = [];
+  batchState.puritySummary = null;
   renderBatchResults();
   updateBatchSummary();
   updateBatchControlsState();
+  updateBatchPurityIndicator();
 
   const results = [];
-  const puritySummary = { totalRuns: 0, pureRuns: 0 };
+  const batchRunsTruth = [];
+  const batchPurityRunResults = [];
+  let puritySummary = null;
 
   try {
     await ensureRuntimeLoaded();
@@ -4027,16 +4165,15 @@ async function runBatchGenerations(count) {
       });
 
       const rawEvents = buildBatchRawEvents(result);
-      const isPure = auditBatchRunPurity({
+      const runTruth = {
         runIndex: index + 1,
         rawEvents,
         shareSegments: segments,
         sequenceSegments,
-      });
-      puritySummary.totalRuns += 1;
-      if (isPure) {
-        puritySummary.pureRuns += 1;
-      }
+      };
+      batchRunsTruth.push(runTruth);
+      const purityResult = auditBatchRunPurity(runTruth);
+      batchPurityRunResults.push(purityResult);
 
       results.push({
         index: index + 1,
@@ -4084,7 +4221,10 @@ async function runBatchGenerations(count) {
     renderBatchResults();
     updateBatchSummary();
     updateBatchControlsState();
-    if (puritySummary.totalRuns > 0) {
+    puritySummary = computeBatchPuritySummary(batchRunsTruth, batchPurityRunResults);
+    batchState.puritySummary = puritySummary;
+    updateBatchPurityIndicator();
+    if (puritySummary && puritySummary.totalRuns > 0) {
       console.log(
         `[Purity] Batch complete: ${puritySummary.pureRuns}/${puritySummary.totalRuns} runs pure`
       );
@@ -4107,6 +4247,7 @@ function hydrateBatchPanel() {
   batchState.legend = panel.querySelector('[data-batch-legend]');
   batchState.legendList = panel.querySelector('[data-batch-legend-list]');
   batchState.legendEmpty = panel.querySelector('[data-batch-legend-empty]');
+  batchState.purityIndicator = panel.querySelector('[data-purity-indicator]');
 
   batchState.sizeButtons = new Map();
   const sizeButtons = panel.querySelectorAll('[data-batch-size]');
@@ -4183,6 +4324,7 @@ function hydrateBatchPanel() {
   renderBatchResults();
   updateBatchSummary();
   updateBatchControlsState();
+  updateBatchPurityIndicator();
 }
 
 function setConsoleOutputContent(element, text, defaultMessage) {
