@@ -137,6 +137,7 @@ const BATCH_FIT_MIN_ROW_HEIGHT = 2;
 const BATCH_FIT_MAX_ROW_HEIGHT = 40;
 const BATCH_FULL_DAY_MINUTES = 24 * 60;
 const BATCH_DAY_ORDER = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+const DEFAULT_ACTIVITY_COLOR = '#6366f1';
 const batchState = {
   panel: null,
   results: [],
@@ -160,6 +161,12 @@ const batchState = {
   rowHeight: null,
   pendingFitFrame: 0,
   resizeHandler: null,
+  legend: null,
+  legendList: null,
+  legendEmpty: null,
+  legendActivities: [],
+  highlightedActivityId: null,
+  highlightedActivityKey: '',
 };
 
 const RANDOMIZE_SEED_STORAGE_KEY = 'cfg.calendar.randomizeSeed';
@@ -3021,6 +3028,26 @@ function resolveBatchSequenceEvents(source) {
   return [];
 }
 
+function normalizeActivityKey(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed.toLowerCase() : '';
+}
+
+function pickActivityId(...candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) {
+        return trimmed;
+      }
+    }
+  }
+  return '';
+}
+
 function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSegments = [] } = {}) {
   const events = resolveBatchSequenceEvents(eventsOrSchedule);
   if (!events.length) {
@@ -3028,21 +3055,51 @@ function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSe
   }
 
   const colorLookup = new Map();
-  const addColor = (key, color) => {
-    if (typeof key === 'string' && typeof color === 'string' && color.length > 0) {
-      colorLookup.set(key, color);
+  const activityLookup = new Map();
+  const registerColor = (key, color) => {
+    const normalizedKey = normalizeActivityKey(key);
+    if (!normalizedKey) {
+      return;
+    }
+    if (typeof color === 'string' && color) {
+      colorLookup.set(normalizedKey, color);
     }
   };
 
   (Array.isArray(activities) ? activities : []).forEach((activity) => {
-    addColor(activity.id, activity.color);
-    addColor(activity.name, activity.color);
-    addColor(activity.label, activity.color);
+    const id = pickActivityId(activity?.id, activity?.label, activity?.name);
+    const label = activity?.label || activity?.name || id || 'Activity';
+    const color =
+      typeof activity?.color === 'string' && activity.color ? activity.color : DEFAULT_ACTIVITY_COLOR;
+    const key = normalizeActivityKey(id || label);
+    if (key) {
+      activityLookup.set(key, {
+        id: id || label,
+        label,
+        color,
+        activityKey: key,
+      });
+      registerColor(key, color);
+    }
+    registerColor(activity?.label, color);
+    registerColor(activity?.name, color);
   });
 
   (Array.isArray(shareSegments) ? shareSegments : []).forEach((segment) => {
-    addColor(segment.id, segment.color);
-    addColor(segment.label, segment.color);
+    const id = pickActivityId(segment?.activityId, segment?.id, segment?.label);
+    const key = segment?.activityKey || normalizeActivityKey(id);
+    const color = typeof segment?.color === 'string' && segment.color ? segment.color : DEFAULT_ACTIVITY_COLOR;
+    if (key) {
+      registerColor(key, color);
+      if (!activityLookup.has(key)) {
+        activityLookup.set(key, {
+          id: id || segment?.label || key,
+          label: segment?.label || id || 'Activity',
+          color,
+          activityKey: key,
+        });
+      }
+    }
   });
 
   const dateLookup = buildBatchDateOrderLookup(events);
@@ -3083,11 +3140,24 @@ function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSe
       }
 
       const label = event.label || event.activity || 'Activity';
-      const activityId = typeof event.activity === 'string' ? event.activity : '';
+      let activityId = pickActivityId(event.activityId, event.activity, label);
+      let activityKey = normalizeActivityKey(activityId);
+      if (!activityKey && label) {
+        activityKey = normalizeActivityKey(label);
+        if (activityKey && !activityId) {
+          activityId = label;
+        }
+      }
+
+      const lookupEntry = activityKey ? activityLookup.get(activityKey) : null;
+      if (lookupEntry) {
+        activityId = lookupEntry.id;
+      }
       return {
         duration,
         label,
         activityId,
+        activityKey,
         start: Number.isFinite(start) ? start : null,
         end: Number.isFinite(end) ? end : null,
         index,
@@ -3117,8 +3187,8 @@ function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSe
   }
 
   const segments = normalized.map((entry) => {
-    const color =
-      colorLookup.get(entry.label) || colorLookup.get(entry.activityId) || '#6366f1';
+    const key = entry.activityKey || normalizeActivityKey(entry.activityId || entry.label);
+    const color = (key && colorLookup.get(key)) || DEFAULT_ACTIVITY_COLOR;
     const percentage = entry.duration / computedTotal;
     const duration = entry.duration;
     return {
@@ -3130,6 +3200,8 @@ function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSe
       percentage,
       startMinutes: entry.start,
       endMinutes: entry.end,
+      activityId: entry.activityId || entry.label,
+      activityKey: key,
     };
   });
 
@@ -3348,6 +3420,181 @@ function getBatchSegmentLabel(segment, percentValue) {
   return '';
 }
 
+function getBatchLegendActivities(results) {
+  const lookup = new Map();
+  (Array.isArray(results) ? results : []).forEach((run) => {
+    (Array.isArray(run?.activities) ? run.activities : []).forEach((activity) => {
+      const id = pickActivityId(activity?.id, activity?.label, activity?.name);
+      const key = activity?.activityKey || normalizeActivityKey(id);
+      if (!key) {
+        return;
+      }
+      const label = activity?.label || activity?.name || id || 'Activity';
+      const color =
+        typeof activity?.color === 'string' && activity.color ? activity.color : DEFAULT_ACTIVITY_COLOR;
+      const minutesValue = Number(activity?.minutes);
+      const minutes = Number.isFinite(minutesValue) ? minutesValue : 0;
+      if (!lookup.has(key)) {
+        lookup.set(key, { id: id || label, label, color, minutes: 0, activityKey: key });
+      }
+      const entry = lookup.get(key);
+      entry.minutes += minutes;
+    });
+  });
+  return Array.from(lookup.values()).sort((a, b) => {
+    if (b.minutes !== a.minutes) {
+      return b.minutes - a.minutes;
+    }
+    return a.label.localeCompare(b.label);
+  });
+}
+
+function syncBatchLegendSelection() {
+  if (!batchState.legendList) {
+    return;
+  }
+  const highlightKey = batchState.highlightedActivityKey;
+  const chips = batchState.legendList.querySelectorAll('[data-activity-key]');
+  chips.forEach((chip) => {
+    if (!(chip instanceof HTMLElement)) {
+      return;
+    }
+    const isActive = Boolean(highlightKey) && chip.dataset.activityKey === highlightKey;
+    chip.classList.toggle('is-active', isActive);
+    chip.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+function clearBatchActivityHighlight() {
+  if (!batchState.highlightedActivityKey) {
+    return;
+  }
+  batchState.highlightedActivityId = null;
+  batchState.highlightedActivityKey = '';
+  syncBatchLegendSelection();
+  applyBatchActivityHighlightStyles();
+}
+
+function logBatchActivitySegmentCounts(activityId, activityKey) {
+  const results = Array.isArray(batchState.results) ? batchState.results : [];
+  if (!activityKey || !results.length) {
+    return;
+  }
+  const stats = results.map((run) => {
+    const shareSegments = Array.isArray(run?.segments) ? run.segments : [];
+    const sequenceSegments = Array.isArray(run?.sequenceSegments) ? run.sequenceSegments : [];
+    const shareMatches = shareSegments.filter((segment) => {
+      const key = segment?.activityKey || normalizeActivityKey(segment?.activityId || segment?.id);
+      return key === activityKey;
+    }).length;
+    const sequenceMatches = sequenceSegments.filter((segment) => {
+      const key = segment?.activityKey || normalizeActivityKey(segment?.activityId || segment?.id);
+      return key === activityKey;
+    }).length;
+    return {
+      run: run?.index || 0,
+      shareSegments: shareMatches,
+      sequenceSegments: sequenceMatches,
+    };
+  });
+  const totalShare = stats.reduce((sum, entry) => sum + entry.shareSegments, 0);
+  const totalSequence = stats.reduce((sum, entry) => sum + entry.sequenceSegments, 0);
+  console.groupCollapsed(`[batch] Activity focus: ${activityId}`);
+  console.table(stats);
+  console.log('Totals → share segments:', totalShare, 'sequence segments:', totalSequence);
+  console.groupEnd();
+}
+
+function handleBatchLegendSelection(activityId) {
+  const normalizedId = typeof activityId === 'string' ? activityId.trim() : '';
+  const key = normalizeActivityKey(normalizedId);
+  if (key && batchState.highlightedActivityKey === key) {
+    clearBatchActivityHighlight();
+    return;
+  }
+  if (!key) {
+    clearBatchActivityHighlight();
+    return;
+  }
+  batchState.highlightedActivityId = normalizedId;
+  batchState.highlightedActivityKey = key;
+  syncBatchLegendSelection();
+  applyBatchActivityHighlightStyles();
+  logBatchActivitySegmentCounts(normalizedId, key);
+}
+
+function renderBatchLegend() {
+  if (!batchState.legend || !batchState.legendList || !batchState.legendEmpty) {
+    return;
+  }
+  const activities = getBatchLegendActivities(batchState.results);
+  batchState.legendActivities = activities;
+  batchState.legendList.innerHTML = '';
+  const hasActivities = activities.length > 0;
+  batchState.legendList.hidden = !hasActivities;
+  batchState.legendEmpty.hidden = hasActivities;
+  if (!hasActivities) {
+    clearBatchActivityHighlight();
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  activities.forEach((activity) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'batch-legend__chip';
+    chip.dataset.activityId = activity.id;
+    const key = activity.activityKey || normalizeActivityKey(activity.id);
+    if (key) {
+      chip.dataset.activityKey = key;
+    }
+    chip.setAttribute('role', 'listitem');
+    chip.setAttribute('aria-pressed', 'false');
+    const swatch = document.createElement('span');
+    swatch.className = 'batch-legend__swatch';
+    swatch.style.setProperty('--legend-swatch-color', activity.color || DEFAULT_ACTIVITY_COLOR);
+    const label = document.createElement('span');
+    label.className = 'batch-legend__label';
+    label.textContent = activity.label || activity.id || 'Activity';
+    chip.append(swatch, label);
+    chip.addEventListener('click', () => {
+      handleBatchLegendSelection(activity.id);
+    });
+    fragment.append(chip);
+  });
+  batchState.legendList.append(fragment);
+  const highlightKey = batchState.highlightedActivityKey;
+  const highlightExists = Boolean(
+    highlightKey && activities.some((activity) => activity.activityKey === highlightKey)
+  );
+  if (!highlightExists) {
+    clearBatchActivityHighlight();
+  } else {
+    syncBatchLegendSelection();
+  }
+}
+
+function applyBatchActivityHighlightStyles() {
+  const highlightKey = batchState.highlightedActivityKey;
+  if (!batchState.stack) {
+    return;
+  }
+  const segments = batchState.stack.querySelectorAll('.batch-results__segment');
+  const hasHighlight = Boolean(highlightKey);
+  segments.forEach((segment) => {
+    if (!(segment instanceof HTMLElement)) {
+      return;
+    }
+    const key = segment.dataset.activityKey || '';
+    const isMatch = hasHighlight && key === highlightKey;
+    const isDimmed = hasHighlight && !isMatch;
+    segment.classList.toggle('batch-results__segment--highlighted', isMatch);
+    segment.classList.toggle('batch-results__segment--dimmed', isDimmed);
+  });
+  if (batchState.visualization instanceof HTMLElement) {
+    batchState.visualization.classList.toggle('batch-results__visualization--highlighting', hasHighlight);
+  }
+}
+
 function renderBatchResults() {
   if (!batchState.stack || !batchState.empty) {
     return;
@@ -3366,6 +3613,8 @@ function renderBatchResults() {
   if (!hasResults) {
     batchState.rowHeight = null;
     applyBatchFitLayout();
+    renderBatchLegend();
+    applyBatchActivityHighlightStyles();
     return;
   }
 
@@ -3445,11 +3694,23 @@ function renderBatchResults() {
         const widthPercentage = rowTotalMinutes > 0 ? (segmentMinutesValue / rowTotalMinutes) * 100 : 0;
         const element = document.createElement('div');
         element.className = 'activity-share__segment batch-results__segment';
-        element.style.setProperty('--segment-color', segment.color || '#6366f1');
+        element.style.setProperty('--segment-color', segment.color || DEFAULT_ACTIVITY_COLOR);
         element.style.setProperty(
           '--segment-text-color',
           computeSegmentTextColor(segment.color)
         );
+        const activityId = segment.activityId || segment.id || segment.label || '';
+        const activityKey = segment.activityKey || normalizeActivityKey(activityId);
+        if (activityId) {
+          element.dataset.activityId = activityId;
+        } else if (element.dataset.activityId) {
+          delete element.dataset.activityId;
+        }
+        if (activityKey) {
+          element.dataset.activityKey = activityKey;
+        } else if (element.dataset.activityKey) {
+          delete element.dataset.activityKey;
+        }
         if (widthPercentage > 0) {
           const widthValue = `${widthPercentage}%`;
           element.style.flex = `0 0 ${widthValue}`;
@@ -3492,6 +3753,8 @@ function renderBatchResults() {
     batchState.rowHeight = null;
     applyBatchFitLayout();
   }
+  renderBatchLegend();
+  applyBatchActivityHighlightStyles();
 }
 
 async function runBatchGenerations(count) {
@@ -3537,15 +3800,36 @@ async function runBatchGenerations(count) {
       const entry = createBalanceHistoryEntry(result, { runNumber: index + 1 });
       const totalMinutes = entry?.totalMinutes || 0;
       const segments = Array.isArray(entry?.segments)
-        ? entry.segments.map((segment) => ({ ...segment }))
+        ? entry.segments.map((segment) => {
+            const activityId = pickActivityId(segment?.activityId, segment?.id, segment?.label);
+            return {
+              ...segment,
+              color:
+                typeof segment?.color === 'string' && segment.color
+                  ? segment.color
+                  : DEFAULT_ACTIVITY_COLOR,
+              activityId: activityId || segment?.id || segment?.label,
+              activityKey: segment?.activityKey || normalizeActivityKey(activityId || segment?.label),
+            };
+          })
         : [];
       const activities = Array.isArray(entry?.activities)
-        ? entry.activities.map((activity) => ({
-            id: activity.id,
-            name: activity.label,
-            color: activity.color,
-            minutes: activity.minutes,
-          }))
+        ? entry.activities.map((activity) => {
+            const activityId = pickActivityId(activity?.id, activity?.label, activity?.name);
+            const label = activity?.label || activity?.name || activityId || 'Activity';
+            const minutesValue = Number(activity?.minutes);
+            return {
+              ...activity,
+              id: activityId || label,
+              label,
+              color:
+                typeof activity?.color === 'string' && activity.color
+                  ? activity.color
+                  : DEFAULT_ACTIVITY_COLOR,
+              minutes: Number.isFinite(minutesValue) ? minutesValue : 0,
+              activityKey: activity?.activityKey || normalizeActivityKey(activityId || label),
+            };
+          })
         : [];
 
       const sequenceSegments = buildBatchSequenceSegments(result, {
@@ -3615,6 +3899,9 @@ function hydrateBatchPanel() {
   batchState.stack = panel.querySelector('[data-batch-stack]');
   batchState.visualization = panel.querySelector('[data-batch-visualization]');
   batchState.empty = panel.querySelector('[data-batch-empty]');
+  batchState.legend = panel.querySelector('[data-batch-legend]');
+  batchState.legendList = panel.querySelector('[data-batch-legend-list]');
+  batchState.legendEmpty = panel.querySelector('[data-batch-legend-empty]');
 
   batchState.sizeButtons = new Map();
   const sizeButtons = panel.querySelectorAll('[data-batch-size]');
