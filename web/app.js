@@ -3348,6 +3348,7 @@ function accumulateActivityMinutes(items, resolveId, resolveMinutes) {
  * @property {number} totalShare
  * @property {number} totalSequence
  * @property {string[]} mismatchedActivities
+ * @property {boolean} hasRuntimeError
  */
 
 /**
@@ -3357,127 +3358,160 @@ function accumulateActivityMinutes(items, resolveId, resolveMinutes) {
  * @property {number} impureRuns
  * @property {boolean} hasAnyError
  * @property {BatchPurityRunResult[]} runs
+ * @property {boolean} hasRuntimeError
  */
 
 function auditBatchRunPurity(truth) {
-  if (!truth || typeof truth !== 'object') {
+  const runIndex = Number.isFinite(truth?.runIndex) ? truth.runIndex : 0;
+  try {
+    if (!truth || typeof truth !== 'object') {
+      return {
+        runIndex,
+        isPure: false,
+        totalRaw: 0,
+        totalShare: 0,
+        totalSequence: 0,
+        mismatchedActivities: [],
+        hasRuntimeError: false,
+      };
+    }
+    const rawEvents = Array.isArray(truth.rawEvents) ? truth.rawEvents : [];
+    const shareSegments = Array.isArray(truth.shareSegments) ? truth.shareSegments : [];
+    const sequenceSegments = Array.isArray(truth.sequenceSegments) ? truth.sequenceSegments : [];
+
+    const rawTotal = rawEvents.reduce((sum, event) => sum + getRawEventDuration(event), 0);
+    const shareTotal = shareSegments.reduce((sum, segment) => sum + getBatchSegmentMinutes(segment), 0);
+    const sequenceTotal = sequenceSegments.reduce(
+      (sum, segment) => sum + getBatchSegmentMinutes(segment),
+      0
+    );
+
+    const rawByActivity = accumulateActivityMinutes(
+      rawEvents,
+      (event) => resolveActivityIdentifier(event, event?.label),
+      getRawEventDuration
+    );
+    const shareByActivity = accumulateActivityMinutes(
+      shareSegments,
+      (segment) => resolveActivityIdentifier(segment, segment?.label),
+      getBatchSegmentMinutes
+    );
+    const sequenceByActivity = accumulateActivityMinutes(
+      sequenceSegments,
+      (segment) => resolveActivityIdentifier(segment, segment?.label),
+      getBatchSegmentMinutes
+    );
+
+    console.log(
+      `[Purity] Run #${runIndex}: totals raw/share/sequence =`,
+      rawTotal,
+      shareTotal,
+      sequenceTotal
+    );
+
+    const activityKeys = new Set([
+      ...rawByActivity.keys(),
+      ...shareByActivity.keys(),
+      ...sequenceByActivity.keys(),
+    ]);
+
+    let allActivitiesMatch = true;
+    const mismatchedActivities = [];
+    activityKeys.forEach((key) => {
+      const rawValue = rawByActivity.get(key)?.minutes ?? 0;
+      const shareValue = shareByActivity.get(key)?.minutes ?? 0;
+      const sequenceValue = sequenceByActivity.get(key)?.minutes ?? 0;
+      const label =
+        rawByActivity.get(key)?.id ||
+        shareByActivity.get(key)?.id ||
+        sequenceByActivity.get(key)?.id ||
+        key ||
+        'activity';
+      if (!(rawValue === shareValue && rawValue === sequenceValue)) {
+        allActivitiesMatch = false;
+        const mismatchLabel = label || key || `activity-${mismatchedActivities.length + 1}`;
+        mismatchedActivities.push(String(mismatchLabel));
+      }
+      console.log(
+        `[Purity] Run #${runIndex} activity=${label} raw/share/sequence =`,
+        rawValue,
+        shareValue,
+        sequenceValue
+      );
+    });
+
+    const isPure = rawTotal === shareTotal && rawTotal === sequenceTotal && allActivitiesMatch;
+    console.log(`[Purity] Run #${runIndex} ${isPure ? 'OK' : 'MISMATCH'}`);
     return {
-      runIndex: 0,
+      runIndex,
+      isPure,
+      totalRaw: rawTotal,
+      totalShare: shareTotal,
+      totalSequence: sequenceTotal,
+      mismatchedActivities,
+      hasRuntimeError: false,
+    };
+  } catch (error) {
+    console.error('[Purity] Checker crashed', error);
+    return {
+      runIndex,
       isPure: false,
       totalRaw: 0,
       totalShare: 0,
       totalSequence: 0,
       mismatchedActivities: [],
+      hasRuntimeError: true,
     };
   }
-  const runIndex = Number.isFinite(truth.runIndex) ? truth.runIndex : 0;
-  const rawEvents = Array.isArray(truth.rawEvents) ? truth.rawEvents : [];
-  const shareSegments = Array.isArray(truth.shareSegments) ? truth.shareSegments : [];
-  const sequenceSegments = Array.isArray(truth.sequenceSegments) ? truth.sequenceSegments : [];
-
-  const rawTotal = rawEvents.reduce((sum, event) => sum + getRawEventDuration(event), 0);
-  const shareTotal = shareSegments.reduce((sum, segment) => sum + getBatchSegmentMinutes(segment), 0);
-  const sequenceTotal = sequenceSegments.reduce(
-    (sum, segment) => sum + getBatchSegmentMinutes(segment),
-    0
-  );
-
-  const rawByActivity = accumulateActivityMinutes(
-    rawEvents,
-    (event) => resolveActivityIdentifier(event, event?.label),
-    getRawEventDuration
-  );
-  const shareByActivity = accumulateActivityMinutes(
-    shareSegments,
-    (segment) => resolveActivityIdentifier(segment, segment?.label),
-    getBatchSegmentMinutes
-  );
-  const sequenceByActivity = accumulateActivityMinutes(
-    sequenceSegments,
-    (segment) => resolveActivityIdentifier(segment, segment?.label),
-    getBatchSegmentMinutes
-  );
-
-  console.log(
-    `[Purity] Run #${runIndex}: totals raw/share/sequence =`,
-    rawTotal,
-    shareTotal,
-    sequenceTotal
-  );
-
-  const activityKeys = new Set([
-    ...rawByActivity.keys(),
-    ...shareByActivity.keys(),
-    ...sequenceByActivity.keys(),
-  ]);
-
-  let allActivitiesMatch = true;
-  const mismatchedActivities = [];
-  activityKeys.forEach((key) => {
-    const rawValue = rawByActivity.get(key)?.minutes ?? 0;
-    const shareValue = shareByActivity.get(key)?.minutes ?? 0;
-    const sequenceValue = sequenceByActivity.get(key)?.minutes ?? 0;
-    const label =
-      rawByActivity.get(key)?.id ||
-      shareByActivity.get(key)?.id ||
-      sequenceByActivity.get(key)?.id ||
-      key ||
-      'activity';
-    if (!(rawValue === shareValue && rawValue === sequenceValue)) {
-      allActivitiesMatch = false;
-      const mismatchLabel = label || key || `activity-${mismatchedActivities.length + 1}`;
-      mismatchedActivities.push(String(mismatchLabel));
-    }
-    console.log(
-      `[Purity] Run #${runIndex} activity=${label} raw/share/sequence =`,
-      rawValue,
-      shareValue,
-      sequenceValue
-    );
-  });
-
-  const isPure = rawTotal === shareTotal && rawTotal === sequenceTotal && allActivitiesMatch;
-  console.log(`[Purity] Run #${runIndex} ${isPure ? 'OK' : 'MISMATCH'}`);
-  return {
-    runIndex,
-    isPure,
-    totalRaw: rawTotal,
-    totalShare: shareTotal,
-    totalSequence,
-    mismatchedActivities,
-  };
 }
 
 function computeBatchPuritySummary(batchRunsTruth, cachedResults) {
-  const runResults = Array.isArray(cachedResults) && cachedResults.length > 0
-    ? cachedResults
-    : (Array.isArray(batchRunsTruth) ? batchRunsTruth : []).map((truth, index) =>
-        auditBatchRunPurity({
-          runIndex: Number.isFinite(truth?.runIndex) ? truth.runIndex : index + 1,
-          rawEvents: Array.isArray(truth?.rawEvents) ? truth.rawEvents : [],
-          shareSegments: Array.isArray(truth?.shareSegments) ? truth.shareSegments : [],
-          sequenceSegments: Array.isArray(truth?.sequenceSegments) ? truth.sequenceSegments : [],
-        })
-      );
+  try {
+    const runResults =
+      Array.isArray(cachedResults) && cachedResults.length > 0
+        ? cachedResults
+        : (Array.isArray(batchRunsTruth) ? batchRunsTruth : []).map((truth, index) =>
+            auditBatchRunPurity({
+              runIndex: Number.isFinite(truth?.runIndex) ? truth.runIndex : index + 1,
+              rawEvents: Array.isArray(truth?.rawEvents) ? truth.rawEvents : [],
+              shareSegments: Array.isArray(truth?.shareSegments) ? truth.shareSegments : [],
+              sequenceSegments: Array.isArray(truth?.sequenceSegments) ? truth.sequenceSegments : [],
+            })
+          );
 
-  const summary = {
-    totalRuns: runResults.length,
-    pureRuns: 0,
-    impureRuns: 0,
-    hasAnyError: false,
-    runs: runResults.slice(),
-  };
+    const summary = {
+      totalRuns: runResults.length,
+      pureRuns: 0,
+      impureRuns: 0,
+      hasAnyError: false,
+      hasRuntimeError: false,
+      runs: runResults.slice(),
+    };
 
-  runResults.forEach((result) => {
-    if (result?.isPure) {
-      summary.pureRuns += 1;
-    } else {
-      summary.impureRuns += 1;
-    }
-  });
+    runResults.forEach((result) => {
+      if (result?.isPure) {
+        summary.pureRuns += 1;
+      } else {
+        summary.impureRuns += 1;
+      }
+      if (result?.hasRuntimeError) {
+        summary.hasRuntimeError = true;
+      }
+    });
 
-  summary.hasAnyError = summary.impureRuns > 0;
-  return summary;
+    summary.hasAnyError = summary.impureRuns > 0 || summary.hasRuntimeError;
+    return summary;
+  } catch (error) {
+    console.error('[Purity] Checker crashed', error);
+    return {
+      totalRuns: 0,
+      pureRuns: 0,
+      impureRuns: 0,
+      hasAnyError: true,
+      hasRuntimeError: true,
+      runs: [],
+    };
+  }
 }
 
 function cancelBatchFitMeasurement() {
@@ -3668,15 +3702,20 @@ function updateBatchSummary() {
 }
 
 function buildBatchPuritySummaryTooltip(summary) {
-  if (!summary || summary.totalRuns === 0) {
+  if (!summary) {
     return '';
   }
-  const lines = [
-    `Total runs: ${summary.totalRuns}`,
-    `Pure runs: ${summary.pureRuns}`,
-    `Impure runs: ${summary.impureRuns}`,
-  ];
-  if (summary.hasAnyError) {
+  const lines = [];
+  if (summary.totalRuns > 0) {
+    lines.push(
+      `Total runs: ${summary.totalRuns}`,
+      `Pure runs: ${summary.pureRuns}`,
+      `Impure runs: ${summary.impureRuns}`
+    );
+  }
+  if (summary.hasRuntimeError) {
+    lines.push('Purity checker unavailable due to runtime error.');
+  } else if (summary.hasAnyError) {
     const impureRuns = summary.runs.filter((run) => !run.isPure);
     if (impureRuns.length > 0) {
       const preview = impureRuns.slice(0, 3).map((run) => {
@@ -3710,21 +3749,30 @@ function updateBatchPurityIndicator(summaryOverride) {
   indicator.textContent = 'Purity: n/a';
   indicator.removeAttribute('title');
   indicator.setAttribute('aria-label', 'Purity status: not available');
-  if (!summary || summary.totalRuns === 0) {
+  if (!summary) {
     return;
   }
-  const isOk = !summary.hasAnyError;
+  const isError = Boolean(summary.hasRuntimeError);
+  const hasRuns = summary.totalRuns > 0;
+  if (!hasRuns && !isError) {
+    return;
+  }
+  const isOk = !summary.hasAnyError && !isError;
   indicator.classList.add(isOk ? 'purity-pill--ok' : 'purity-pill--error');
-  const text = isOk
-    ? `Purity: OK (${summary.pureRuns}/${summary.totalRuns})`
-    : `Purity: FAILED (${summary.impureRuns}/${summary.totalRuns})`;
+  let text = 'Purity: n/a';
+  let ariaLabel = 'Purity status: not available';
+  if (isError) {
+    text = 'Purity: ERROR';
+    ariaLabel = 'Purity checker encountered an error';
+  } else if (isOk) {
+    text = `Purity: OK (${summary.pureRuns}/${summary.totalRuns})`;
+    ariaLabel = `Batch purity ok (${summary.pureRuns} of ${summary.totalRuns} runs pure)`;
+  } else {
+    text = `Purity: FAILED (${summary.impureRuns}/${summary.totalRuns})`;
+    ariaLabel = `Batch purity failed (${summary.impureRuns} of ${summary.totalRuns} runs impure)`;
+  }
   indicator.textContent = text;
-  indicator.setAttribute(
-    'aria-label',
-    isOk
-      ? `Batch purity ok (${summary.pureRuns} of ${summary.totalRuns} runs pure)`
-      : `Batch purity failed (${summary.impureRuns} of ${summary.totalRuns} runs impure)`
-  );
+  indicator.setAttribute('aria-label', ariaLabel);
   const tooltip = buildBatchPuritySummaryTooltip(summary);
   if (tooltip) {
     indicator.title = tooltip;
