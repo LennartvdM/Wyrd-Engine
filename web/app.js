@@ -169,6 +169,11 @@ const batchState = {
   highlightedActivityKey: '',
   purityIndicator: null,
   puritySummary: null,
+  purityPanel: null,
+  purityPanelStatus: null,
+  purityPanelHeader: null,
+  purityPanelList: null,
+  latestPurityReport: null,
 };
 
 const RANDOMIZE_SEED_STORAGE_KEY = 'cfg.calendar.randomizeSeed';
@@ -4110,6 +4115,58 @@ function updateBatchPurityIndicator(summaryOverride) {
   }
 }
 
+function renderBatchPurityPanel(reportOverride) {
+  const panel = batchState.purityPanel;
+  if (!panel) {
+    return;
+  }
+
+  const report =
+    typeof reportOverride === 'undefined' ? batchState.latestPurityReport : reportOverride;
+
+  if (!report || !report.human) {
+    panel.hidden = true;
+    return;
+  }
+
+  const totalRuns = Number.isFinite(report.batchSize) ? report.batchSize : report.totalRuns || 0;
+  const pureRuns = Number.isFinite(report.pureRuns) ? report.pureRuns : 0;
+  const impureRuns = Number.isFinite(report.impureRuns) ? report.impureRuns : 0;
+  const statusText =
+    impureRuns > 0
+      ? `FAILED (${impureRuns}/${totalRuns} impure)`
+      : `OK (${pureRuns}/${totalRuns} pure)`;
+
+  if (batchState.purityPanelStatus) {
+    batchState.purityPanelStatus.textContent = statusText;
+  }
+
+  if (batchState.purityPanelHeader) {
+    const headerText = typeof report.human.header === 'string' ? report.human.header : '';
+    batchState.purityPanelHeader.textContent = headerText;
+  }
+
+  const lines = Array.isArray(report.human.lines) ? report.human.lines : [];
+  const list = batchState.purityPanelList;
+  if (list) {
+    list.innerHTML = '';
+    if (lines.length === 0) {
+      list.hidden = true;
+    } else {
+      list.hidden = false;
+      const fragment = document.createDocumentFragment();
+      lines.forEach((line) => {
+        const item = document.createElement('li');
+        item.textContent = line;
+        fragment.append(item);
+      });
+      list.append(fragment);
+    }
+  }
+
+  panel.hidden = false;
+}
+
 function logBatchPurityReport(summary) {
   if (!summary) {
     return;
@@ -4226,6 +4283,8 @@ function logBatchPurityReport(summary) {
       },
     };
 
+    batchState.latestPurityReport = purityReport;
+    renderBatchPurityPanel(purityReport);
     console.warn('[Purity][REPORT] ' + JSON.stringify(purityReport));
   } catch (error) {
     console.error('[Purity] Failed to build structured purity report:', error);
@@ -4653,10 +4712,12 @@ async function runBatchGenerations(count) {
   batchState.completedRuns = 0;
   batchState.results = [];
   batchState.puritySummary = null;
+  batchState.latestPurityReport = null;
   renderBatchResults();
   updateBatchSummary();
   updateBatchControlsState();
   updateBatchPurityIndicator();
+  renderBatchPurityPanel(null);
 
   const results = [];
   const batchRunsTruth = [];
@@ -4814,6 +4875,10 @@ function hydrateBatchPanel() {
   batchState.legendList = panel.querySelector('[data-batch-legend-list]');
   batchState.legendEmpty = panel.querySelector('[data-batch-legend-empty]');
   batchState.purityIndicator = panel.querySelector('[data-purity-indicator]');
+  batchState.purityPanel = panel.querySelector('[data-batch-purity-panel]');
+  batchState.purityPanelStatus = panel.querySelector('[data-batch-purity-status]');
+  batchState.purityPanelHeader = panel.querySelector('[data-batch-purity-header]');
+  batchState.purityPanelList = panel.querySelector('[data-batch-purity-list]');
 
   batchState.sizeButtons = new Map();
   const sizeButtons = panel.querySelectorAll('[data-batch-size]');
@@ -4891,6 +4956,7 @@ function hydrateBatchPanel() {
   updateBatchSummary();
   updateBatchControlsState();
   updateBatchPurityIndicator();
+  renderBatchPurityPanel();
 }
 
 function setConsoleOutputContent(element, text, defaultMessage) {
