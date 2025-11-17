@@ -796,6 +796,14 @@ body {
   flex-wrap: wrap;
 }
 
+.batch-purity-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
 .batch-purity-title {
   margin: 0;
   font-size: 14px;
@@ -813,6 +821,28 @@ body {
   color: rgba(248, 250, 252, 0.9);
 }
 
+.batch-purity-toggle {
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  padding: 4px 10px;
+  border-color: rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.6);
+  color: #e2e8f0;
+}
+
+.batch-purity-toggle:hover:not(:disabled) {
+  background: rgba(71, 85, 105, 0.6);
+  color: #ffffff;
+}
+
+.batch-purity-toggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: rgba(15, 23, 42, 0.45);
+  color: rgba(226, 232, 240, 0.6);
+}
+
 .batch-purity-subheader {
   margin: 0;
   font-size: 13px;
@@ -827,6 +857,22 @@ body {
   gap: 4px;
   font-size: 12px;
   color: rgba(203, 213, 225, 0.85);
+}
+
+.batch-purity-narrative {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(203, 213, 225, 0.75);
+}
+
+.batch-purity-narrative p {
+  margin: 0;
 }
 
 .batch-controls__heading-row {
