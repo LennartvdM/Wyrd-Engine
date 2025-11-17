@@ -3741,52 +3741,10 @@ function formatPurityPercent(value) {
 
 function buildPurityObservations(summary) {
   const lines = [];
-  if (!summary) {
-    return lines;
-  }
-  const totalRuns = Number.isFinite(summary.totalRuns) ? summary.totalRuns : 0;
-  const pureRuns = Number.isFinite(summary.pureRuns) ? summary.pureRuns : 0;
-  const impureRuns = Number.isFinite(summary.impureRuns) ? summary.impureRuns : 0;
-  const statusLabel = summary.didCheckerError
-    ? 'ERROR'
-    : summary.hasAnyError
-    ? 'FAILED'
-    : 'OK';
-  if (totalRuns > 0) {
-    const statusParts = [`Purity status: ${statusLabel}.`];
-    if (summary.didCheckerError) {
-      statusParts.push('Checker encountered errors.');
-    } else if (impureRuns > 0) {
-      statusParts.push(`${impureRuns}/${totalRuns} runs show drift between raw and share totals.`);
-    } else {
-      statusParts.push(`All ${pureRuns}/${totalRuns} runs are pure.`);
-    }
-    lines.push(`Overall: ${statusParts.join(' ')}`);
-  }
-
-  const analysis = summary.analysis;
+  const analysis = summary?.analysis;
+  const totalRuns = Number.isFinite(summary?.totalRuns) ? summary.totalRuns : 0;
   if (!analysis || !totalRuns) {
     return lines;
-  }
-
-  if (Number.isFinite(analysis.avgRawTotal)) {
-    const avgRaw = formatPurityMinutes(analysis.avgRawTotal);
-    const avgShare = formatPurityMinutes(analysis.avgShareTotal);
-    const avgSequence = formatPurityMinutes(analysis.avgSequenceTotal);
-    lines.push(
-      `Overall: Average total minutes per run: raw=${avgRaw}, share=${avgShare}, sequence=${avgSequence}.`
-    );
-
-    const shareDiff = analysis.avgShareTotal - analysis.avgRawTotal;
-    const percentDiff = analysis.avgRawTotal === 0 ? null : shareDiff / analysis.avgRawTotal;
-    if (Math.abs(shareDiff) >= 1) {
-      const direction = shareDiff < 0 ? 'missing' : 'over-reporting';
-      const percentText = formatPurityPercent(percentDiff);
-      const percentSuffix = percentText === 'n/a' ? '' : ` (≈ ${percentText}).`;
-      const driftMinutesText = formatPurityMinutes(Math.abs(shareDiff));
-      const baseText = `Overall: On average, share is ${direction} ${driftMinutesText} minutes per run compared to raw`;
-      lines.push(percentSuffix ? `${baseText}${percentSuffix}` : `${baseText}.`);
-    }
   }
 
   const activityThresholdMinutes = 60;
@@ -3810,14 +3768,14 @@ function buildPurityObservations(summary) {
     .slice(0, 3);
 
   significantActivities.forEach((activity) => {
-    const driftMinutes = activity.avgShareDriftMinutes || 0;
-    const direction = driftMinutes < 0 ? 'undercounted' : 'overcounted';
     const label = activity.label || activity.key || 'activity';
+    const avgRawText = formatPurityMinutes(activity.avgRawPerRun);
+    const avgShareText = formatPurityMinutes(activity.avgSharePerRun);
+    const driftMinutesText = formatPurityMinutes(activity.avgShareDriftMinutes || 0);
     const percentText = formatPurityPercent(activity.avgShareDriftPercent);
-    const percentSuffix = percentText === 'n/a' ? '' : ` (≈ ${percentText} vs raw)`;
-    const driftMinutesText = formatPurityMinutes(Math.abs(driftMinutes));
+    const percentSuffix = percentText === 'n/a' ? '' : ` (≈ ${percentText})`;
     lines.push(
-      `Activity '${label}' is ${direction} in share by an average of ${driftMinutesText} minutes per run${percentSuffix}.`
+      `ACTIVITY | ${label} | avg raw/share per run: ${avgRawText} / ${avgShareText} | drift: ${driftMinutesText} min${percentSuffix}`
     );
   });
 
@@ -3842,7 +3800,7 @@ function buildPurityObservations(summary) {
     }
     const minMagnitudeText = formatPurityMinutes(minMagnitude);
     lines.push(
-      `Runs: Largest total drift in runs ${runLabels.join(', ')} (share ${descriptor} ≥ ${minMagnitudeText} minutes each).`
+      `RUNS | worst total drift: ${runLabels.join(', ')} (share ${descriptor} ≥ ${minMagnitudeText} min each)`
     );
   }
 
@@ -3850,6 +3808,7 @@ function buildPurityObservations(summary) {
 }
 
 function buildPuritySummaryLines(summary, observations) {
+  const lines = [];
   const totalRuns = Number.isFinite(summary?.totalRuns) ? summary.totalRuns : 0;
   const pureRuns = Number.isFinite(summary?.pureRuns) ? summary.pureRuns : 0;
   const impureRuns = Number.isFinite(summary?.impureRuns) ? summary.impureRuns : 0;
@@ -3857,23 +3816,33 @@ function buildPuritySummaryLines(summary, observations) {
   const checkerErrorRuns = runs.filter((run) => run && run.didError).length;
   const hasCheckerError = Boolean(summary?.didCheckerError);
   const errorCount = hasCheckerError ? Math.max(1, checkerErrorRuns) : checkerErrorRuns;
-  const headerStats = [`Batch size: ${totalRuns}`, `Pure: ${pureRuns}`, `Impure: ${impureRuns}`];
+  const statusLabel = hasCheckerError ? 'ERROR' : summary?.hasAnyError ? 'FAILED' : 'OK';
+  const statusParts = [`runs: ${totalRuns} total, ${pureRuns} pure, ${impureRuns} impure`];
   if (errorCount > 0) {
-    headerStats.push(`Checker errors: ${errorCount}`);
+    statusParts.push(`checker errors: ${errorCount}`);
   }
-  const summaryLines = Array.isArray(observations) && observations.length > 0
-    ? observations
-    : ['(No observations available.)'];
-  const headerLine = '============================================================';
-  const separatorLine = '------------------------------------------------------------';
-  const lines = [
-    headerLine,
-    `PURITY REPORT | ${headerStats.join(' | ')}`,
-    headerLine,
-    ...summaryLines.map((line) => `Overall: ${line}`),
-    separatorLine,
-    '(Full raw purity data continues below…)',
-  ];
+  lines.push(`STATUS | ${statusLabel} | ${statusParts.join(' | ')}`);
+
+  const analysis = summary?.analysis;
+  if (analysis && totalRuns > 0) {
+    const avgRaw = formatPurityMinutes(analysis.avgRawTotal);
+    const avgShare = formatPurityMinutes(analysis.avgShareTotal);
+    const avgSequence = formatPurityMinutes(analysis.avgSequenceTotal);
+    lines.push(`TOTALS | avg raw/share/sequence per run: ${avgRaw} / ${avgShare} / ${avgSequence}`);
+
+    const shareDiff = (Number(analysis.avgShareTotal) || 0) - (Number(analysis.avgRawTotal) || 0);
+    const percentDiff = analysis.avgRawTotal === 0 ? null : shareDiff / analysis.avgRawTotal;
+    const driftMinutesText = formatPurityMinutes(shareDiff);
+    const percentText = formatPurityPercent(percentDiff);
+    const percentSuffix = percentText === 'n/a' ? '' : ` (≈ ${percentText})`;
+    lines.push(`TOTALS | avg drift (share vs raw): ${driftMinutesText} min per run${percentSuffix}`);
+  }
+
+  if (Array.isArray(observations) && observations.length > 0) {
+    lines.push(...observations);
+  }
+
+  lines.push('NOTE | Full raw purity data continues below…');
   return lines;
 }
 
