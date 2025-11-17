@@ -3849,7 +3849,7 @@ function buildPurityObservations(summary) {
   return lines;
 }
 
-function formatPuritySummaryBlock(summary, observations) {
+function buildPuritySummaryLines(summary, observations) {
   const totalRuns = Number.isFinite(summary?.totalRuns) ? summary.totalRuns : 0;
   const pureRuns = Number.isFinite(summary?.pureRuns) ? summary.pureRuns : 0;
   const impureRuns = Number.isFinite(summary?.impureRuns) ? summary.impureRuns : 0;
@@ -3861,26 +3861,20 @@ function formatPuritySummaryBlock(summary, observations) {
   if (errorCount > 0) {
     headerStats.push(`Checker errors: ${errorCount}`);
   }
-  const headerTitle = 'PURITY REPORT';
-  const headerContent = `${headerTitle}  |  ${headerStats.join('  |  ')}`;
-  const headerWidth = Math.max(60, Math.min(100, headerContent.length));
-  const headerLine = '='.repeat(headerWidth);
-  const separatorLine = '-'.repeat(headerWidth);
-
-  const blockLines = [headerLine, headerContent, headerLine, ''];
-  blockLines.push('SUMMARY');
-  blockLines.push('');
   const summaryLines = Array.isArray(observations) && observations.length > 0
     ? observations
     : ['(No observations available.)'];
-  summaryLines.forEach((line) => {
-    blockLines.push(`  ${line}`);
-  });
-  blockLines.push('');
-  blockLines.push(separatorLine);
-  blockLines.push('(Full raw purity data continues below…)');
-  blockLines.push(separatorLine);
-  return blockLines.join('\n');
+  const headerLine = '============================================================';
+  const separatorLine = '------------------------------------------------------------';
+  const lines = [
+    headerLine,
+    `PURITY REPORT | ${headerStats.join(' | ')}`,
+    headerLine,
+    ...summaryLines.map((line) => `Overall: ${line}`),
+    separatorLine,
+    '(Full raw purity data continues below…)',
+  ];
+  return lines;
 }
 
 function cancelBatchFitMeasurement() {
@@ -4154,11 +4148,13 @@ function logBatchPurityReport(summary) {
 
   try {
     const observationLines = buildPurityObservations(summary);
-    const summaryBlock = formatPuritySummaryBlock(summary, observationLines);
-    appendLogEntry({ level: logLevel, message: `[Purity]\n${summaryBlock}` });
+    const summaryLines = buildPuritySummaryLines(summary, observationLines);
+    summaryLines.forEach((line) => {
+      appendLogEntry({ level: logLevel, message: `[Purity][Summary] ${line}` });
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    appendLogEntry({ level: 'warn', message: `[Purity] ERROR building human summary: ${message}` });
+    appendLogEntry({ level: 'warn', message: `[Purity][Summary] ERROR building summary: ${message}` });
   }
 
   try {
