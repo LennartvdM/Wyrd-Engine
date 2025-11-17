@@ -778,6 +778,57 @@ body {
   flex-wrap: wrap;
 }
 
+.batch-purity-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.batch-purity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.batch-purity-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #e2e8f0;
+}
+
+.batch-purity-status {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(248, 250, 252, 0.9);
+}
+
+.batch-purity-subheader {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(226, 232, 240, 0.9);
+}
+
+.batch-purity-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: rgba(203, 213, 225, 0.85);
+}
+
 .batch-controls__heading-row {
   display: flex;
   align-items: center;
