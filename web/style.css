@@ -764,13 +764,31 @@ body {
   overflow-x: hidden;
 }
 
-.batch-controls__header,
+.batch-controls__header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .batch-results__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.batch-controls__heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.batch-controls__heading-row .purity-pill {
+  margin-left: auto;
 }
 
 .batch-results__controls {
