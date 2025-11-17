@@ -3208,6 +3208,71 @@ function buildBatchSequenceSegments(eventsOrSchedule, { activities = [], shareSe
   return segments;
 }
 
+function buildBatchRawEvents(eventsOrSchedule) {
+  const events = resolveBatchSequenceEvents(eventsOrSchedule);
+  if (!events.length) {
+    return [];
+  }
+  const dateLookup = buildBatchDateOrderLookup(events);
+  return events
+    .map((event, index) => {
+      if (!event || typeof event !== 'object') {
+        return null;
+      }
+
+      const range = resolveBatchAbsoluteRange(event, dateLookup);
+      let start = null;
+      let end = null;
+      let duration = 0;
+
+      if (range && range.length >= 2) {
+        start = range[0];
+        end = range[1];
+        duration = end - start;
+      } else {
+        duration = computeBatchEventDuration(event);
+      }
+
+      if (!(duration > 0)) {
+        return null;
+      }
+
+      if (!Number.isFinite(start)) {
+        const fallbackStart =
+          coerceFiniteNumber(event.start_minutes ?? event.startMinutes) ??
+          parseBatchTimeToMinutes(event.start);
+        if (Number.isFinite(fallbackStart)) {
+          start = fallbackStart;
+        }
+      }
+
+      if (!Number.isFinite(end) && Number.isFinite(start)) {
+        end = start + duration;
+      }
+
+      const label = event.label || event.activity || 'Activity';
+      let activityId = pickActivityId(event.activityId, event.activity, label);
+      let activityKey = normalizeActivityKey(activityId);
+      if (!activityKey && label) {
+        activityKey = normalizeActivityKey(label);
+        if (activityKey && !activityId) {
+          activityId = label;
+        }
+      }
+
+      return {
+        index,
+        label,
+        activityId: activityId || label,
+        activityKey,
+        startMinute: Number.isFinite(start) ? start : null,
+        endMinute: Number.isFinite(end) ? end : null,
+        duration,
+      };
+    })
+    .filter(Boolean);
+}
+
 function getBatchSegmentMinutes(segment) {
   if (!segment || typeof segment !== 'object') {
     return 0;
@@ -3221,6 +3286,128 @@ function getBatchSegmentMinutes(segment) {
     return duration;
   }
   return 0;
+}
+
+function getRawEventDuration(event) {
+  if (!event || typeof event !== 'object') {
+    return 0;
+  }
+  const duration = Number(event.duration);
+  if (Number.isFinite(duration) && duration > 0) {
+    return duration;
+  }
+  const start = Number(event.startMinute);
+  const end = Number(event.endMinute);
+  if (Number.isFinite(start) && Number.isFinite(end)) {
+    return Math.max(0, end - start);
+  }
+  return 0;
+}
+
+function resolveActivityIdentifier(entry, fallbackLabel = '') {
+  const candidate = pickActivityId(entry?.activityId, entry?.id, entry?.label, entry?.name);
+  if (candidate) {
+    return candidate;
+  }
+  if (typeof entry?.activityKey === 'string' && entry.activityKey) {
+    return entry.activityKey;
+  }
+  if (typeof fallbackLabel === 'string' && fallbackLabel) {
+    return fallbackLabel;
+  }
+  return '';
+}
+
+function accumulateActivityMinutes(items, resolveId, resolveMinutes) {
+  const map = new Map();
+  (Array.isArray(items) ? items : []).forEach((item, index) => {
+    const minutes = resolveMinutes(item);
+    if (!(minutes > 0)) {
+      return;
+    }
+    const resolvedId = resolveId(item, index);
+    const displayId = resolvedId || `activity-${index + 1}`;
+    const normalizedKey = normalizeActivityKey(resolvedId);
+    const key = normalizedKey || displayId;
+    if (map.has(key)) {
+      map.get(key).minutes += minutes;
+    } else {
+      map.set(key, { id: displayId, minutes });
+    }
+  });
+  return map;
+}
+
+function auditBatchRunPurity(truth) {
+  if (!truth || typeof truth !== 'object') {
+    return false;
+  }
+  const runIndex = Number.isFinite(truth.runIndex) ? truth.runIndex : 0;
+  const rawEvents = Array.isArray(truth.rawEvents) ? truth.rawEvents : [];
+  const shareSegments = Array.isArray(truth.shareSegments) ? truth.shareSegments : [];
+  const sequenceSegments = Array.isArray(truth.sequenceSegments) ? truth.sequenceSegments : [];
+
+  const rawTotal = rawEvents.reduce((sum, event) => sum + getRawEventDuration(event), 0);
+  const shareTotal = shareSegments.reduce((sum, segment) => sum + getBatchSegmentMinutes(segment), 0);
+  const sequenceTotal = sequenceSegments.reduce(
+    (sum, segment) => sum + getBatchSegmentMinutes(segment),
+    0
+  );
+
+  const rawByActivity = accumulateActivityMinutes(
+    rawEvents,
+    (event) => resolveActivityIdentifier(event, event?.label),
+    getRawEventDuration
+  );
+  const shareByActivity = accumulateActivityMinutes(
+    shareSegments,
+    (segment) => resolveActivityIdentifier(segment, segment?.label),
+    getBatchSegmentMinutes
+  );
+  const sequenceByActivity = accumulateActivityMinutes(
+    sequenceSegments,
+    (segment) => resolveActivityIdentifier(segment, segment?.label),
+    getBatchSegmentMinutes
+  );
+
+  console.log(
+    `[Purity] Run #${runIndex}: totals raw/share/sequence =`,
+    rawTotal,
+    shareTotal,
+    sequenceTotal
+  );
+
+  const activityKeys = new Set([
+    ...rawByActivity.keys(),
+    ...shareByActivity.keys(),
+    ...sequenceByActivity.keys(),
+  ]);
+
+  let allActivitiesMatch = true;
+  activityKeys.forEach((key) => {
+    const rawValue = rawByActivity.get(key)?.minutes ?? 0;
+    const shareValue = shareByActivity.get(key)?.minutes ?? 0;
+    const sequenceValue = sequenceByActivity.get(key)?.minutes ?? 0;
+    const label =
+      rawByActivity.get(key)?.id ||
+      shareByActivity.get(key)?.id ||
+      sequenceByActivity.get(key)?.id ||
+      key ||
+      'activity';
+    if (!(rawValue === shareValue && rawValue === sequenceValue)) {
+      allActivitiesMatch = false;
+    }
+    console.log(
+      `[Purity] Run #${runIndex} activity=${label} raw/share/sequence =`,
+      rawValue,
+      shareValue,
+      sequenceValue
+    );
+  });
+
+  const isPure = rawTotal === shareTotal && rawTotal === sequenceTotal && allActivitiesMatch;
+  console.log(`[Purity] Run #${runIndex} ${isPure ? 'OK' : 'MISMATCH'}`);
+  return isPure;
 }
 
 function cancelBatchFitMeasurement() {
@@ -3775,6 +3962,7 @@ async function runBatchGenerations(count) {
   updateBatchControlsState();
 
   const results = [];
+  const puritySummary = { totalRuns: 0, pureRuns: 0 };
 
   try {
     await ensureRuntimeLoaded();
@@ -3838,6 +4026,18 @@ async function runBatchGenerations(count) {
         shareSegments: segments,
       });
 
+      const rawEvents = buildBatchRawEvents(result);
+      const isPure = auditBatchRunPurity({
+        runIndex: index + 1,
+        rawEvents,
+        shareSegments: segments,
+        sequenceSegments,
+      });
+      puritySummary.totalRuns += 1;
+      if (isPure) {
+        puritySummary.pureRuns += 1;
+      }
+
       results.push({
         index: index + 1,
         totalMinutes,
@@ -3884,6 +4084,11 @@ async function runBatchGenerations(count) {
     renderBatchResults();
     updateBatchSummary();
     updateBatchControlsState();
+    if (puritySummary.totalRuns > 0) {
+      console.log(
+        `[Purity] Batch complete: ${puritySummary.pureRuns}/${puritySummary.totalRuns} runs pure`
+      );
+    }
   }
 }
 
