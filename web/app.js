@@ -3741,10 +3741,55 @@ function formatPurityPercent(value) {
 
 function buildPurityObservations(summary) {
   const lines = [];
-  const analysis = summary?.analysis;
   const totalRuns = Number.isFinite(summary?.totalRuns) ? summary.totalRuns : 0;
-  if (!analysis || !totalRuns) {
+  const impureRuns = Number.isFinite(summary?.impureRuns) ? summary.impureRuns : 0;
+  const runs = Array.isArray(summary?.runs) ? summary.runs : [];
+  const checkerErrorRuns = runs.filter((run) => run && run.didError).length;
+  const hasCheckerError = Boolean(summary?.didCheckerError) || checkerErrorRuns > 0;
+  const statusLabel = hasCheckerError ? 'ERROR' : summary?.hasAnyError ? 'FAILED' : 'OK';
+  const detailParts = [];
+  if (totalRuns <= 0) {
+    detailParts.push('No runs analyzed.');
+  } else {
+    if (impureRuns > 0) {
+      detailParts.push(`${impureRuns}/${totalRuns} runs show drift between raw and share totals.`);
+    }
+    if (checkerErrorRuns > 0) {
+      detailParts.push(`${checkerErrorRuns}/${totalRuns} runs had checker errors.`);
+    }
+    if (detailParts.length === 0) {
+      detailParts.push(`All ${totalRuns} runs match raw and share totals.`);
+    }
+  }
+  lines.push(`Overall: Purity status: ${statusLabel}. ${detailParts.join(' ')}`);
+
+  const analysis = summary?.analysis;
+  if (!analysis || totalRuns <= 0) {
     return lines;
+  }
+
+  const avgRaw = formatPurityMinutes(analysis.avgRawTotal);
+  const avgShare = formatPurityMinutes(analysis.avgShareTotal);
+  const avgSequence = formatPurityMinutes(analysis.avgSequenceTotal);
+  lines.push(
+    `Overall: Average total minutes per run: raw=${avgRaw}, share=${avgShare}, sequence=${avgSequence}.`
+  );
+
+  const shareDiff = (Number(analysis.avgShareTotal) || 0) - (Number(analysis.avgRawTotal) || 0);
+  const percentDiff = analysis.avgRawTotal === 0 ? null : shareDiff / analysis.avgRawTotal;
+  const driftMagnitudeText = formatPurityMinutes(Math.abs(shareDiff));
+  const percentText = formatPurityPercent(percentDiff);
+  const percentSuffix = percentText === 'n/a' ? '' : ` (≈ ${percentText})`;
+  if (shareDiff < 0) {
+    lines.push(
+      `Overall: On average, share is missing ${driftMagnitudeText} minutes per run compared to raw${percentSuffix}.`
+    );
+  } else if (shareDiff > 0) {
+    lines.push(
+      `Overall: On average, share is over-reporting ${driftMagnitudeText} minutes per run compared to raw${percentSuffix}.`
+    );
+  } else {
+    lines.push('Overall: On average, share matches raw totals per run.');
   }
 
   const activityThresholdMinutes = 60;
@@ -3769,13 +3814,13 @@ function buildPurityObservations(summary) {
 
   significantActivities.forEach((activity) => {
     const label = activity.label || activity.key || 'activity';
-    const avgRawText = formatPurityMinutes(activity.avgRawPerRun);
-    const avgShareText = formatPurityMinutes(activity.avgSharePerRun);
-    const driftMinutesText = formatPurityMinutes(activity.avgShareDriftMinutes || 0);
+    const driftMinutes = Number(activity.avgShareDriftMinutes) || 0;
+    const driftMagnitudeText = formatPurityMinutes(Math.abs(driftMinutes));
     const percentText = formatPurityPercent(activity.avgShareDriftPercent);
-    const percentSuffix = percentText === 'n/a' ? '' : ` (≈ ${percentText})`;
+    const percentSuffix = percentText === 'n/a' ? '' : ` (≈ ${percentText} vs raw)`;
+    const descriptor = driftMinutes < 0 ? 'undercounted' : 'overcounted';
     lines.push(
-      `ACTIVITY | ${label} | avg raw/share per run: ${avgRawText} / ${avgShareText} | drift: ${driftMinutesText} min${percentSuffix}`
+      `Activity '${label}' is ${descriptor} in share by an average of ${driftMagnitudeText} minutes per run${percentSuffix}.`
     );
   });
 
@@ -3800,49 +3845,10 @@ function buildPurityObservations(summary) {
     }
     const minMagnitudeText = formatPurityMinutes(minMagnitude);
     lines.push(
-      `RUNS | worst total drift: ${runLabels.join(', ')} (share ${descriptor} ≥ ${minMagnitudeText} min each)`
+      `Runs: Largest total drift in runs ${runLabels.join(', ')} (share ${descriptor} ≥ ${minMagnitudeText} minutes each).`
     );
   }
 
-  return lines;
-}
-
-function buildPuritySummaryLines(summary, observations) {
-  const lines = [];
-  const totalRuns = Number.isFinite(summary?.totalRuns) ? summary.totalRuns : 0;
-  const pureRuns = Number.isFinite(summary?.pureRuns) ? summary.pureRuns : 0;
-  const impureRuns = Number.isFinite(summary?.impureRuns) ? summary.impureRuns : 0;
-  const runs = Array.isArray(summary?.runs) ? summary.runs : [];
-  const checkerErrorRuns = runs.filter((run) => run && run.didError).length;
-  const hasCheckerError = Boolean(summary?.didCheckerError);
-  const errorCount = hasCheckerError ? Math.max(1, checkerErrorRuns) : checkerErrorRuns;
-  const statusLabel = hasCheckerError ? 'ERROR' : summary?.hasAnyError ? 'FAILED' : 'OK';
-  const statusParts = [`runs: ${totalRuns} total, ${pureRuns} pure, ${impureRuns} impure`];
-  if (errorCount > 0) {
-    statusParts.push(`checker errors: ${errorCount}`);
-  }
-  lines.push(`STATUS | ${statusLabel} | ${statusParts.join(' | ')}`);
-
-  const analysis = summary?.analysis;
-  if (analysis && totalRuns > 0) {
-    const avgRaw = formatPurityMinutes(analysis.avgRawTotal);
-    const avgShare = formatPurityMinutes(analysis.avgShareTotal);
-    const avgSequence = formatPurityMinutes(analysis.avgSequenceTotal);
-    lines.push(`TOTALS | avg raw/share/sequence per run: ${avgRaw} / ${avgShare} / ${avgSequence}`);
-
-    const shareDiff = (Number(analysis.avgShareTotal) || 0) - (Number(analysis.avgRawTotal) || 0);
-    const percentDiff = analysis.avgRawTotal === 0 ? null : shareDiff / analysis.avgRawTotal;
-    const driftMinutesText = formatPurityMinutes(shareDiff);
-    const percentText = formatPurityPercent(percentDiff);
-    const percentSuffix = percentText === 'n/a' ? '' : ` (≈ ${percentText})`;
-    lines.push(`TOTALS | avg drift (share vs raw): ${driftMinutesText} min per run${percentSuffix}`);
-  }
-
-  if (Array.isArray(observations) && observations.length > 0) {
-    lines.push(...observations);
-  }
-
-  lines.push('NOTE | Full raw purity data continues below…');
   return lines;
 }
 
@@ -4112,18 +4118,20 @@ function logBatchPurityReport(summary) {
   const pureRuns = Number.isFinite(summary.pureRuns) ? summary.pureRuns : 0;
   const impureRuns = Number.isFinite(summary.impureRuns) ? summary.impureRuns : 0;
   const runs = Array.isArray(summary.runs) ? summary.runs : [];
-  const errorRuns = runs.filter((run) => run && run.didError).length;
-  const logLevel = summary.hasAnyError ? 'warn' : 'info';
+
+  appendLogEntry({
+    level: 'warn',
+    message: `[Purity] Batch analysis: ${totalRuns} runs, pure=${pureRuns}, impure=${impureRuns}`,
+  });
 
   try {
     const observationLines = buildPurityObservations(summary);
-    const summaryLines = buildPuritySummaryLines(summary, observationLines);
-    summaryLines.forEach((line) => {
-      appendLogEntry({ level: logLevel, message: `[Purity][Summary] ${line}` });
+    observationLines.forEach((line) => {
+      appendLogEntry({ level: 'warn', message: `[Purity] ${line}` });
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    appendLogEntry({ level: 'warn', message: `[Purity][Summary] ERROR building summary: ${message}` });
+    appendLogEntry({ level: 'warn', message: `[Purity] ERROR building summary: ${message}` });
   }
 
   try {
