@@ -2363,6 +2363,14 @@ const logsPanel = document.querySelector('.tab-panel[data-tab="logs"]');
 const defaultStdoutMessage = 'Program output will appear here.';
 const defaultStderrMessage = 'Error output will appear here.';
 const defaultResultMessage = 'Result JSON will appear here.';
+const defaultLogsMessage = 'Log messages will appear here as they stream in.';
+
+const LOG_ENTRY_LIMIT = 500;
+const logsState = {
+  output: null,
+  clearButton: null,
+  entries: [],
+};
 
 const consoleRuntimePresets = {
   'mk2-quick-test': {
@@ -3349,6 +3357,15 @@ function accumulateActivityMinutes(items, resolveId, resolveMinutes) {
  * @property {number} totalSequence
  * @property {string[]} mismatchedActivities
  * @property {boolean} [didError]
+ * @property {Array<{
+ *   key: string,
+ *   label: string,
+ *   raw: number,
+ *   share: number,
+ *   sequence: number,
+ *   isMatch: boolean,
+ * }>} [activityTotals]
+ * @property {string} [errorMessage]
  */
 
 /**
@@ -3371,6 +3388,8 @@ function auditBatchRunPurity(truth) {
     totalShare: 0,
     totalSequence: 0,
     mismatchedActivities: [],
+    activityTotals: [],
+    errorMessage: '',
   };
 
   if (!safeTruth) {
@@ -3422,6 +3441,7 @@ function auditBatchRunPurity(truth) {
 
     let allActivitiesMatch = true;
     const mismatchedActivities = [];
+    const activityTotals = [];
     activityKeys.forEach((key) => {
       const rawValue = rawByActivity.get(key)?.minutes ?? 0;
       const shareValue = shareByActivity.get(key)?.minutes ?? 0;
@@ -3432,7 +3452,16 @@ function auditBatchRunPurity(truth) {
         sequenceByActivity.get(key)?.id ||
         key ||
         'activity';
-      if (!(rawValue === shareValue && rawValue === sequenceValue)) {
+      const isMatch = rawValue === shareValue && rawValue === sequenceValue;
+      activityTotals.push({
+        key: String(key || label || `activity-${activityTotals.length + 1}`),
+        label: String(label || key || `activity-${activityTotals.length + 1}`),
+        raw: rawValue,
+        share: shareValue,
+        sequence: sequenceValue,
+        isMatch,
+      });
+      if (!isMatch) {
         allActivitiesMatch = false;
         const mismatchLabel = label || key || `activity-${mismatchedActivities.length + 1}`;
         mismatchedActivities.push(String(mismatchLabel));
@@ -3454,10 +3483,12 @@ function auditBatchRunPurity(truth) {
       totalShare: shareTotal,
       totalSequence: sequenceTotal,
       mismatchedActivities,
+      activityTotals,
     };
   } catch (error) {
     console.error(`[Purity] Checker crashed while auditing run #${runIndex}`, error);
-    return { ...fallbackResult, didError: true };
+    const message = typeof error?.message === 'string' ? error.message : 'Unexpected error.';
+    return { ...fallbackResult, didError: true, errorMessage: message };
   }
 }
 
@@ -3774,6 +3805,71 @@ function updateBatchPurityIndicator(summaryOverride) {
     : buildBatchPuritySummaryTooltip(summary);
   if (tooltip) {
     indicator.title = tooltip;
+  }
+}
+
+function logBatchPurityReport(summary) {
+  if (!summary) {
+    return;
+  }
+  try {
+    const totalRuns = Number.isFinite(summary.totalRuns) ? summary.totalRuns : 0;
+    const pureRuns = Number.isFinite(summary.pureRuns) ? summary.pureRuns : 0;
+    const impureRuns = Number.isFinite(summary.impureRuns) ? summary.impureRuns : 0;
+    const runs = Array.isArray(summary.runs) ? summary.runs : [];
+    const errorRuns = runs.filter((run) => run && run.didError).length;
+    const headerParts = [`[Purity] Batch complete: ${totalRuns} runs`, `pure=${pureRuns}`, `impure=${impureRuns}`];
+    if (errorRuns > 0 || summary.didCheckerError) {
+      const errorCount = errorRuns > 0 ? errorRuns : 1;
+      headerParts.push(`checkerErrors=${errorCount}`);
+    }
+    appendLogEntry({
+      level: summary.hasAnyError ? 'warn' : 'info',
+      message: headerParts.join(', '),
+    });
+
+    runs.forEach((run, index) => {
+      if (!run) {
+        return;
+      }
+      const runNumber = Number.isFinite(run.runIndex) ? run.runIndex : index + 1;
+      const runLabel = `[Purity][Run #${runNumber}]`;
+      if (run.didError) {
+        const message =
+          typeof run.errorMessage === 'string' && run.errorMessage
+            ? run.errorMessage
+            : 'Checker error';
+        appendLogEntry({ level: 'error', message: `${runLabel} CHECKER ERROR: ${message}` });
+        return;
+      }
+      if (run.isPure) {
+        appendLogEntry({ level: 'info', message: `${runLabel} OK` });
+        return;
+      }
+      const totalRaw = Number.isFinite(run.totalRaw) ? run.totalRaw : 0;
+      const totalShare = Number.isFinite(run.totalShare) ? run.totalShare : 0;
+      const totalSequence = Number.isFinite(run.totalSequence) ? run.totalSequence : 0;
+      appendLogEntry({
+        level: 'warn',
+        message: `${runLabel} totals raw/share/sequence = ${totalRaw} / ${totalShare} / ${totalSequence}`,
+      });
+      const activityTotals = Array.isArray(run.activityTotals) ? run.activityTotals : [];
+      activityTotals.forEach((activity, activityIndex) => {
+        if (!activity || activity.isMatch) {
+          return;
+        }
+        const activityLabel = activity.label || activity.key || `activity-${activityIndex + 1}`;
+        const rawValue = Number.isFinite(activity.raw) ? activity.raw : 0;
+        const shareValue = Number.isFinite(activity.share) ? activity.share : 0;
+        const sequenceValue = Number.isFinite(activity.sequence) ? activity.sequence : 0;
+        appendLogEntry({
+          level: 'warn',
+          message: `${runLabel}[activity=${activityLabel}] raw/share/sequence = ${rawValue} / ${shareValue} / ${sequenceValue}`,
+        });
+      });
+    });
+  } catch (error) {
+    console.error('[Purity] Failed to log purity report:', error);
   }
 }
 
@@ -4270,10 +4366,15 @@ async function runBatchGenerations(count) {
     puritySummary = computeBatchPuritySummary(batchRunsTruth, batchPurityRunResults);
     batchState.puritySummary = puritySummary;
     updateBatchPurityIndicator();
-    if (puritySummary && puritySummary.totalRuns > 0) {
+    if (puritySummary && (puritySummary.totalRuns > 0 || puritySummary.didCheckerError)) {
       console.log(
         `[Purity] Batch complete: ${puritySummary.pureRuns}/${puritySummary.totalRuns} runs pure`
       );
+      try {
+        logBatchPurityReport(puritySummary);
+      } catch (error) {
+        console.error('[Purity] Unable to log purity report:', error);
+      }
     }
   }
 }
@@ -4938,14 +5039,44 @@ function deserializeWorkerLogArg(value) {
   return value;
 }
 
-function handleWorkerLogMessage(message) {
-  if (!DEBUG) {
-    return;
+function formatWorkerLogArgs(args) {
+  if (!Array.isArray(args) || args.length === 0) {
+    return '';
   }
+  return args
+    .map((arg) => {
+      if (typeof arg === 'string') {
+        return arg;
+      }
+      if (typeof arg === 'number' || typeof arg === 'boolean') {
+        return String(arg);
+      }
+      if (arg instanceof Error) {
+        return arg.stack || arg.message || arg.name || 'Error';
+      }
+      try {
+        return JSON.stringify(arg);
+      } catch (error) {
+        return String(arg ?? '');
+      }
+    })
+    .join(' ');
+}
+
+function handleWorkerLogMessage(message) {
   const level = typeof message?.level === 'string' ? message.level : 'log';
   const args = Array.isArray(message?.args)
     ? message.args.map((arg) => deserializeWorkerLogArg(arg))
     : [];
+
+  const formatted = formatWorkerLogArgs(args);
+  if (formatted) {
+    appendLogEntry({ level, message: `[engine] ${formatted}` });
+  }
+
+  if (!DEBUG) {
+    return;
+  }
 
   if (level === 'groupEnd') {
     if (typeof console.groupEnd === 'function') {
@@ -4989,11 +5120,55 @@ function handleWorkerLogMessage(message) {
 }
 
 function handleWorkerUnhandledMessage(message) {
+  const level = message?.kind === 'error' ? 'error' : 'warn';
+  const summary =
+    typeof message?.message === 'string' && message.message
+      ? message.message
+      : 'Unhandled worker issue.';
+  const details = [];
+  if (typeof message?.filename === 'string' && message.filename) {
+    details.push(`file: ${message.filename}`);
+  }
+  if (typeof message?.lineno === 'number') {
+    details.push(`line: ${message.lineno}`);
+  }
+  if (typeof message?.colno === 'number') {
+    details.push(`column: ${message.colno}`);
+  }
+  if (message?.error) {
+    const errorValue = deserializeWorkerLogArg(message.error);
+    if (errorValue) {
+      const errorText =
+        errorValue instanceof Error
+          ? errorValue.message || errorValue.name
+          : typeof errorValue === 'string'
+          ? errorValue
+          : '';
+      if (errorText) {
+        details.push(`error: ${errorText}`);
+      }
+    }
+  }
+  if (message?.reason) {
+    const reasonValue = deserializeWorkerLogArg(message.reason);
+    if (reasonValue) {
+      const reasonText =
+        reasonValue instanceof Error
+          ? reasonValue.message || reasonValue.name
+          : typeof reasonValue === 'string'
+          ? reasonValue
+          : '';
+      if (reasonText) {
+        details.push(`reason: ${reasonText}`);
+      }
+    }
+  }
+  appendLogEntry({ level, message: `[worker] ${summary}`, details });
+
   if (!DEBUG) {
     return;
   }
 
-  const level = message?.kind === 'error' ? 'error' : 'warn';
   const payload = {
     kind: message?.kind || 'error',
     message: message?.message || '',
@@ -6414,12 +6589,97 @@ function hydrateFixturesPanel() {
   fixturesPanel.dataset.fixturesHydrated = '1';
 }
 
+function formatLogTimestamp(date) {
+  if (!(date instanceof Date)) {
+    return '';
+  }
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function formatLogEntryForDisplay(entry) {
+  if (!entry) {
+    return '';
+  }
+  const timestampText = formatLogTimestamp(entry.timestamp);
+  const levelText =
+    typeof entry.level === 'string' && entry.level
+      ? entry.level.toUpperCase()
+      : '';
+  const prefixParts = [];
+  if (timestampText) {
+    prefixParts.push(timestampText);
+  }
+  if (levelText) {
+    prefixParts.push(levelText);
+  }
+  const prefix = prefixParts.length > 0 ? `[${prefixParts.join(' ')}] ` : '';
+  const message = typeof entry.message === 'string' ? entry.message : '';
+  const details = Array.isArray(entry.details)
+    ? entry.details.map((detail) => `  ${String(detail ?? '')}`).join('\n')
+    : '';
+  return details ? `${prefix}${message}\n${details}` : `${prefix}${message}`;
+}
+
+function renderLogsOutput() {
+  const output = logsState.output;
+  if (!output) {
+    return;
+  }
+  if (!logsState.entries.length) {
+    output.textContent = defaultLogsMessage;
+    return;
+  }
+  const text = logsState.entries.map((entry) => formatLogEntryForDisplay(entry)).join('\n');
+  output.textContent = text;
+  if (typeof output.scrollHeight === 'number') {
+    output.scrollTop = output.scrollHeight;
+  }
+}
+
+function appendLogEntry(entry = {}) {
+  try {
+    const message = typeof entry.message === 'string' ? entry.message.trim() : '';
+    if (!message) {
+      return;
+    }
+    const normalized = {
+      level: typeof entry.level === 'string' && entry.level ? entry.level : 'info',
+      message,
+      details: Array.isArray(entry.details)
+        ? entry.details.map((detail) => String(detail ?? '')).filter(Boolean)
+        : [],
+      timestamp: entry.timestamp instanceof Date ? entry.timestamp : new Date(),
+    };
+    logsState.entries.push(normalized);
+    if (logsState.entries.length > LOG_ENTRY_LIMIT) {
+      logsState.entries.splice(0, logsState.entries.length - LOG_ENTRY_LIMIT);
+    }
+    renderLogsOutput();
+  } catch (error) {
+    console.error('Failed to append log entry:', error);
+  }
+}
+
+function clearLogEntries() {
+  logsState.entries = [];
+  renderLogsOutput();
+}
+
+function handleLogsClear() {
+  clearLogEntries();
+}
+
 function hydrateLogsPanel() {
   if (!logsPanel) {
     return;
   }
 
   let historyHost = logsPanel.querySelector('[data-history-host]');
+  let logsOutput = logsPanel.querySelector('.logs-output');
+  let clearButton = logsPanel.querySelector('.logs-clear');
 
   if (!historyHost) {
     const logsContainer = document.createElement('div');
@@ -6435,16 +6695,16 @@ function hydrateLogsPanel() {
     const logsToolbar = document.createElement('div');
     logsToolbar.className = 'logs-toolbar';
 
-    const clearButton = document.createElement('button');
+    clearButton = document.createElement('button');
     clearButton.type = 'button';
     clearButton.className = 'logs-clear';
     clearButton.textContent = 'Clear';
 
     logsToolbar.append(clearButton);
 
-    const logsOutput = document.createElement('div');
+    logsOutput = document.createElement('div');
     logsOutput.className = 'logs-output';
-    logsOutput.textContent = 'Log messages will appear here as they stream in.';
+    logsOutput.textContent = defaultLogsMessage;
 
     logsStream.append(logsToolbar, logsOutput);
 
@@ -6453,6 +6713,27 @@ function hydrateLogsPanel() {
   }
 
   ensureCalendarHistoryPanel(historyHost);
+
+  if (!logsOutput) {
+    logsOutput = document.createElement('div');
+    logsOutput.className = 'logs-output';
+    logsOutput.textContent = defaultLogsMessage;
+    const logsStream = logsPanel.querySelector('.logs-stream');
+    if (logsStream) {
+      logsStream.append(logsOutput);
+    } else {
+      logsPanel.append(logsOutput);
+    }
+  }
+
+  if (clearButton && clearButton.dataset.logsClearBound !== '1') {
+    clearButton.dataset.logsClearBound = '1';
+    clearButton.addEventListener('click', handleLogsClear);
+  }
+
+  logsState.output = logsOutput || null;
+  logsState.clearButton = clearButton || null;
+  renderLogsOutput();
 
   logsPanel.dataset.logsHydrated = '1';
 }
