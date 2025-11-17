@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "EngineMK2",
+    "EngineMK21",
     "DayPlan",
     "apply_micro_jitter",
     "apply_seasonal_modifiers",
@@ -89,6 +90,7 @@ class EngineMK2:
             Callable[[PersonProfile, date, "UniqueDay"], Optional[List[Activity]]]
         ] = None,
         validator: Optional[Callable[[Dict[str, List[Activity]]], List[object]]] = None,
+        engine_version: str = "mk2",
     ) -> None:
         self._profile_factory = {
             "office": (create_office_worker, DEFAULT_TEMPLATES),
@@ -103,11 +105,16 @@ class EngineMK2:
             [PersonProfile, date, "UniqueDay"], Optional[List[Activity]]
         ]
         self._validator: Callable[[Dict[str, List[Activity]]], List[object]]
+        self._engine_version = engine_version or "mk2"
         self.set_friction_generator(friction_generator or generate_daily_friction)
         self.set_unique_schedule_generator(
             unique_schedule_generator or generate_unique_day_schedule
         )
         self.set_validator(validator or validate_week)
+
+    @property
+    def engine_version(self) -> str:
+        return self._engine_version
 
     def set_calendar_provider(self, provider: CalendarProvider) -> None:
         """Replace the calendar provider used by the engine."""
@@ -689,18 +696,21 @@ class EngineMK2:
             if debug_trace is not None:
                 debug_trace["weekly_totals_from_events"] = weekly_totals_minutes
 
+        metadata = {
+            "total_events": len(events_payload),
+            "issue_count": len(issues),
+            "summary_hours": summary_hours,
+            "compression": compression_metadata,
+            "day_types": {plan.date.isoformat(): plan.day_type for plan in week_plans},
+        }
+        metadata["engine_version"] = self._engine_version
+
         result: Dict[str, Any] = {
             "person": profile.name,
             "week_start": start_date.isoformat(),
             "events": events_payload,
             "issues": [asdict(issue) for issue in issues],
-            "metadata": {
-                "total_events": len(events_payload),
-                "issue_count": len(issues),
-                "summary_hours": summary_hours,
-                "compression": compression_metadata,
-                "day_types": {plan.date.isoformat(): plan.day_type for plan in week_plans},
-            },
+            "metadata": metadata,
         }
 
         if debug and debug_trace is not None:
@@ -714,6 +724,28 @@ class EngineMK2:
             raise ValueError(f"Unknown archetype: {archetype}")
         factory, templates = self._profile_factory[archetype]
         return factory(), templates
+
+
+class EngineMK21(EngineMK2):
+    """MK2.1 variant that enables lossless share aggregation."""
+
+    def __init__(
+        self,
+        calendar_provider: Optional[CalendarProvider] = None,
+        *,
+        friction_generator: Optional[Callable[[int, float, float], float]] = None,
+        unique_schedule_generator: Optional[
+            Callable[[PersonProfile, date, "UniqueDay"], Optional[List[Activity]]]
+        ] = None,
+        validator: Optional[Callable[[Dict[str, List[Activity]]], List[object]]] = None,
+    ) -> None:
+        super().__init__(
+            calendar_provider=calendar_provider,
+            friction_generator=friction_generator,
+            unique_schedule_generator=unique_schedule_generator,
+            validator=validator,
+            engine_version="mk2_1",
+        )
 
 
 def normalize_mk2_events(

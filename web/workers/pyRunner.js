@@ -1,10 +1,18 @@
 import { DEBUG } from '../debug.js';
 
-const ALLOWED_FUNCTIONS = new Set(['mk1_run', 'mk2_run_calendar', 'mk2_run_workforce']);
+const ALLOWED_FUNCTIONS = new Set([
+  'mk1_run',
+  'mk2_run_calendar',
+  'mk2_run_workforce',
+  'mk2_1_run_calendar',
+  'mk2_1_run_workforce',
+]);
 const FN_DISPATCH = {
   mk1_run: 'mk1_run_web',
   mk2_run_calendar: 'mk2_run_calendar_web',
   mk2_run_workforce: 'mk2_run_workforce_web',
+  mk2_1_run_calendar: 'mk2_1_run_calendar_web',
+  mk2_1_run_workforce: 'mk2_1_run_workforce_web',
 };
 
 const RUN_TIMEOUT_MS = 30_000;
@@ -2075,7 +2083,7 @@ self.onmessage = async (event) => {
       const argsJSON = JSON.stringify(args || {});
       const pyCode = `
 import json
-from engines.web_adapter import mk1_run_web, mk2_run_calendar_web, mk2_run_workforce_web
+from engines.web_adapter import mk1_run_web, mk2_run_calendar_web, mk2_run_workforce_web, mk2_1_run_calendar_web, mk2_1_run_workforce_web
 
 ARGS_JSON = ${JSON.stringify(argsJSON)}
 ARGS = json.loads(ARGS_JSON)
@@ -2092,6 +2100,17 @@ _dispatch = {
         ARGS.get("seed"),
     ),
     "mk2_run_workforce": lambda: mk2_run_workforce_web(
+        ARGS.get("archetype", ""),
+        ARGS.get("week_start"),
+        ARGS.get("seed"),
+        ARGS.get("yearly_budget"),
+    ),
+    "mk2_1_run_calendar": lambda: mk2_1_run_calendar_web(
+        ARGS.get("archetype", ""),
+        ARGS.get("week_start"),
+        ARGS.get("seed"),
+    ),
+    "mk2_1_run_workforce": lambda: mk2_1_run_workforce_web(
         ARGS.get("archetype", ""),
         ARGS.get("week_start"),
         ARGS.get("seed"),

@@ -13,6 +13,13 @@ export const engineRegistry = {
             calendar: { title: "Visuals" },
             workforce: { title: "Workforce" }
           }
+        },
+        mk2_1: {
+          title: "MK2.1 (lossless share)",
+          rigs: {
+            calendar: { title: "Visuals" },
+            workforce: { title: "Workforce" }
+          }
         }
       }
     }
