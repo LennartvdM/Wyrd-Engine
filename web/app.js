@@ -174,6 +174,9 @@ const batchState = {
   purityPanelHeader: null,
   purityPanelList: null,
   latestPurityReport: null,
+  purityNarrativeButton: null,
+  purityNarrativeContainer: null,
+  showPurityNarrative: false,
 };
 
 const RANDOMIZE_SEED_STORAGE_KEY = 'cfg.calendar.randomizeSeed';
@@ -4115,6 +4118,17 @@ function updateBatchPurityIndicator(summaryOverride) {
   }
 }
 
+function updatePurityNarrativeToggle(hasReport) {
+  const button = batchState.purityNarrativeButton;
+  if (!button) {
+    return;
+  }
+  const isExpanded = Boolean(batchState.showPurityNarrative && hasReport);
+  button.textContent = isExpanded ? 'Collapse' : 'Elaborate';
+  button.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+  button.disabled = !hasReport;
+}
+
 function renderBatchPurityPanel(reportOverride) {
   const panel = batchState.purityPanel;
   if (!panel) {
@@ -4123,8 +4137,15 @@ function renderBatchPurityPanel(reportOverride) {
 
   const report =
     typeof reportOverride === 'undefined' ? batchState.latestPurityReport : reportOverride;
+  const hasReport = Boolean(report && report.human);
+  updatePurityNarrativeToggle(hasReport);
 
-  if (!report || !report.human) {
+  const narrativeContainer = batchState.purityNarrativeContainer;
+  if (!hasReport) {
+    if (narrativeContainer) {
+      narrativeContainer.hidden = true;
+      narrativeContainer.innerHTML = '';
+    }
     panel.hidden = true;
     return;
   }
@@ -4164,7 +4185,143 @@ function renderBatchPurityPanel(reportOverride) {
     }
   }
 
+  if (narrativeContainer) {
+    const shouldShowNarrative = Boolean(batchState.showPurityNarrative && report);
+    if (!shouldShowNarrative) {
+      narrativeContainer.hidden = true;
+      narrativeContainer.innerHTML = '';
+    } else {
+      const paragraphs = buildPurityNarrative(report);
+      if (!paragraphs.length) {
+        narrativeContainer.hidden = true;
+        narrativeContainer.innerHTML = '';
+      } else {
+        narrativeContainer.hidden = false;
+        narrativeContainer.innerHTML = '';
+        const fragment = document.createDocumentFragment();
+        paragraphs.forEach((text) => {
+          if (typeof text !== 'string' || !text.trim()) {
+            return;
+          }
+          const paragraph = document.createElement('p');
+          paragraph.textContent = text;
+          fragment.append(paragraph);
+        });
+        narrativeContainer.append(fragment);
+      }
+    }
+  }
+
   panel.hidden = false;
+}
+
+function formatPurityActivityLabel(label) {
+  if (typeof label !== 'string') {
+    return 'This activity';
+  }
+  const cleaned = label.trim().replace(/[_-]+/g, ' ');
+  if (!cleaned) {
+    return 'This activity';
+  }
+  return cleaned.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function buildPurityNarrative(report) {
+  if (!report) {
+    return [];
+  }
+
+  const paragraphs = [];
+  const totalRuns = Number.isFinite(report.batchSize) ? report.batchSize : Number(report.totalRuns) || 0;
+  const pureRuns = Number.isFinite(report.pureRuns) ? report.pureRuns : 0;
+  const impureRuns = Number.isFinite(report.impureRuns) ? report.impureRuns : Math.max(totalRuns - pureRuns, 0);
+  const totals = report.totals || {};
+  const avgRaw = Number.isFinite(totals.avgRaw) ? totals.avgRaw : 0;
+  const avgShare = Number.isFinite(totals.avgShare) ? totals.avgShare : 0;
+  const avgSequence = Number.isFinite(totals.avgSequence) ? totals.avgSequence : 0;
+  const shareDriftMinutes = Number.isFinite(totals.avgShareDriftMinutes)
+    ? totals.avgShareDriftMinutes
+    : avgShare - avgRaw;
+  const shareDriftPercent = Number.isFinite(totals.avgShareDriftPercent)
+    ? totals.avgShareDriftPercent
+    : avgRaw === 0
+    ? 0
+    : shareDriftMinutes / avgRaw;
+  const driftMagnitudeText = formatPurityMinutes(Math.abs(shareDriftMinutes));
+  const driftPercentText = formatPurityPercent(shareDriftPercent);
+  const severity = Math.abs(shareDriftPercent) < 0.05
+    ? 'very close'
+    : Math.abs(shareDriftPercent) < 0.15
+    ? 'moderately off'
+    : 'significantly misaligned';
+
+  if (totalRuns <= 0) {
+    paragraphs.push('No batch runs have been analyzed yet, so the purity checker does not have a verdict.');
+  } else {
+    const statusWord = impureRuns > 0 ? 'failing' : 'passing';
+    let driftSentence = 'matching the raw totals almost exactly.';
+    if (shareDriftMinutes !== 0) {
+      const direction = shareDriftMinutes < 0 ? 'undercounting' : 'overstating';
+      const percentSuffix = driftPercentText === 'n/a' ? '' : ` (${driftPercentText})`;
+      driftSentence = `${direction} about ${driftMagnitudeText} minutes per run${percentSuffix}.`;
+    }
+    paragraphs.push(
+      `This batch of ${totalRuns} runs is ${statusWord} the purity check, with ${pureRuns} marked pure and ${impureRuns} flagged impure. On average, the Share view is ${severity} versus the raw schedules, ${driftSentence}`
+    );
+  }
+
+  if (avgRaw > 0 || avgShare > 0 || avgSequence > 0) {
+    const avgRawText = formatPurityMinutes(avgRaw);
+    const avgShareText = formatPurityMinutes(avgShare);
+    const avgSequenceText = formatPurityMinutes(avgSequence);
+    const gapText = formatPurityMinutes(Math.abs(avgShare - avgRaw));
+    paragraphs.push(
+      `Across the batch, raw and Sequence timelines stay aligned at roughly ${avgRawText} and ${avgSequenceText} minutes per run, while Share only captures ${avgShareText}. That shortfall of about ${gapText} minutes per run is what the diagnostics are highlighting.`
+    );
+  }
+
+  const activities = Array.isArray(report.activities) ? report.activities : [];
+  const rankedActivities = activities
+    .filter((activity) => {
+      const driftValue = Number(activity?.driftMinutes);
+      return Number.isFinite(driftValue) && Math.abs(driftValue) >= 1;
+    })
+    .sort((a, b) => Math.abs((b?.driftMinutes) || 0) - Math.abs((a?.driftMinutes) || 0))
+    .slice(0, 2);
+  if (rankedActivities.length) {
+    const activitySentences = rankedActivities.map((activity) => {
+      const driftMinutes = Number(activity?.driftMinutes) || 0;
+      const descriptor = driftMinutes < 0 ? 'undercounted' : 'overcounted';
+      const deltaWord = driftMinutes < 0 ? 'missing' : 'adding';
+      const driftText = formatPurityMinutes(Math.abs(driftMinutes));
+      const percentText = formatPurityPercent(activity?.driftPercent);
+      const percentSuffix = percentText === 'n/a' ? '' : ` (${percentText})`;
+      const rawText = formatPurityMinutes(activity?.avgRaw);
+      const shareText = formatPurityMinutes(activity?.avgShare);
+      const label = formatPurityActivityLabel(activity?.id);
+      return `${label} is ${descriptor}: raw schedules average about ${rawText} minutes per run while Share shows ${shareText}, ${deltaWord} roughly ${driftText} minutes${percentSuffix}.`;
+    });
+    paragraphs.push(`Distortion concentrates in a few activities. ${activitySentences.join(' ')}`);
+  }
+
+  const worstRuns = Array.isArray(report.worstRuns) ? report.worstRuns : [];
+  const notableRuns = worstRuns
+    .filter((run) => Number.isFinite(run?.driftMinutes))
+    .slice(0, 3);
+  if (notableRuns.length) {
+    const runText = notableRuns
+      .map((run) => {
+        const label = Number.isFinite(run?.runIndex) && run.runIndex > 0 ? `#${run.runIndex}` : 'one run';
+        const magnitude = formatPurityMinutes(Math.abs(Number(run?.driftMinutes) || 0));
+        return `${label} (~${magnitude} min)`;
+      })
+      .join(', ');
+    paragraphs.push(
+      `The discrepancy is not uniform: runs ${runText} show the steepest gaps, so their Share visualisations should be treated as sketches rather than precise ledgers.`
+    );
+  }
+
+  return paragraphs.slice(0, 4);
 }
 
 function logBatchPurityReport(summary) {
@@ -4879,6 +5036,18 @@ function hydrateBatchPanel() {
   batchState.purityPanelStatus = panel.querySelector('[data-batch-purity-status]');
   batchState.purityPanelHeader = panel.querySelector('[data-batch-purity-header]');
   batchState.purityPanelList = panel.querySelector('[data-batch-purity-list]');
+  batchState.purityNarrativeButton = panel.querySelector('[data-purity-narrative-toggle]');
+  batchState.purityNarrativeContainer = panel.querySelector('[data-batch-purity-narrative]');
+  if (batchState.purityNarrativeButton instanceof HTMLButtonElement) {
+    batchState.purityNarrativeButton.type = 'button';
+    batchState.purityNarrativeButton.addEventListener('click', () => {
+      if (!batchState.latestPurityReport) {
+        return;
+      }
+      batchState.showPurityNarrative = !batchState.showPurityNarrative;
+      renderBatchPurityPanel(batchState.latestPurityReport);
+    });
+  }
 
   batchState.sizeButtons = new Map();
   const sizeButtons = panel.querySelectorAll('[data-batch-size]');

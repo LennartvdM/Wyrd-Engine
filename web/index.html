@@ -223,11 +223,23 @@
             </div>
             <section class="batch-purity-panel" data-batch-purity-panel hidden>
               <div class="batch-purity-header">
-                <h3 class="batch-purity-title">Purity diagnostics</h3>
-                <span class="batch-purity-status" data-batch-purity-status>Purity status</span>
+                <div class="batch-purity-heading">
+                  <h3 class="batch-purity-title">Purity diagnostics</h3>
+                  <span class="batch-purity-status" data-batch-purity-status>Purity status</span>
+                </div>
+                <button
+                  type="button"
+                  class="mini-button batch-purity-toggle"
+                  data-purity-narrative-toggle
+                  aria-expanded="false"
+                  disabled
+                >
+                  Elaborate
+                </button>
               </div>
               <p class="batch-purity-subheader" data-batch-purity-header></p>
               <ul class="batch-purity-list" data-batch-purity-list></ul>
+              <div class="batch-purity-narrative" data-batch-purity-narrative hidden></div>
             </section>
             <div class="batch-results__legend" data-batch-legend>
               <span class="batch-results__legend-title">Activities</span>
