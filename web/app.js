@@ -3849,6 +3849,40 @@ function buildPurityObservations(summary) {
   return lines;
 }
 
+function formatPuritySummaryBlock(summary, observations) {
+  const totalRuns = Number.isFinite(summary?.totalRuns) ? summary.totalRuns : 0;
+  const pureRuns = Number.isFinite(summary?.pureRuns) ? summary.pureRuns : 0;
+  const impureRuns = Number.isFinite(summary?.impureRuns) ? summary.impureRuns : 0;
+  const runs = Array.isArray(summary?.runs) ? summary.runs : [];
+  const checkerErrorRuns = runs.filter((run) => run && run.didError).length;
+  const hasCheckerError = Boolean(summary?.didCheckerError);
+  const errorCount = hasCheckerError ? Math.max(1, checkerErrorRuns) : checkerErrorRuns;
+  const headerStats = [`Batch size: ${totalRuns}`, `Pure: ${pureRuns}`, `Impure: ${impureRuns}`];
+  if (errorCount > 0) {
+    headerStats.push(`Checker errors: ${errorCount}`);
+  }
+  const headerTitle = 'PURITY REPORT';
+  const headerContent = `${headerTitle}  |  ${headerStats.join('  |  ')}`;
+  const headerWidth = Math.max(60, Math.min(100, headerContent.length));
+  const headerLine = '='.repeat(headerWidth);
+  const separatorLine = '-'.repeat(headerWidth);
+
+  const blockLines = [headerLine, headerContent, headerLine, ''];
+  blockLines.push('SUMMARY');
+  blockLines.push('');
+  const summaryLines = Array.isArray(observations) && observations.length > 0
+    ? observations
+    : ['(No observations available.)'];
+  summaryLines.forEach((line) => {
+    blockLines.push(`  ${line}`);
+  });
+  blockLines.push('');
+  blockLines.push(separatorLine);
+  blockLines.push('(Full raw purity data continues below…)');
+  blockLines.push(separatorLine);
+  return blockLines.join('\n');
+}
+
 function cancelBatchFitMeasurement() {
   if (
     batchState.pendingFitFrame &&
@@ -4118,31 +4152,13 @@ function logBatchPurityReport(summary) {
   const errorRuns = runs.filter((run) => run && run.didError).length;
   const logLevel = summary.hasAnyError ? 'warn' : 'info';
 
-  let didLogAnalysisBlock = false;
   try {
     const observationLines = buildPurityObservations(summary);
-    const headerParts = [`[Purity] Batch analysis: ${totalRuns} runs`, `pure=${pureRuns}`, `impure=${impureRuns}`];
-    if (errorRuns > 0 || summary.didCheckerError) {
-      const errorCount = errorRuns > 0 ? errorRuns : 1;
-      headerParts.push(`checkerErrors=${errorCount}`);
-    }
-    appendLogEntry({ level: logLevel, message: headerParts.join(', ') });
-    observationLines.forEach((line) => {
-      appendLogEntry({ level: logLevel, message: `[Purity] ${line}` });
-    });
-    didLogAnalysisBlock = true;
+    const summaryBlock = formatPuritySummaryBlock(summary, observationLines);
+    appendLogEntry({ level: logLevel, message: `[Purity]\n${summaryBlock}` });
   } catch (error) {
-    const message = typeof error?.message === 'string' ? error.message : 'Unknown error';
-    appendLogEntry({ level: 'error', message: `[Purity] ERROR building summary: ${message}` });
-  }
-
-  if (!didLogAnalysisBlock) {
-    const fallbackParts = [`[Purity] Batch complete: ${totalRuns} runs`, `pure=${pureRuns}`, `impure=${impureRuns}`];
-    if (errorRuns > 0 || summary.didCheckerError) {
-      const errorCount = errorRuns > 0 ? errorRuns : 1;
-      fallbackParts.push(`checkerErrors=${errorCount}`);
-    }
-    appendLogEntry({ level: logLevel, message: fallbackParts.join(', ') });
+    const message = error instanceof Error ? error.message : String(error);
+    appendLogEntry({ level: 'warn', message: `[Purity] ERROR building human summary: ${message}` });
   }
 
   try {
