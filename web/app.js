@@ -4119,6 +4119,118 @@ function logBatchPurityReport(summary) {
   const impureRuns = Number.isFinite(summary.impureRuns) ? summary.impureRuns : 0;
   const runs = Array.isArray(summary.runs) ? summary.runs : [];
 
+  try {
+    const analysis = summary?.analysis || null;
+    const avgRaw = Number.isFinite(analysis?.avgRawTotal) ? analysis.avgRawTotal : 0;
+    const avgShare = Number.isFinite(analysis?.avgShareTotal) ? analysis.avgShareTotal : 0;
+    const avgSequence = Number.isFinite(analysis?.avgSequenceTotal) ? analysis.avgSequenceTotal : 0;
+    const shareDriftMinutes = avgShare - avgRaw;
+    const shareDriftPercentValue = avgRaw === 0 ? null : shareDriftMinutes / avgRaw;
+    const shareDriftPercent = shareDriftPercentValue ?? 0;
+    const humanHeader = `Batch analysis: ${totalRuns} runs | pure=${pureRuns}, impure=${impureRuns}`;
+
+    const activityAnalyses = Array.isArray(analysis?.activities) ? analysis.activities : [];
+    const activityAverages = activityAnalyses.map((activity, index) => {
+      const id = activity?.key || activity?.label || `activity-${index + 1}`;
+      const avgRawPerRun = Number.isFinite(activity?.avgRawPerRun) ? activity.avgRawPerRun : 0;
+      const avgSharePerRun = Number.isFinite(activity?.avgSharePerRun) ? activity.avgSharePerRun : 0;
+      const driftMinutes = Number.isFinite(activity?.avgShareDriftMinutes)
+        ? activity.avgShareDriftMinutes
+        : 0;
+      const driftPercent = Number.isFinite(activity?.avgShareDriftPercent)
+        ? activity.avgShareDriftPercent
+        : 0;
+      return {
+        id,
+        avgRaw: avgRawPerRun,
+        avgShare: avgSharePerRun,
+        driftMinutes,
+        driftPercent,
+      };
+    });
+
+    const significantActivities = activityAnalyses
+      .filter((activity) => {
+        if (!activity) {
+          return false;
+        }
+        const driftMinutes = Number(activity.avgShareDriftMinutes) || 0;
+        const driftPercent = Number(activity.avgShareDriftPercent) || 0;
+        return Math.abs(driftMinutes) >= 60 || Math.abs(driftPercent) >= 0.1;
+      })
+      .sort((a, b) => Math.abs(b.avgShareDriftMinutes || 0) - Math.abs(a.avgShareDriftMinutes || 0))
+      .slice(0, 3);
+
+    const activitySummaries = significantActivities.map((activity) => {
+      const label = activity?.label || activity?.key || 'activity';
+      const avgRawText = formatPurityMinutes(activity?.avgRawPerRun);
+      const avgShareText = formatPurityMinutes(activity?.avgSharePerRun);
+      const driftMinutesValue = Number(activity?.avgShareDriftMinutes) || 0;
+      const driftMagnitudeText = formatPurityMinutes(Math.abs(driftMinutesValue));
+      const driftPercentText = formatPurityPercent(activity?.avgShareDriftPercent);
+      const percentSuffix = driftPercentText === 'n/a' ? '' : ` (${driftPercentText})`;
+      const descriptor = driftMinutesValue < 0 ? 'undercounted' : 'overcounted';
+      return `Activity '${label}': avg raw/share = ${avgRawText}/${avgShareText} (${descriptor} by ${driftMagnitudeText} min${percentSuffix}).`;
+    });
+
+    const runAnalyses = Array.isArray(analysis?.runs) ? analysis.runs : [];
+    const worstRuns = runAnalyses
+      .filter((run) => run && Number.isFinite(run.totalDriftMinutes))
+      .map((run) => ({
+        runIndex: Number.isFinite(run.runIndex) ? run.runIndex : 0,
+        driftMinutes: Number.isFinite(run.totalDriftMinutes) ? run.totalDriftMinutes : 0,
+      }))
+      .sort((a, b) => Math.abs(b.driftMinutes || 0) - Math.abs(a.driftMinutes || 0))
+      .slice(0, 3);
+
+    const worstRunSummaries = worstRuns.length
+      ? [
+          `Worst drift in runs ${worstRuns
+            .map((run) => `#${run.runIndex || 0}`)
+            .join(', ')} (share vs raw drift minutes: ${worstRuns
+            .map((run) => formatPurityMinutes(run.driftMinutes))
+            .join(', ')}).`,
+        ]
+      : [];
+
+    const avgRawText = formatPurityMinutes(avgRaw);
+    const avgShareText = formatPurityMinutes(avgShare);
+    const avgSequenceText = formatPurityMinutes(avgSequence);
+    const shareDriftText = formatPurityMinutes(shareDriftMinutes);
+    const shareDriftPercentText = formatPurityPercent(shareDriftPercentValue);
+    const humanLines = [
+      `Purity status: ${pureRuns === totalRuns && totalRuns > 0 ? 'PASSED' : 'FAILED'}.`,
+      `Average totals per run (raw/share/sequence): ${avgRawText} / ${avgShareText} / ${avgSequenceText}.`,
+      `Average drift of share vs raw: ${shareDriftText} minutes (${shareDriftPercentText}).`,
+      ...activitySummaries,
+      ...worstRunSummaries,
+    ];
+
+    const purityReport = {
+      kind: 'purity_batch_report',
+      batchSize: totalRuns,
+      pureRuns,
+      impureRuns,
+      totals: {
+        avgRaw,
+        avgShare,
+        avgSequence,
+        avgShareDriftMinutes: shareDriftMinutes,
+        avgShareDriftPercent: shareDriftPercent,
+      },
+      activities: activityAverages,
+      worstRuns,
+      human: {
+        header: humanHeader,
+        lines: humanLines,
+      },
+    };
+
+    console.warn('[Purity][REPORT] ' + JSON.stringify(purityReport));
+  } catch (error) {
+    console.error('[Purity] Failed to build structured purity report:', error);
+  }
+
   appendLogEntry({
     level: 'warn',
     message: `[Purity] Batch analysis: ${totalRuns} runs, pure=${pureRuns}, impure=${impureRuns}`,
