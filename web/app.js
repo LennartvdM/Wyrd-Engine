@@ -4303,9 +4303,8 @@ function buildPurityNarrative(report) {
   const avgRaw = Number.isFinite(totals.avgRaw) ? totals.avgRaw : 0;
   const avgShare = Number.isFinite(totals.avgShare) ? totals.avgShare : 0;
   const avgSequence = Number.isFinite(totals.avgSequence) ? totals.avgSequence : 0;
-  const shareDriftMinutes = Number.isFinite(totals.avgShareDriftMinutes)
-    ? totals.avgShareDriftMinutes
-    : avgShare - avgRaw;
+  const avgDrift = Number.isFinite(totals.avgShareDriftMinutes) ? totals.avgShareDriftMinutes : avgShare - avgRaw;
+  const shareDriftMinutes = avgDrift;
   const shareDriftPercent = Number.isFinite(totals.avgShareDriftPercent)
     ? totals.avgShareDriftPercent
     : avgRaw === 0
@@ -4320,27 +4319,34 @@ function buildPurityNarrative(report) {
     : 'significantly misaligned';
   const reportedWorstRuns = Array.isArray(report.worstRuns) ? report.worstRuns : [];
   const worstRuns = reportedWorstRuns.filter((run) => Number.isFinite(run?.driftMinutes));
-  const epsilonMinutes = 1;
+  const EPS = 1;
   const maxRunDrift = worstRuns.reduce((max, run) => {
     const magnitude = Math.abs(Number(run?.driftMinutes) || 0);
     return Math.max(max, magnitude);
   }, 0);
-  const isZeroDriftBatch = Math.abs(shareDriftMinutes) <= epsilonMinutes && maxRunDrift <= epsilonMinutes;
+  const isAllPure = impureRuns === 0 && pureRuns === totalRuns;
+  const isDriftTrivial = Math.abs(avgDrift) <= EPS && maxRunDrift <= EPS;
+  const statusWord = isAllPure ? 'passing' : 'failing';
+  const headerSentence = `This batch of ${totalRuns} runs is ${statusWord} the purity check, with ${pureRuns} marked pure and ${impureRuns} flagged impure.`;
 
   if (totalRuns <= 0) {
     paragraphs.push('No batch runs have been analyzed yet, so the purity checker does not have a verdict.');
-  } else if (isZeroDriftBatch) {
-    paragraphs.push(
-      `This batch of ${totalRuns} runs is passing the purity check, with ${pureRuns} marked pure and 0 flagged impure. On average, the Share view is in near-perfect agreement with the raw schedules; totals match to within rounding error.`
-    );
+  } else if (isDriftTrivial) {
+    if (isAllPure) {
+      paragraphs.push(
+        `${headerSentence} On average, the Share view is in near-perfect agreement with the raw schedules; totals match to within rounding error.`
+      );
+    } else {
+      paragraphs.push(
+        `${headerSentence} Drift between raw and Share is negligible, so the impurity is coming from other consistency checks rather than total time allocation.`
+      );
+    }
     const alignedMinutes = avgRaw || avgShare || avgSequence || 0;
     const alignedMinutesText = formatPurityMinutes(alignedMinutes);
     paragraphs.push(
       `Across the batch, raw, Share, and Sequence timelines all sit at roughly ${alignedMinutesText} minutes per run. There is no systematic shortfall or inflation in the aggregated view.`
     );
-    paragraphs.push('No individual run stands out: the largest difference between raw and Share totals is effectively zero.');
   } else {
-    const statusWord = impureRuns > 0 ? 'failing' : 'passing';
     let driftSentence = 'matching the raw totals almost exactly.';
     if (shareDriftMinutes !== 0) {
       const direction = shareDriftMinutes < 0 ? 'undercounting' : 'overstating';
@@ -4348,11 +4354,11 @@ function buildPurityNarrative(report) {
       driftSentence = `${direction} about ${driftMagnitudeText} minutes per run${percentSuffix}.`;
     }
     paragraphs.push(
-      `This batch of ${totalRuns} runs is ${statusWord} the purity check, with ${pureRuns} marked pure and ${impureRuns} flagged impure. On average, the Share view is ${severity} versus the raw schedules, ${driftSentence}`
+      `${headerSentence} On average, the Share view is ${severity} versus the raw schedules, ${driftSentence}`
     );
   }
 
-  if (!isZeroDriftBatch && (avgRaw > 0 || avgShare > 0 || avgSequence > 0)) {
+  if (!isDriftTrivial && (avgRaw > 0 || avgShare > 0 || avgSequence > 0)) {
     const avgRawText = formatPurityMinutes(avgRaw);
     const avgShareText = formatPurityMinutes(avgShare);
     const avgSequenceText = formatPurityMinutes(avgSequence);
@@ -4387,7 +4393,7 @@ function buildPurityNarrative(report) {
   }
 
   const notableRuns = worstRuns.slice(0, 3);
-  if (!isZeroDriftBatch && notableRuns.length) {
+  if (!isDriftTrivial && notableRuns.length) {
     const runText = notableRuns
       .map((run) => {
         const label = Number.isFinite(run?.runIndex) && run.runIndex > 0 ? `#${run.runIndex}` : 'one run';
@@ -4477,8 +4483,14 @@ function logBatchPurityReport(summary) {
       .sort((a, b) => Math.abs(b.driftMinutes || 0) - Math.abs(a.driftMinutes || 0))
       .slice(0, 3);
 
+    const EPS = 1;
+    const maxRunDrift = worstRuns.reduce((max, run) => {
+      const magnitude = Math.abs(run?.driftMinutes || 0);
+      return Math.max(max, magnitude);
+    }, 0);
+    const isDriftTrivial = Math.abs(shareDriftMinutes) <= EPS && maxRunDrift <= EPS;
     const hasNonZeroWorstRun = worstRuns.some((run) => Math.abs(run.driftMinutes || 0) > 0);
-    const worstRunSummaries = worstRuns.length && hasNonZeroWorstRun
+    const worstRunSummaries = !isDriftTrivial && worstRuns.length && hasNonZeroWorstRun
       ? [
           `Worst drift in runs ${worstRuns
             .map((run) => `#${run.runIndex || 0}`)
@@ -4497,7 +4509,7 @@ function logBatchPurityReport(summary) {
       ? 'Average drift of share vs raw: 0 minutes (0%).'
       : `Average drift of share vs raw: ${shareDriftText} minutes (${shareDriftPercentText}).`;
     const humanLines = [
-      `Purity status: ${pureRuns === totalRuns && totalRuns > 0 ? 'PASSED' : 'FAILED'}.`,
+      `Purity status: ${pureRuns === totalRuns && totalRuns > 0 ? 'PASSED' : 'FAILED'} (${pureRuns}/${totalRuns} pure, ${impureRuns} impure).`,
       `Average totals per run (raw/share/sequence): ${avgRawText} / ${avgShareText} / ${avgSequenceText}.`,
       averageDriftLine,
       ...activitySummaries,
