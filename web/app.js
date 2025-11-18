@@ -4318,9 +4318,27 @@ function buildPurityNarrative(report) {
     : Math.abs(shareDriftPercent) < 0.15
     ? 'moderately off'
     : 'significantly misaligned';
+  const reportedWorstRuns = Array.isArray(report.worstRuns) ? report.worstRuns : [];
+  const worstRuns = reportedWorstRuns.filter((run) => Number.isFinite(run?.driftMinutes));
+  const epsilonMinutes = 1;
+  const maxRunDrift = worstRuns.reduce((max, run) => {
+    const magnitude = Math.abs(Number(run?.driftMinutes) || 0);
+    return Math.max(max, magnitude);
+  }, 0);
+  const isZeroDriftBatch = Math.abs(shareDriftMinutes) <= epsilonMinutes && maxRunDrift <= epsilonMinutes;
 
   if (totalRuns <= 0) {
     paragraphs.push('No batch runs have been analyzed yet, so the purity checker does not have a verdict.');
+  } else if (isZeroDriftBatch) {
+    paragraphs.push(
+      `This batch of ${totalRuns} runs is passing the purity check, with ${pureRuns} marked pure and 0 flagged impure. On average, the Share view is in near-perfect agreement with the raw schedules; totals match to within rounding error.`
+    );
+    const alignedMinutes = avgRaw || avgShare || avgSequence || 0;
+    const alignedMinutesText = formatPurityMinutes(alignedMinutes);
+    paragraphs.push(
+      `Across the batch, raw, Share, and Sequence timelines all sit at roughly ${alignedMinutesText} minutes per run. There is no systematic shortfall or inflation in the aggregated view.`
+    );
+    paragraphs.push('No individual run stands out: the largest difference between raw and Share totals is effectively zero.');
   } else {
     const statusWord = impureRuns > 0 ? 'failing' : 'passing';
     let driftSentence = 'matching the raw totals almost exactly.';
@@ -4334,7 +4352,7 @@ function buildPurityNarrative(report) {
     );
   }
 
-  if (avgRaw > 0 || avgShare > 0 || avgSequence > 0) {
+  if (!isZeroDriftBatch && (avgRaw > 0 || avgShare > 0 || avgSequence > 0)) {
     const avgRawText = formatPurityMinutes(avgRaw);
     const avgShareText = formatPurityMinutes(avgShare);
     const avgSequenceText = formatPurityMinutes(avgSequence);
@@ -4368,11 +4386,8 @@ function buildPurityNarrative(report) {
     paragraphs.push(`Distortion concentrates in a few activities. ${activitySentences.join(' ')}`);
   }
 
-  const worstRuns = Array.isArray(report.worstRuns) ? report.worstRuns : [];
-  const notableRuns = worstRuns
-    .filter((run) => Number.isFinite(run?.driftMinutes))
-    .slice(0, 3);
-  if (notableRuns.length) {
+  const notableRuns = worstRuns.slice(0, 3);
+  if (!isZeroDriftBatch && notableRuns.length) {
     const runText = notableRuns
       .map((run) => {
         const label = Number.isFinite(run?.runIndex) && run.runIndex > 0 ? `#${run.runIndex}` : 'one run';
@@ -4462,7 +4477,8 @@ function logBatchPurityReport(summary) {
       .sort((a, b) => Math.abs(b.driftMinutes || 0) - Math.abs(a.driftMinutes || 0))
       .slice(0, 3);
 
-    const worstRunSummaries = worstRuns.length
+    const hasNonZeroWorstRun = worstRuns.some((run) => Math.abs(run.driftMinutes || 0) > 0);
+    const worstRunSummaries = worstRuns.length && hasNonZeroWorstRun
       ? [
           `Worst drift in runs ${worstRuns
             .map((run) => `#${run.runIndex || 0}`)
@@ -4477,10 +4493,13 @@ function logBatchPurityReport(summary) {
     const avgSequenceText = formatPurityMinutes(avgSequence);
     const shareDriftText = formatPurityMinutes(shareDriftMinutes);
     const shareDriftPercentText = formatPurityPercent(shareDriftPercentValue);
+    const averageDriftLine = shareDriftMinutes === 0
+      ? 'Average drift of share vs raw: 0 minutes (0%).'
+      : `Average drift of share vs raw: ${shareDriftText} minutes (${shareDriftPercentText}).`;
     const humanLines = [
       `Purity status: ${pureRuns === totalRuns && totalRuns > 0 ? 'PASSED' : 'FAILED'}.`,
       `Average totals per run (raw/share/sequence): ${avgRawText} / ${avgShareText} / ${avgSequenceText}.`,
-      `Average drift of share vs raw: ${shareDriftText} minutes (${shareDriftPercentText}).`,
+      averageDriftLine,
       ...activitySummaries,
       ...worstRunSummaries,
     ];
