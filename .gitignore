@@ -1,3 +1,7 @@
 # Generated Pyodide assets
 web/py/**
 !web/py/.gitkeep
+
+# Python cache
+__pycache__/
+*.pyc
