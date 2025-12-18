@@ -1959,7 +1959,7 @@ body {
   flex-direction: column;
   justify-content: center;
   gap: 2px;
-  min-width: 78px;
+  min-width: 100px;
   flex: 0 0 auto;
 }
 
