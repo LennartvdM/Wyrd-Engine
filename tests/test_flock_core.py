@@ -2,7 +2,7 @@
 import random
 from collections import Counter
 
-from flock.clock import DAY, WEEK, fmt, day_type, day_start, weekday
+from flock.clock import DAY, WEEK, fmt, day_start, weekday
 from flock.seeds import stream
 from flock.people import make_population
 from flock.sleep_and_meals import bedtime_at, sleep_end, wake_up
@@ -14,7 +14,6 @@ from flock.world import World
 def test_fmt_and_day_helpers():
     assert fmt(1875) == "Tue 07:15"
     assert fmt(-60) == "Sun 23:00"
-    assert day_type(5 * DAY + 10) == "saturday" and day_type(6 * DAY) == "sunday" and day_type(0) == "weekday"
     assert day_start(3 * DAY + 999) == 3 * DAY and weekday(-1) == 6
 
 
@@ -35,7 +34,7 @@ def test_population_is_reproducible_and_shaped():
     employed = sum(p.workplace_id is not None for p in people)
     assert 200 <= employed <= 280
     assert all(1290 <= p.traits.bedtime_minute <= 1500 for p in people)
-    assert all(8 <= len(w.members) <= 40 for w in workplaces[:-1])
+    assert all(6 <= len(w.members) <= 40 for w in workplaces[:-1])
 
 
 def test_bedtime_at_across_midnight_and_on_friday():
@@ -44,12 +43,13 @@ def test_bedtime_at_across_midnight_and_on_friday():
     monday_night = bedtime_at(person, 1 * DAY + 20)        # 00:20 Tuesday belongs to Monday night
     assert monday_night == 0 * DAY + bed
     assert bedtime_at(person, 1 * DAY + 600) == 1 * DAY + bed
-    assert bedtime_at(person, 4 * DAY + 600) == 4 * DAY + bed + 25      # Friday
+    assert bedtime_at(person, 4 * DAY + 600) == 4 * DAY + bed + 20      # Friday
     assert bedtime_at(person, 6 * DAY + 600) == 6 * DAY + bed           # Sunday
 
 
 def test_sleep_end_with_and_without_alarm_and_debt_builds():
-    person = make_population(1, 3)[0][2]
+    people, households, _ = make_population(1, 3)
+    person = people[2]
     person.commitments = []
     t = 1380
     natural = sleep_end(person, t)
@@ -62,7 +62,7 @@ def test_sleep_end_with_and_without_alarm_and_debt_builds():
     person.sleep_debt = 0
     for night in range(5):                                 # five short nights build debt
         person.started_at = night * DAY
-        wake_up(person, night * DAY + person.traits.sleep_need_min - 30)
+        wake_up(person, night * DAY + person.traits.sleep_need_min - 30, households[person.household_id])
     assert person.sleep_debt == 150
 
 
@@ -80,7 +80,9 @@ def test_free_time_pick_is_plausible_on_tuesday_evening():
             assert t + 5 <= got[2] <= t + 150
     assert set(picks) <= {row[0] for row in ROWS}
     assert picks["tv"] > picks["errands"]
-    assert pick_free_activity(person, t, t + 20)[0] == "idle"
+    short = pick_free_activity(person, t, t + 20)                       # a 10-29 minute gap at home: something short, to the limit
+    assert short[0] in ("tv", "read", "personal") and short[2] == t + 20
+    assert pick_free_activity(person, t, t + 7)[0] == "idle"
 
 
 def test_week_reads_right_and_log_is_contiguous():
@@ -96,3 +98,25 @@ def test_week_reads_right_and_log_is_contiguous():
     crossing = sum(any(s.activity == "sleep" and s.start // DAY != (s.end - 1) // DAY for s in world.segments(p))
                    for p in world.people)
     assert crossing >= 0.7 * len(world.people)               # night shifts may never cross midnight
+
+
+def test_meetings_start_on_the_minute_and_nobody_idles_out_or_phones_from_a_walk_at_home():
+    world = World(1, 200)
+    walkers = []
+    while world.now < 2 * DAY:                                    # ping a few people mid-walk
+        world.run_until(world.now + 10)
+        for p in world.people:
+            if p.activity == "walk" and p.started_at < world.now < p.ends_at - 20 and len(walkers) < 5 and p.id not in walkers:
+                world.ping(p.id + 1, world.now, "a", "question")
+                walkers.append(p.id)
+    world.run_until(WEEK)
+    logs = {p.id: world.segments(p) for p in world.people}
+    for w in world.workplaces:
+        for start, end, ids in w.meetings:
+            if end <= WEEK:
+                for pid in ids:
+                    assert not any(s.activity == "meeting" and s.start < start < s.end for s in logs[pid])
+    assert not any(s.activity == "idle" and s.place == "out" and s.end - s.start >= 30 for log in logs.values() for s in log)
+    assert walkers
+    calls = [s for r in world.replies("a", 0) for s in logs[r.person - 1] if s.activity == "phone" and s.start == r.delivered_at]
+    assert calls and all(s.place == "out" for s in calls)

@@ -1,10 +1,10 @@
 """Reading the logs: one person's day, the population histogram, the realism checks,
-a small swarm demo, and the command line."""
+a small swarm demo, and the command line.  Person ids are 1-based here, as in the agent calls."""
 import argparse
 import statistics
 from collections import defaultdict
 
-from .clock import DAY, WEEK, DAY_NAMES, hm, fmt, weekday
+from .clock import DAY, WEEK, DAY_NAMES, hm, fmt
 from .commitments import work_on
 from .agent_api import latency_multiplier, accept_probability
 from .world import World
@@ -12,33 +12,29 @@ from .world import World
 INF = float("inf")
 FREE = {"tv", "read", "personal", "chores", "exercise", "errands", "social", "walk", "idle"}
 LEISURE = {"tv", "read", "social", "walk", "exercise", "idle", "outing", "club", "gym"}
-HOUSEHOLD = {"chores", "cook", "laundry", "errands"}
-
-
-def kind_of(activity):
-    return activity.partition(":")[0]
+HOUSEHOLD = {"chores", "cook", "dishes", "laundry", "errands"}
 
 
 def print_day(world, person, day):
     d = DAY_NAMES.index(day[:3].capitalize())
     print(f"{DAY_NAMES[d]}  person {person}")
-    for s in world.segments(world.people[person]):
+    for s in world.segments(world.person(person)):
         if s.end > d * DAY and s.start < (d + 1) * DAY:
             kind, _, label = s.activity.partition(":")
             print(f" {hm(s.start)}-{hm(s.end)}  {kind:9} {s.place:8} {label}".rstrip())
 
 
 def letter_of(activity, place):
-    kind = kind_of(activity)
+    kind = activity.partition(":")[0]
     if kind == "sleep":
         return "S"
-    if kind in ("work", "meeting"):
+    if kind in ("work", "meeting", "break"):
         return "W"
     if kind == "commute":
         return "C"
     if kind in ("meal", "snack"):
         return "E"
-    if kind in ("chores", "cook", "laundry"):
+    if kind in ("chores", "cook", "dishes", "laundry"):
         return "K"
     return "O" if place == "out" else "H"
 
@@ -63,6 +59,10 @@ def print_histogram(world, day_type):
 
 def median(xs):
     return statistics.median(xs) if xs else INF
+
+
+def mean(xs):
+    return statistics.mean(xs) if xs else INF
 
 
 def sd(xs):
@@ -90,7 +90,7 @@ def run_checks(seed, n, weeks):
     eat_bins, commute_bins = [0] * 96, [0] * 96
     eating_at = defaultdict(int)                          # minute -> person-days eating (weekdays)
     asleep_3, awake_18, asleep_14 = 0, 0, 0
-    leave, working_11, first_awake = [], 0, defaultdict(list)
+    leave, working_11 = [], 0
     dinners_home = defaultdict(list)                      # (pid, day) -> home dinner (s, e)
     meeting_segs, lunch_starts = defaultdict(list), defaultdict(list)
     contiguous, short = True, 0
@@ -115,7 +115,6 @@ def run_checks(seed, n, weeks):
                     if s.end // DAY % 7 < 5:
                         person_wakes[p.id].append(s.end % DAY)
                     crossing += s.start // DAY != (s.end - 1) // DAY
-                    first_awake[s.end // DAY % 7].append(s.end % DAY)
                 awake_gap = 0
                 asleep_3 += len(days_covering(s.start, s.end, 180, ndays))
                 asleep_14 += sum(d % 7 < 5 for d in days_covering(s.start, s.end, 840, ndays))
@@ -170,7 +169,7 @@ def run_checks(seed, n, weeks):
     emp_we = [per_day[pid, d] for pid, d in emp_days if d % 7 >= 5]
 
     def mean_minutes(rows, kinds):
-        return sum(sum(r[k] for k in kinds) for r in rows) / len(rows)
+        return mean([sum(r[k] for k in kinds) for r in rows])
 
     dinner_days = [(h, t) for h in world.households if len(h.members) >= 2 for t in h.dinners if t < T]
     together = 0
@@ -187,30 +186,29 @@ def run_checks(seed, n, weeks):
     peak_eat = max(range(96), key=eat_bins.__getitem__)
     morning_peak = max(range(26, 36), key=commute_bins.__getitem__)
     evening_peak = max(range(48, 96), key=commute_bins.__getitem__)
-    sat_first, tue_first = median(first_awake[5]), median(first_awake[1])
     agent = agent_checks(seed)
 
     checks = [
-        ("1a weeknight sleep median h", median(weeknight) / 60, 7.6, 8.7),
-        ("1b weekend night minus weeknight median min", median(weekend_night) - median(weeknight), 30, INF),
-        ("2  sleep duration sd min", sd([m for _, m in sleeps]), 60, 125),
-        ("3a weekday wake median min of day", median(wd_wake), 380, 440),
-        ("3b weekday wake sd min", sd(wd_wake), 40, 95),
-        ("4  weekend wake minus weekday median min", median(we_wake) - median(wd_wake), 40, 90),
-        ("5a bedtime median min of day", median(bed_wd), 1350, 1410),
-        ("5b Fri/Sat bedtime later by min", median(bed_we) - median(bed_wd), 15, 50),
+        ("1a weeknight sleep median h", median(weeknight) / 60, 7.6, 8.7),   # 492 min
+        ("1b weekend night minus weeknight median min", median(weekend_night) - median(weeknight), 30, INF),   # +66
+        ("2  sleep duration sd min", sd([m for _, m in sleeps]), 60, 125),   # 105
+        ("3a weekday wake median min of day", median(wd_wake), 380, 440),   # 06:30
+        ("3b weekday wake sd min", sd(wd_wake), 40, 95),   # 70 (guess)
+        ("4  weekend wake minus weekday median min", median(we_wake) - median(wd_wake), 40, 90),   # 53-75
+        ("5a bedtime median min of day", median(bed_wd), 1350, 1410),   # 23:00
+        ("5b Fri/Sat bedtime later by min", median(bed_we) - median(bed_wd), 15, 50),   # 26
         ("6a sleep crossing midnight share", crossing / len(sleeps), 0.70, 1),
         ("6b segments split at midnight", split, 0, 0),
-        ("7a employed working on weekday share", sum(m > 0 for m in worked_wd) / len(worked_wd), 0.74, 0.86),
-        ("7b employed working on weekend day share", sum(m > 0 for m in worked_we) / len(worked_we), 0.22, 0.38),
-        ("7c hours on weekdays worked", statistics.mean(m for m in worked_wd if m) / 60, 7.0, 8.5),
-        ("7d hours on weekend days worked", statistics.mean(m for m in worked_we if m) / 60, 4.5, 6.5),
-        ("8a employed weekday work min", mean_minutes(emp_wd, ("work", "meeting")), 340, 420),
-        ("8b employed weekday leisure min", mean_minutes(emp_wd, LEISURE), 170, 260),
-        ("8c employed weekday household min", mean_minutes(emp_wd, HOUSEHOLD), 50, 100),
-        ("8d employed weekday travel min", mean_minutes(emp_wd, ("commute",)), 55, 95),
-        ("8e employed weekday eating min", mean_minutes(emp_wd, ("meal", "snack")), 50, 80),
-        ("8f employed weekend leisure min", mean_minutes(emp_we, LEISURE), 270, 420),
+        ("7a employed working on weekday share", mean([m > 0 for m in worked_wd]), 0.74, 0.86),   # 0.80
+        ("7b employed working on weekend day share", mean([m > 0 for m in worked_we]), 0.22, 0.38),   # 0.30
+        ("7c hours on weekdays worked", mean([m for m in worked_wd if m]) / 60, 7.0, 8.5),   # 7.9
+        ("7d hours on weekend days worked", mean([m for m in worked_we if m]) / 60, 4.5, 6.5),   # 5.3
+        ("8a employed weekday work min", mean_minutes(emp_wd, ("work", "meeting")), 340, 420),   # 380
+        ("8b employed weekday leisure min", mean_minutes(emp_wd, LEISURE), 170, 260),   # 212
+        ("8c employed weekday household min", mean_minutes(emp_wd, HOUSEHOLD), 50, 100),   # 75
+        ("8d employed weekday travel min", mean_minutes(emp_wd, ("commute",)), 55, 95),   # 78
+        ("8e employed weekday eating min", mean_minutes(emp_wd, ("meal", "snack")), 50, 80),   # 58
+        ("8f employed weekend leisure min", mean_minutes(emp_we, LEISURE), 270, 420),   # 335
         ("9a meals per person-day", sum(meals_per_day.values()) / (n * ndays), 2.3, 3.3),
         ("9b person-days without an 8 h awake gap unfed", 1 - len(bad_gap) / (n * ndays), 0.95, 1),
         ("10 dinner days with 2+ eating together (2+ households)", together / max(1, len(dinner_days)), 0.65, 1),
@@ -221,20 +219,20 @@ def run_checks(seed, n, weeks):
         ("13a segments per weekday", sum(segs_per_day[pid, d] for pid in range(n) for d in wd) / n_wd, 10, 22),
         ("13b within-person weekday wake sd min (median)", median(wake_sd), 10, 45),
         ("13c consecutive weekdays differing in free activity", sum(differ) / len(differ), 0.80, 1),
-        ("14a share doing chores/laundry weekday", chores_wd, 0.25, 0.45),
-        ("14b share doing chores/laundry weekend", chores_we, 0.35, 0.55),
+        ("14a share doing chores/laundry weekday", chores_wd, 0.25, 0.45),   # 0.33
+        ("14b share doing chores/laundry weekend", chores_we, 0.35, 0.55),   # 0.43
         ("15 weekday 20-22 person-minutes at home", home_evening / (n_wd * 120), 0.75, 1),
         ("16a weekday eating peak bin (15 min index)", peak_eat, 48, 51),
-        ("16b share eating at 12:30 weekdays", eating_at[750] / n_wd, 0.22, 0.38),
+        ("16b share eating at 12:30 weekdays", eating_at[750] / n_wd, 0.22, 0.38),   # 0.30
         ("16c 12:30 eating share over 10:30 share", eating_at[750] / max(1, eating_at[630]), 4, INF),
-        ("17a asleep at 03:00", asleep_3 / (n * ndays), 0.93, 1),
-        ("17b awake at 18:00", awake_18 / (n * ndays), 0.96, 1),
+        ("17a asleep at 03:00", asleep_3 / (n * ndays), 0.93, 1),   # 0.95
+        ("17b awake at 18:00", awake_18 / (n * ndays), 0.96, 1),   # 0.975
         ("17c asleep at 14:00 weekdays", asleep_14 / n_wd, 0, 0.04),
-        ("18a morning commute peak over 11:00 bin", commute_bins[morning_peak] / max(1, commute_bins[44]), 4, INF),
+        ("18a morning commute peak over 11:00 bin", commute_bins[morning_peak] / max(1, commute_bins[44]), 4, INF),   # no reference figure
         ("18b evening commute peak bin (15 min index)", evening_peak, 62, 73),
-        ("18c commuters leaving 06:00-08:29", sum(360 <= m < 510 for _, m in leave) / max(1, len(leave)), 0.50, 0.68),
-        ("18d employed working at 11:00 weekdays", working_11 / (len(employed) * len(wd)), 0.50, 0.68),
-        ("19 Saturday first-awake minus Tuesday median min", sat_first - tue_first, 40, 90),
+        ("18c commuters leaving 06:00-08:29", sum(360 <= m < 510 for _, m in leave) / max(1, len(leave)), 0.50, 0.68),   # 0.57
+        ("18d employed working at 11:00 weekdays", working_11 / max(1, len(employed) * len(wd)), 0.50, 0.68),   # 0.58
+        ("19 Saturday first-awake minus Tuesday median min", median(wakes[5]) - median(wakes[1]), 40, 90),
     ] + agent
     passed = 0
     for name, value, lo, hi in checks:
@@ -250,46 +248,43 @@ def agent_checks(seed):
     w = World(seed, 200)
     t = DAY + 180                                                     # Tuesday 03:00
     w.run_until(t)
-    sleepers = [p.id for p in w.people if p.activity == "sleep" and p.workplace_id is not None
+    sleepers = [p.id + 1 for p in w.people if p.activity == "sleep" and p.workplace_id is not None
                 and work_on(p, 1) and DAY + 360 <= p.ends_at <= DAY + 510][:80]     # due up 06:00-08:30
     for pid in sleepers:
         w.ping(pid, t, "a", "question")
     w.run_until(DAY + 720)
     morning = [DAY + 360 <= r.delivered_at <= DAY + 570 for r in w.replies("a", 0)]
-    meeting_end, easy_sent, pinged = {}, {}, set()
+    meeting_end, easy_sent, in_meeting, easy = {}, {}, set(), set()  # up to 100 people each, one ping per person
     while w.now < 2 * DAY + 1020:                                       # Tue 12:00 .. Wed 17:00
         w.run_until(w.now + 5)
         for p in w.people:
-            if p.id in pinged or len(pinged) >= 200:
-                continue
-            if p.activity == "meeting":
-                meeting_end[w.ping(p.id, w.now, "b", "question").ping_id] = p.ends_at
-            elif p.interruptible >= 0.8 and w.now % 60 == 0:
-                easy_sent[w.ping(p.id, w.now, "c", "question").ping_id] = w.now
-            else:
-                continue
-            pinged.add(p.id)
+            if p.activity == "meeting" and p.id not in in_meeting and len(in_meeting) < 100:
+                meeting_end[w.ping(p.id + 1, w.now, "b", "question").ping_id] = p.ends_at
+                in_meeting.add(p.id)
+            elif p.interruptible >= 0.8 and w.now % 60 == 0 and p.id not in easy and len(easy) < 100:
+                easy_sent[w.ping(p.id + 1, w.now, "c", "question").ping_id] = w.now
+                easy.add(p.id)
     t = w.now
     for i in range(40):                                                # 40 pings in 2 h to person 5
         w.run_until(t + 3 * i)
         w.ping(5, w.now, "d", "question")
-    invited, sleepy = [], []
+    invited = []
     for p in w.people:
-        if p.activity != "sleep" and p.place == "home" and p.workplace_id is None and len(invited) < 40:
-            slot = w.request_slot(p.id, w.now, 60, (w.now + 120, w.now + DAY))[0]
-            invited.append((w.ping(p.id, w.now, "e", "invite", slot).ping_id, slot))
+        slots = w.request_slot(p.id + 1, w.now, 60, (w.now + 120, w.now + DAY))
+        if p.activity != "sleep" and p.place == "home" and p.workplace_id is None and len(invited) < 40 and slots:
+            invited.append((w.ping(p.id + 1, w.now, "e", "invite", slots[0]).ping_id, slots[0]))
             night = w.now // DAY * DAY + DAY + 180                     # 03:00 next morning
-            sleepy.append(w.ping(p.id, w.now, "f", "invite", type(slot)(night, night + 60, "out")).ping_id)
+            w.ping(p.id + 1, w.now, "f", "invite", (night, night + 60, "out"))
     w.run_until(w.now + 2 * DAY)
     m_delay = [r.delivered_at - meeting_end[r.ping_id] for r in w.replies("b", 0)]
     c_delay = [r.delivered_at - easy_sent[r.ping_id] for r in w.replies("c", 0)]
     accepted = {r.ping_id: r for r in w.replies("e", 0) if r.decision == "accept"}
     kept = [any(s.activity == "appointment" and s.start <= slot.start and s.end >= slot.end for s in w.segments(w.people[w.pings[pid].person]))
             for pid, slot in invited if pid in accepted]
-    declined = [r for r in w.replies("f", 0) if r.ping_id in sleepy]
+    declined = w.replies("f", 0)
     good_counter = [r.decision == "decline" and r.counter is not None and
                     not any(s.activity == "sleep" and s.start < r.counter.end and r.counter.start < s.end
-                            for s in w.segments(w.people[r.person]))
+                            for s in w.segments(w.person(r.person)))
                     for r in declined]
     return [
         ("20a 03:00 question to sleeping worker answered 06:00-09:30", sum(morning) / max(1, len(morning)), 0.95, 1),
@@ -304,24 +299,34 @@ def agent_checks(seed):
 
 
 def demo_swarm(world):
-    """Three agents look at three people on Tuesday morning, ask a question each, and one
-    proposes a meeting; the transcript shows what came back."""
-    t = DAY + 540                                                      # Tuesday 09:00
-    world.run_until(t)
-    for agent, pid in (("scout", 3), ("scout", 17), ("booker", 42)):
-        o = world.observe(pid, t)
-        print(f"{fmt(t)}  {agent} sees person {pid}: {o.activity} at {o.place} until {hm(o.expected_end)}, "
-              f"interruptible {o.interruptible}, next commitment {hm(o.next_commitment_start) if o.next_commitment_start else '-'}")
-        world.ping(pid, t, agent, "question")
-        if agent == "booker":
-            for slot in world.request_slot(pid, t, 45, (t + 60, t + DAY)):
-                print(f"           free slot {fmt(slot.start)}-{hm(slot.end)} {slot.place}")
-            slot = world.request_slot(pid, t, 45, (t + 60, t + DAY))[0]
-            world.ping(pid, t, agent, "invite", slot)
-    world.run_until(t + DAY)
-    for r in sorted(world.replies("scout", t) + world.replies("booker", t), key=lambda r: r.delivered_at):
-        print(f"{fmt(r.delivered_at)}  person {r.person} -> ping {r.ping_id}: {r.decision}"
-              + (f", counter {fmt(r.counter.start)}-{hm(r.counter.end)}" if r.counter else ""))
+    """A smoke test of the agent calls: over two days a scout observes a dozen people, an
+    asker questions them and a booker invites them, three rounds of each.  One line per
+    observation and per reply."""
+    people = range(1, min(12, len(world.people)) + 1)
+    rounds = (DAY + 540, DAY + 1140, 2 * DAY + 540)                    # Tue 09:00, Tue 19:00, Wed 09:00
+    seen = 0
+    for k, t in enumerate(rounds):
+        world.run_until(t)
+        for pid in people:
+            o = world.observe(pid, t)
+            window = f"{fmt(o.next_free_window.start)}-{hm(o.next_free_window.end)} {o.next_free_window.place}" if o.next_free_window else "-"
+            print(f"{fmt(t)}  scout   person {pid:2}: {o.activity:13} {o.place:7} until {hm(o.expected_end)}, "
+                  f"interruptible {o.interruptible:.2f}, with {sorted(o.with_ids) or '-'}, "
+                  f"next commitment {fmt(o.next_commitment_start) if o.next_commitment_start else '-'}, free {window}")
+            world.ping(pid, t, "asker", "question")
+            if pid % 2:                                                # odd ids: the booker names its own slot, 2 h from now
+                world.ping(pid, t, "booker", "invite", (t + 120, t + 165, "out"))
+            else:                                                      # even ids: it takes the person's first offer
+                for slot in world.request_slot(pid, t, 45, (t + 60, t + DAY))[:1]:
+                    print(f"{fmt(t)}  booker  person {pid:2}: offers {fmt(slot.start)}-{hm(slot.end)} {slot.place}")
+                    world.ping(pid, t, "booker", "invite", slot)
+        world.run_until(rounds[k + 1] if k + 1 < len(rounds) else t + DAY)
+        for r in sorted(world.replies("asker", t) + world.replies("booker", t), key=lambda r: r.delivered_at):
+            agent = world.pings[r.ping_id].agent_id
+            print(f"{fmt(r.delivered_at)}  {agent:7} person {r.person:2}: {r.decision}" + (f" ({r.reason})" if r.reason else "")
+                  + (f", counter {fmt(r.counter.start)}-{hm(r.counter.end)} {r.counter.place}" if r.counter else ""))
+            seen += 1
+    print(f"{len(world.pings)} pings sent, {seen} replies")
 
 
 def main():
@@ -330,9 +335,15 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--people", type=int, default=200)
     ap.add_argument("--weeks", type=int, default=1)
-    ap.add_argument("--person", type=int, default=17)
+    ap.add_argument("--person", type=int, default=17, help="1-based: 17 is the 17th person")
     ap.add_argument("--day", default="tue")
     a = ap.parse_args()
+    if a.command == "day" and a.day[:3].capitalize() not in DAY_NAMES:
+        ap.error(f"--day {a.day!r} is not a day name (mon .. sun)")
+    if a.people < 1 or a.weeks < 1:
+        ap.error("--people and --weeks must be at least 1")
+    if a.command == "day" and not 1 <= a.person <= a.people:
+        ap.error(f"--person {a.person} is outside 1..{a.people}")
     if a.command == "checks":
         run_checks(a.seed, a.people, a.weeks)
         return

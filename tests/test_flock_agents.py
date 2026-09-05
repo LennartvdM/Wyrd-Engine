@@ -30,7 +30,7 @@ def test_request_slot_avoids_work_and_sleep():
     t = DAY + 10 * 60
     world.run_until(t)
     worker = next(p for p in world.people if p.workplace_id is not None)
-    slots = world.request_slot(worker.id, t, 60, (t, t + DAY))
+    slots = world.request_slot(worker.id + 1, t, 60, (t, t + DAY))      # ids are 1-based in the agent calls
     assert len(slots) <= 3
     for s in slots:
         assert isinstance(s, Slot) and s.end - s.start == 60
@@ -57,10 +57,10 @@ def test_sleep_time_invite_is_declined_with_counter_and_accepts_become_appointme
     invites = {}
     for p in at_home:
         night = 2 * DAY + 180
-        world.ping(p.id, t, "booker", "invite", Slot(night, night + 60, "out"))
-        slots = world.request_slot(p.id, t, 60, (t + 120, t + DAY))
+        world.ping(p.id + 1, t, "booker", "invite", Slot(night, night + 60, "out"))
+        slots = world.request_slot(p.id + 1, t, 60, (t + 120, t + DAY))
         if slots:                                           # a full day may offer nothing
-            invites[world.ping(p.id, t, "booker", "invite", slots[0]).ping_id] = slots[0]
+            invites[world.ping(p.id + 1, t, "booker", "invite", slots[0]).ping_id] = slots[0]
     world.run_until(t + 2 * DAY)
     replies = world.replies("booker", t)
     night_replies = [r for r in replies if r.ping_id not in invites]
@@ -69,5 +69,5 @@ def test_sleep_time_invite_is_declined_with_counter_and_accepts_become_appointme
     assert accepted
     for r in accepted:
         slot = invites[r.ping_id]
-        log = world.segments(world.people[r.person])
+        log = world.segments(world.person(r.person))
         assert any(s.activity == "appointment" and s.start <= slot.start and s.end >= slot.end for s in log)
