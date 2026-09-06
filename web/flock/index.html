@@ -55,6 +55,16 @@
     <p class="note">Each strip is one day, midnight to midnight. Click one to open it above.</p>
     <div class="week-strip" id="week-strip"></div>
 
+    <h2>This person's weekdays, stacked</h2>
+    <p class="note">Every weekday of the run laid on top of the others: how often this one person
+      is doing each thing at each minute. A person who repeats themselves gives hard edges; one
+      whose days vary gives soft ones.</p>
+
+    <figure>
+      <div class="chart"><svg id="pdays-chart" role="img" aria-label="One person's weekdays superimposed"></svg></div>
+      <figcaption id="pdays-note"></figcaption>
+    </figure>
+
     <details class="table-view">
       <summary>Segments as a table</summary>
       <div><table id="day-table"></table></div>
@@ -84,6 +94,23 @@
     </figure>
 
     <div class="legend" id="legend-pop"></div>
+
+    <h2>The same shares, without edges</h2>
+    <p class="note">The stack above draws a boundary between every pair of activities. These do
+      not: on the left, every column is the whole population mixed in proportion; on the right,
+      one row per activity where stronger colour means more people.</p>
+
+    <div class="row">
+      <div class="daybtns" id="blendmode" role="group" aria-label="How to draw it">
+        <button type="button" data-mode="mix" aria-pressed="true">Mixed into one strip</button>
+        <button type="button" data-mode="rows" aria-pressed="false">One row per activity</button>
+      </div>
+    </div>
+
+    <figure>
+      <div class="chart"><svg id="blend-chart" role="img" aria-label="The population's shares drawn without boundaries"></svg></div>
+      <figcaption id="blend-note"></figcaption>
+    </figure>
 
     <h2>Every day, stacked</h2>
     <p class="note">One row per person-day, midnight to midnight. The totals above are an average

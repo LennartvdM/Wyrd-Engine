@@ -24,6 +24,7 @@ const state = {
   week: 0,
   popDay: 'Tue',
   carpetSort: 'wake',
+  blendMode: 'mix',
   bin: 15,
   week_cache: null,
 };
@@ -221,6 +222,52 @@ function renderDayPanel(day, week) {
   table.appendChild(body);
 }
 
+
+function renderPersonDays(data) {
+  if (!data) return;
+  const svg = $('pdays-chart');
+  const width = Math.max(360, svg.parentElement.clientWidth || 900);
+  const padL = 52, padR = 8, padT = 6, padB = 24;
+  const plotW = width - padL - padR;
+  const rowH = 22, gap = 3;
+  const plotH = CATEGORIES.length * rowH + (CATEGORIES.length - 1) * gap;
+  const height = plotH + padT + padB;
+  clear(svg);
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+
+  const step = 4;                                  // 4-minute columns: 360 across the day
+  for (let m = 0; m < MINUTES; m += step) {
+    const x = padL + (m / MINUTES) * plotW;
+    const w = (step / MINUTES) * plotW + 0.5;
+    CATEGORIES.forEach((c, i) => {
+      let acc = 0;
+      for (let k = 0; k < step; k += 1) acc += data.rows[m + k].shares[c.key] || 0;
+      const share = acc / step;
+      if (share <= 0) return;
+      el('rect', { x, y: padT + i * (rowH + gap), width: w, height: rowH,
+                   fill: `var(--${c.css})`, opacity: share.toFixed(3),
+                   'shape-rendering': 'crispEdges' }, svg);
+    });
+  }
+  CATEGORIES.forEach((c, i) => {
+    const t = el('text', { x: padL - 7, y: padT + i * (rowH + gap) + rowH / 2 + 4,
+                           class: 'axis', 'text-anchor': 'end' }, svg);
+    t.textContent = c.name;
+  });
+  for (let h = 0; h <= 24; h += 3) {
+    const px = padL + (h / 24) * plotW;
+    const t = el('text', { x: Math.min(width - padR, px), y: height - 7, class: 'axis',
+                           'text-anchor': h === 0 ? 'start' : h === 24 ? 'end' : 'middle' }, svg);
+    t.textContent = String(h % 24).padStart(2, '0');
+  }
+  $('pdays-note').textContent =
+    `Person ${data.person} across ${data.days} ${data.kind}. Full colour means every one of those ` +
+    `days; a faded band means only some. Each day is worth ${(100 / data.days).toFixed(0)} %, so ` +
+    `more weeks give a finer gradient.`;
+}
+
 // ---- population -----------------------------------------------------------
 
 function aggregate(rows, binMinutes, sourceBin) {
@@ -368,6 +415,80 @@ function renderCarpet(data) {
   $('carpet-note').textContent =
     `${data.shown} of ${data.available} person-days on ${data.day_name}` +
     (state.carpetSort === 'wake' ? ', sorted by when they woke' : ', in person order');
+}
+
+
+// ---- two other ways to draw the same shares -------------------------------
+
+function rgbOf(cssVar) {
+  const probe = document.createElement('span');
+  probe.style.color = `var(--${cssVar})`;
+  document.body.appendChild(probe);
+  const m = getComputedStyle(probe).color.match(/\d+/g).map(Number);
+  probe.remove();
+  return m;
+}
+
+function renderBlend(data) {
+  if (!data) return;
+  const svg = $('blend-chart');
+  const width = Math.max(360, svg.parentElement.clientWidth || 900);
+  const padL = 38, padR = 8, padT = 6, padB = 24;
+  const plotW = width - padL - padR;
+  const rowH = 26, gap = 3;
+  const rows = state.blendMode === 'mix' ? 1 : CATEGORIES.length;
+  const plotH = rows * rowH + (rows - 1) * gap;
+  const height = plotH + padT + padB;
+  clear(svg);
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+
+  const rgb = Object.fromEntries(CATEGORIES.map((c) => [c.key, rgbOf(c.css)]));
+  const surface = rgbOf('surface-1');
+  const bins = aggregate(data.rows, state.bin, data.bin_minutes);
+  const colW = plotW / bins.length;
+
+  bins.forEach((row) => {
+    const x = padL + (row.minute / MINUTES) * plotW;
+    if (state.blendMode === 'mix') {
+      // Every column is the mixture of what the population is doing at that minute, so a
+      // transition is a colour sliding into another rather than a line between two bands.
+      let r = 0, g = 0, b = 0;
+      for (const c of CATEGORIES) {
+        const w = row.shares[c.key] || 0;
+        r += w * rgb[c.key][0]; g += w * rgb[c.key][1]; b += w * rgb[c.key][2];
+      }
+      el('rect', { x, y: padT, width: colW + 0.5, height: rowH,
+                   fill: `rgb(${Math.round(r)} ${Math.round(g)} ${Math.round(b)})`,
+                   'shape-rendering': 'crispEdges' }, svg);
+    } else {
+      CATEGORIES.forEach((c, i) => {
+        const share = row.shares[c.key] || 0;
+        // Opacity carries the share: one hue per row, more people = stronger.
+        el('rect', { x, y: padT + i * (rowH + gap), width: colW + 0.5, height: rowH,
+                     fill: `var(--${c.css})`, opacity: Math.min(1, share * 1.6).toFixed(3),
+                     'shape-rendering': 'crispEdges' }, svg);
+      });
+    }
+  });
+
+  if (state.blendMode !== 'mix') {
+    CATEGORIES.forEach((c, i) => {
+      const t = el('text', { x: padL - 7, y: padT + i * (rowH + gap) + rowH / 2 + 4,
+                             class: 'axis', 'text-anchor': 'end' }, svg);
+      t.textContent = c.name;
+    });
+  }
+  for (let h = 0; h <= 24; h += 3) {
+    const px = padL + (h / 24) * plotW;
+    const t = el('text', { x: Math.min(width - padR, px), y: height - 7, class: 'axis',
+                           'text-anchor': h === 0 ? 'start' : h === 24 ? 'end' : 'middle' }, svg);
+    t.textContent = String(h % 24).padStart(2, '0');
+  }
+  $('blend-note').textContent = state.blendMode === 'mix'
+    ? 'One strip: each column is every activity mixed in proportion, so nothing has an edge.'
+    : 'One row per activity: stronger colour means more of the population doing it.';
 }
 
 // ---- agents ---------------------------------------------------------------
@@ -520,11 +641,13 @@ async function loadDay() {
   const person = Math.min(Math.max(1, Number($('person').value) || 1), state.built.people);
   $('person').value = person;
   state.person = person;
-  const [day, week] = await Promise.all([
+  const [day, week, stacked] = await Promise.all([
     call('day', person, state.day),
     call('week', person, state.week),
+    call('person_days', person, true),
   ]);
   renderDayPanel(day, week);
+  renderPersonDays(stacked);
 }
 
 let popCache = null;
@@ -538,6 +661,7 @@ async function loadPopulation({ refetch = true } = {}) {
   }
   renderPopulation(popCache);
   renderCarpet(carpetCache);
+  renderBlend(popCache);
 }
 
 async function build() {
@@ -663,6 +787,15 @@ function init() {
     });
     $('daytype').appendChild(b);
   });
+  for (const b of $('blendmode').children) {
+    b.addEventListener('click', () => {
+      state.blendMode = b.dataset.mode;
+      for (const other of $('blendmode').children) {
+        other.setAttribute('aria-pressed', String(other === b));
+      }
+      renderBlend(popCache);
+    });
+  }
   for (const b of $('carpetsort').children) {
     b.addEventListener('click', () => {
       state.carpetSort = b.dataset.sort;

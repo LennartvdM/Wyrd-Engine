@@ -209,6 +209,35 @@ def carpet(day_key, limit=400):
     }
 
 
+def person_days(person, weekdays_only=True):
+    """For one person: across all their days of that kind, the fraction spent in each category at
+    each minute.  A person who repeats themselves gives hard edges; one whose days vary gives soft
+    ones.  This is the per-person version of the population view."""
+
+    p = _world.person(person)
+    ndays = _world.now // DAY
+    days = [d for d in range(ndays) if (d % 7 < 5) == weekdays_only or not weekdays_only]
+    if weekdays_only:
+        days = [d for d in range(ndays) if d % 7 < 5]
+    letters = [c[0] for c in CATEGORIES]
+    counts = [{k: 0 for k in letters} for _ in range(DAY)]
+    for s in _world.segments(p):
+        letter = letter_of(s.activity, s.place)
+        for d in days:
+            lo, hi = max(s.start, d * DAY), min(s.end, (d + 1) * DAY)
+            if lo >= hi:
+                continue
+            for m in range(lo - d * DAY, hi - d * DAY):
+                counts[m][letter] += 1
+    n = max(1, len(days))
+    return {
+        "person": person,
+        "days": len(days),
+        "kind": "weekdays" if weekdays_only else "all days",
+        "rows": [{"minute": m, "shares": {k: counts[m][k] / n for k in letters}} for m in range(DAY)],
+    }
+
+
 def _agents_at(minute):
     """The world the agent panel talks to.
 
