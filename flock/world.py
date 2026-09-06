@@ -10,7 +10,7 @@ from .free_time import INTERRUPTIBLE, MOVE_NEEDS, pick_free_activity, free_end
 from .agent_api import Observation, PingHandle, Reply, Slot, Ping, checked_slot, reply_latency, free_windows, request_slot, verdict
 
 
-LUNCH_OUT = 0.25        # share of workplace days the lunch at the cut is eaten out (a trip there and back)
+LUNCH_OUT = 0.15        # share of workplace days the lunch at the cut is eaten out (a trip there and back)
 
 
 class World:
@@ -119,12 +119,16 @@ class World:
                 p.commitments.remove(c)                                  # just ate, or too late to join (eats alone later); no dinner, no dishes
                 return self.decide(p, t)
             if c.activity == "dinner":                                   # a latecomer eats for their own drawn length
-                own = fit_end(t, minutes(p.rand, 25, 0.3, 20, 60), free_until(p, following_commitment(p, t), "home"))
-                return self.join_table(p, t, "dinner", c.end if t <= c.start else own)
+                f = following_commitment(p, t)
+                if f is not None and f.activity == "dishes" and f.start <= c.end:
+                    f = following_commitment(p, f.start)                 # their own dishes wait until they have eaten
+                until = free_until(p, f, "home")
+                own = fit_end(t, minutes(p.rand, 25, 0.3, 20, 60), until)
+                return self.join_table(p, t, "dinner", c.end if t <= c.start else max(own, min(c.end, until)))
             end = c.end
             if c.place == "out" and c.activity != "appointment" and p.last_meal_day.get("lunch") != day:   # an outing over lunch pauses for it
                 if p.activity == c.activity and p.started_at >= c.start - 10 and meal_due(p, t) == "lunch" and (m := meal(p, t, "lunch", c.end - 15)):
-                    return m[:4] + (c.with_ids,)                         # (ten minutes in at the earliest)
+                    return self.join_table(p, t, "lunch", m[2])          # (ten minutes in at the earliest; only those eating are listed)
                 due = max(p.lunch_at, p.last_meal_at + 141, t + 10)
                 if due < min(c.end - 35, p.lunch_at + 100):
                     end = due
@@ -169,7 +173,9 @@ class World:
         if limit - t >= 30 and snack_due(p, t):
             return ("snack", p.place, t + p.rand.randint(8, 15), INTERRUPTIBLE["snack"], frozenset())
         planned, p.planned = p.planned, None
-        if planned and planned[1] == p.place and limit - t >= 30:        # arrived where the pick happens (a short gap takes the short-gap rule)
+        if planned and planned[1] == p.place and limit - t >= 30 \
+                and not (planned[0] == "exercise" and t - p.last_meal_at < 60):   # ate on arrival: pick again
+            # arrived where the pick happens (a short gap takes the short-gap rule)
             name, place, duration, longest = planned
             return (name, place, free_end(t, duration, limit, longest), INTERRUPTIBLE[name], frozenset())
         pick = pick_free_activity(p, t, limit, away)
@@ -222,19 +228,19 @@ class World:
         return None
 
     def join_table(self, p, t, name, end):
-        """A meal at home: sit down with the household members already eating it (12 minutes or
-        more left), for p's own length; each of them now lists p too (a member on a call at the
-        table lists p once the call ends), so with_ids stay symmetric and name only people who
-        actually overlap."""
+        """A meal with the household: sit down with the members already eating it where p is (12
+        minutes or more left), for p's own length; each of them now lists p too (a member on a call
+        at the table lists p once the call ends), so with_ids stay symmetric and name only people
+        who are actually eating alongside."""
         table = [q for q in map(self.people.__getitem__, self.households[p.household_id].members)
-                 if q is not p and running(q) == "meal:" + name and q.place == "home" and t + 12 <= q.ends_at]
+                 if q is not p and running(q) == "meal:" + name and q.place == p.place and t + 12 <= q.ends_at]
         for q in table:
             if q.activity == "phone":
                 q.resume = (q.resume[0], INTERRUPTIBLE["dinner"], q.resume[2] | {p.id}, q.resume[3])
             else:
                 q.with_ids, q.interruptible = q.with_ids | {p.id}, INTERRUPTIBLE["dinner"]
         ids = frozenset(q.id for q in table)
-        return ("meal:" + name, "home", end, INTERRUPTIBLE["dinner" if ids else "meal"], ids)
+        return ("meal:" + name, p.place, end, INTERRUPTIBLE["dinner" if ids else "meal"], ids)
 
     # -- events from outside the person -----------------------------------------------
 
@@ -247,8 +253,16 @@ class World:
         lead = lead_min(p, c)                                            # at the same place it starts on the minute
         if t < c.start - lead:
             self.push(c.start - lead, f"person:{p.id}", "commitment_start", 0)
-        elif p.activity in ("commute", "phone"):                         # again when the call ends or on arrival (queued behind that event)
-            self.push(p.resume[3] if p.activity == "phone" else p.ends_at, f"person:{p.id}", "commitment_start", 0)
+        elif p.activity == "commute":                                    # again on arrival (queued behind that event)
+            self.push(p.ends_at, f"person:{p.id}", "commitment_start", 0)
+        elif p.activity == "phone":                                      # the trip cannot wait: the call ends here
+            if p.started_at == t:                                        # in its first minute: a minute of it is logged first
+                self.push(t + 1, f"person:{p.id}", "commitment_start", 0)
+                return
+            self.finish(p, t)
+            p.activity, p.interruptible, p.with_ids = p.resume[:3]
+            p.started_at, p.resume = t, None
+            self.start(p, t, *self.decide(p, t))
         elif p.activity != "sleep":
             self.finish(p, t)
             self.start(p, t, *self.decide(p, t))

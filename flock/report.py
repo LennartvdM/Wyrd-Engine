@@ -248,8 +248,8 @@ def agent_checks(seed):
     w = World(seed, 200)
     t = DAY + 180                                                     # Tuesday 03:00
     w.run_until(t)
-    sleepers = [p.id + 1 for p in w.people if p.activity == "sleep" and p.workplace_id is not None
-                and work_on(p, 1) and DAY + 360 <= p.ends_at <= DAY + 510][:80]     # due up 06:00-08:30
+    sleepers = [p.id + 1 for p in w.people if p.activity == "sleep"
+                and work_on(p, 1) and DAY + 360 <= p.ends_at <= DAY + 510][:80]     # working tomorrow, due up 06:00-08:30
     for pid in sleepers:
         w.ping(pid, t, "a", "question")
     w.run_until(DAY + 720)

@@ -3,6 +3,36 @@ https://wyrrdmaek.netlify.app/
 
 # Wyrd Engine
 
+## flock — the current simulator
+
+`flock/` is a population simulator for synthetic people, written to be tested against by AI agent
+swarms. It is algorithmic: plain Python, standard library only, no model and no learning at runtime.
+People have commitments, a bedtime and an alarm, minutes since their last meal, and a weighted
+choice of free activities by hour band. Households and workplaces own the shared times, so commute
+waves and the lunch peak come out of the population rather than being written down. Agents observe
+people, ping them, request slots and send invites, and get replies delayed by what the person is
+doing.
+
+    python -m flock day --person 17 --day tue
+    python -m flock histogram --day weekday
+    python -m flock checks --seed 1 --people 400 --weeks 4
+    python -m flock demo-swarm
+
+See [flock/README.md](flock/README.md) for the commands and the agent API, and
+[flock/NOTES.md](flock/NOTES.md) for every decision taken, the numbers behind each claim, and the
+seeds and population sizes on which the realism checks fail.
+
+`checks` runs 52 realism tests against published time-use figures. All 52 pass on seeds 1-5 at 400
+people over 4 weeks and at 1000 people over 4 weeks, which takes about 12 seconds.
+
+## Earlier prototype (superseded)
+
+Everything below, and the code in `engines/`, `modules/`, `rigs/`, `tes/` and `web/`, is the earlier
+attempt. It generates a week of schedules per isolated person and is kept for reference. Its known
+limits: durations were inflated by a multiplier applied to every activity including sleep, activities
+were placed end to end so an overrun pushed later ones into the night, days were boxed at midnight so
+sleep was truncated, and people were simulated independently of each other.
+
 Procedural generation tools for believable synthetic schedules and environments.
 
 ## Overview

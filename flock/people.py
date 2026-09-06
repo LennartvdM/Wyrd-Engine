@@ -113,7 +113,7 @@ class Workplace:
         r = self.rand = stream(seed, "workplace", id)
         self.id, self.members = id, []
         self.size = r.randint(8, 40)
-        # A population has few workplaces (400 people -> ~23) of very different sizes, so the start
+        # A population has few workplaces (400 people -> 23-28) of very different sizes, so the start
         # minute is drawn among the bins still short of their share of the employed placed so far
         # (this workplace included), in proportion to the squared shortfall, and the workplace holds
         # at most that shortfall plus a quarter of its bin's share of the employed so far, so no bin
