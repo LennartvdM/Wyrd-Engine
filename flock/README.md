@@ -102,6 +102,32 @@ rise rather than a set of spikes at the workplace start times.  This is what the
 agent tested against people who arrive at the same minute and leave at the same minute every day
 learns a schedule no real population has, and scores well for it.
 
+## Words for the spread
+
+The stacked chart's boundaries carry an **envelope**: a **pointwise quantile curve**, the 10th and
+90th percentile of that boundary computed independently at each minute.  Pointwise is the useful
+kind here — it answers "at 08:30, what should I expect" — but it is worth knowing what it is not.
+It is not a **simultaneous band**, which would have to be wider to contain a whole day's curve at
+the stated rate; and because it is stitched together minute by minute, the envelope is not a
+trajectory any day actually followed.
+
+The per-activity panels are a **fan chart**: nested pointwise intervals in one hue, lightest
+outermost.  The published form of the same idea is a **functional boxplot** (Sun and Genton, 2011),
+which ranks whole curves by **band depth** so its central region is bounded by real days rather
+than by a synthetic per-minute quantile.  That is the version to reach for if what matters is a
+plausible day rather than a plausible minute.
+
+Two distinctions worth keeping straight, because they diverge as the run gets longer: this reports
+the **spread of the days** (a tolerance interval), not the **uncertainty of the mean** (a confidence
+interval).  Run more weeks and the confidence interval shrinks toward nothing while the spread does
+not, and it is the spread that something optimising against this population has to survive.
+
+Smoothing the envelope is available in the browser page as a 15-minute moving average.  It removes
+order-statistic noise — with 20 days the 90th percentile is the 18th of 20 values and jumps about —
+at the cost of bias wherever the curve turns sharply.  The window is kept under the width of the
+meal peaks, which are signal.  The formal version of the same move is **quantile regression on a
+spline basis**, which estimates a smooth quantile directly instead of smoothing a noisy estimate.
+
 ## The spread behind a percentage
 
 `histogram` pools every day of a kind into one set of percentages.  `bands` keeps the days apart

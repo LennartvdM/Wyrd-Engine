@@ -28,6 +28,7 @@ const state = {
   dailyCat: 'all',
   stackMode: 'pooled',
   bandRange: '80',
+  bandSmooth: false,
   bin: 15,
   week_cache: null,
 };
@@ -373,6 +374,23 @@ function aggregate(rows, binMinutes, sourceBin) {
 
 
 
+
+function smooth(series, windowBins) {
+  // A centred moving average over the quantile curves. Named plainly because that is what it is:
+  // the formal version of this is quantile regression on a spline basis, which estimates a smooth
+  // quantile directly instead of smoothing a noisy point estimate. Window is kept well under the
+  // width of the meal peaks, which are signal, not noise.
+  if (windowBins <= 1) return series;
+  const half = Math.floor(windowBins / 2);
+  return series.map((_, i) => {
+    let sum = 0, n = 0;
+    for (let j = Math.max(0, i - half); j <= Math.min(series.length - 1, i + half); j += 1) {
+      sum += series[j]; n += 1;
+    }
+    return sum / n;
+  });
+}
+
 function quantile(sorted, q) {
   if (!sorted.length) return 0;
   const i = (sorted.length - 1) * q;
@@ -405,31 +423,32 @@ function renderStackedBands(svg, data, geom) {
   const [loQ, hiQ] = state.bandRange === 'full' ? [0, 1] : [0.1, 0.9];
   const stats = boundaryStats(data, loQ, hiQ);
   const nb = stats.length;
+  const win = state.bandSmooth ? Math.max(1, Math.round(15 / data.bin_minutes)) : 1;
   const x = (b) => padL + ((b + 0.5) / nb) * plotW;
   const y = (v) => padT + plotH - v * plotH;
+  const col = (k, f) => smooth(stats.map((s) => s[k][f]), win);
+  const path = (vals) => vals.map((v, b) => `${x(b).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
 
-  // Solid regions between the median boundaries: the discrete answer an agent optimises against.
+  const med = CATEGORIES.map((_, k) => col(k, 'med'));
   for (let k = 0; k < CATEGORIES.length; k += 1) {
-    const top = [], bottom = [];
-    for (let b = 0; b < nb; b += 1) {
-      top.push(`${x(b).toFixed(1)},${y(stats[b][k].med).toFixed(1)}`);
-      bottom.push(`${x(b).toFixed(1)},${y(k === 0 ? 0 : stats[b][k - 1].med).toFixed(1)}`);
-    }
+    const top = path(med[k]).split(' ');
+    const bottom = (k === 0 ? med[k].map(() => 0) : med[k - 1]).map((v, b) =>
+      `${x(b).toFixed(1)},${y(v).toFixed(1)}`);
     el('polygon', { points: top.concat(bottom.reverse()).join(' '),
                     fill: `var(--${CATEGORIES[k].css})` }, svg);
   }
-  // Each boundary's envelope, then the median itself.
+  // The envelope: a thin quantile curve on each boundary rather than a soft fill, so the eye has
+  // an edge to follow. The top boundary is 100 % by construction and carries no envelope.
   for (let k = 0; k < CATEGORIES.length - 1; k += 1) {
-    const hi = [], lo = [];
-    for (let b = 0; b < nb; b += 1) {
-      hi.push(`${x(b).toFixed(1)},${y(stats[b][k].hi).toFixed(1)}`);
-      lo.push(`${x(b).toFixed(1)},${y(stats[b][k].lo).toFixed(1)}`);
+    const lo = col(k, 'lo'), hi = col(k, 'hi');
+    el('polygon', { points: path(hi).split(' ').concat(path(lo).split(' ').reverse()).join(' '),
+                    fill: 'var(--text-primary)', 'fill-opacity': 0.07 }, svg);
+    // Only the two envelope curves: the median is already the edge of the solid region, and
+    // drawing a line on it as well is ink for something the reader can see.
+    for (const vals of [lo, hi]) {
+      el('polyline', { points: path(vals), fill: 'none', stroke: 'var(--text-primary)',
+                       'stroke-width': 0.9, 'stroke-opacity': 0.32 }, svg);
     }
-    el('polygon', { points: hi.concat(lo.reverse()).join(' '),
-                    fill: 'var(--text-primary)', 'fill-opacity': 0.13 }, svg);
-    el('polyline', { points: hi.map((_, b) => `${x(b).toFixed(1)},${y(stats[b][k].med).toFixed(1)}`).join(' '),
-                     fill: 'none', stroke: 'var(--text-primary)', 'stroke-width': 1,
-                     'stroke-opacity': 0.5 }, svg);
   }
 
   for (let pct = 0; pct <= 100; pct += 25) {
@@ -442,11 +461,12 @@ function renderStackedBands(svg, data, geom) {
                            'text-anchor': h === 0 ? 'start' : h === 24 ? 'end' : 'middle' }, svg);
     t.textContent = String(h % 24).padStart(2, '0');
   }
-  const span = state.bandRange === 'full' ? 'the full range across the days'
-                                          : 'the middle 80 % of the days';
+  const span = state.bandRange === 'full' ? 'the full range' : 'the 10th to 90th percentile';
   $('pop-note').textContent =
-    `${data.curves.length} weekdays, ${data.people} people. Solid regions are the median boundary; ` +
-    `the shaded band on each is ${span}. The table below has the numbers.`;
+    `${data.curves.length} weekdays, ${data.people} people. Heavy line: the median cumulative ` +
+    `boundary. Thin lines: ${span} of that boundary across days, pointwise` +
+    (state.bandSmooth ? ', smoothed with a 15-minute moving average — shorter than the meal peaks, which are signal' : '') +
+    `. These are boundary levels, so a band's own spread is in the panels below.`;
   renderBandTable(data, stats, loQ, hiQ);
 }
 
@@ -1028,9 +1048,15 @@ function init() {
       }
       $('binsize').hidden = state.stackMode !== 'pooled';
       $('bandrange').hidden = state.stackMode !== 'bands';
+      $('bandsmooth').hidden = state.stackMode !== 'bands';
       renderPopulation(popCache);
     });
   }
+  $('bandsmooth').addEventListener('click', () => {
+    state.bandSmooth = !state.bandSmooth;
+    $('bandsmooth').setAttribute('aria-pressed', String(state.bandSmooth));
+    renderPopulation(popCache);
+  });
   for (const b of $('bandrange').children) {
     b.addEventListener('click', () => {
       state.bandRange = b.dataset.range;
