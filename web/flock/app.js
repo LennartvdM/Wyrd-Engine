@@ -26,6 +26,7 @@ const state = {
   carpetSort: 'wake',
   blendMode: 'mix',
   dailyCat: 'all',
+  stackMode: 'pooled',
   bin: 15,
   week_cache: null,
 };
@@ -354,6 +355,48 @@ function aggregate(rows, binMinutes, sourceBin) {
   return out;
 }
 
+
+function renderStackedDays(svg, data, geom) {
+  const { width, height, padL, padR, padT, padB, plotW, plotH } = geom;
+  const nb = data.curves.length ? data.curves[0].shares.S.length : 0;
+  // One stack per day, laid over the others. Where every day puts a boundary in the same place the
+  // colour reaches full strength; where they disagree the layers only partly cover, so the band
+  // fades out over the range the days actually span.
+  const alpha = Math.max(0.06, Math.min(0.3, 3 / Math.max(1, data.curves.length)));
+  for (const d of data.curves) {
+    let lower = new Array(nb).fill(0);
+    for (const c of CATEGORIES) {
+      const upper = lower.map((v, b) => v + (d.shares[c.key][b] || 0));
+      const top = [];
+      const bottom = [];
+      for (let b = 0; b < nb; b += 1) {
+        const x = (padL + ((b + 0.5) / nb) * plotW).toFixed(1);
+        top.push(`${x},${(padT + plotH - upper[b] * plotH).toFixed(1)}`);
+        bottom.push(`${x},${(padT + plotH - lower[b] * plotH).toFixed(1)}`);
+      }
+      el('polygon', {
+        points: top.concat(bottom.reverse()).join(' '),
+        fill: `var(--${c.css})`, 'fill-opacity': alpha.toFixed(3),
+      }, svg);
+      lower = upper;
+    }
+  }
+  for (let pct = 0; pct <= 100; pct += 25) {                    // labels only: a rule drawn over
+    const y = padT + plotH - (pct / 100) * plotH;              // the fills would hide the fading
+    const t = el('text', { x: padL - 7, y: y + 3.5, class: 'axis', 'text-anchor': 'end' }, svg);
+    t.textContent = `${pct}%`;
+  }
+  for (let h = 0; h <= 24; h += 3) {
+    const px = padL + (h / 24) * plotW;
+    const t = el('text', { x: Math.min(width - padR, px), y: height - 8, class: 'axis',
+                           'text-anchor': h === 0 ? 'start' : h === 24 ? 'end' : 'middle' }, svg);
+    t.textContent = String(h % 24).padStart(2, '0');
+  }
+  $('pop-note').textContent =
+    `${data.curves.length} weekdays, ${data.people} people, one stack drawn per day. A band that ` +
+    `fades is one whose boundary lands somewhere different each day.`;
+}
+
 function renderPopulation(data) {
   const svg = $('pop-chart');
   const width = Math.max(360, svg.parentElement.clientWidth || 900);
@@ -365,6 +408,12 @@ function renderPopulation(data) {
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   svg.setAttribute('width', width);
   svg.setAttribute('height', height);
+
+  if (state.stackMode === 'days' && dailyCache) {
+    renderStackedDays(svg, dailyCache,
+      { width, height, padL, padR, padT, padB, plotW, plotH });
+    return;
+  }
 
   const bins = aggregate(data.rows, state.bin, data.bin_minutes);
   const colW = plotW / bins.length;
@@ -854,6 +903,16 @@ function init() {
     });
     $('daytype').appendChild(b);
   });
+  for (const b of $('stackmode').children) {
+    b.addEventListener('click', () => {
+      state.stackMode = b.dataset.stack;
+      for (const other of $('stackmode').children) {
+        other.setAttribute('aria-pressed', String(other === b));
+      }
+      $('binsize').hidden = state.stackMode === 'days';
+      renderPopulation(popCache);
+    });
+  }
   for (const b of $('dailycat').children) {
     b.addEventListener('click', () => {
       state.dailyCat = b.dataset.cat;
