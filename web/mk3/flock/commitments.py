@@ -109,10 +109,7 @@ def plan_work(world, w, w0):
             w.roster[pid] = (k + 1) % 4
             days = [d for d in range(7) if d not in ROSTER[k]]
         else:
-            # The day's shared attendance moves everyone together: absences correlate (a bug going
-            # round, a closure), and only correlated variation survives averaging over a population.
-            days = [d for d in range(7)
-                    if r.random() < (0.88 if d < 5 else 0.04) * world.conditions(day0 + d)[2]]
+            days = [d for d in range(7) if r.random() < (0.88 if d < 5 else 0.04)]   # 0.80 of the employed work on a weekday, 0.30 on a weekend day
         weekdays = [d for d in days if d < 5]
         at_home = set(r.sample(weekdays, min(tr.home_days, len(weekdays))))
         shift = 300 if tr.afternoon_shift else 0

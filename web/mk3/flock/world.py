@@ -1,7 +1,7 @@
 """The world: one event heap, the decision loop, the event handlers and the agent calls."""
 import heapq
 
-from .clock import DAY, WEEK, clamp, day_start, fit_end, minutes
+from .clock import DAY, WEEK, day_start, fit_end, minutes
 from .seeds import stream
 from .people import make_population, Segment
 from .commitments import INF, travel_min, trip_lead, lead_min, next_commitment, following_commitment, plan_week
@@ -18,7 +18,6 @@ class World:
         self.seed = seed
         self.people, self.households, self.workplaces = make_population(seed, n)
         self.now, self.heap, self.seq, self.ids = 0, [], 0, 0
-        self._conditions = {}
         self.pings, self.reply_log = [], []
         plan_week(self, 0)
         plan_week(self, WEEK)                                            # two weeks are always planned
@@ -29,22 +28,6 @@ class World:
             p.woke_at, p.last_meal_at = p.bed_at - 900, p.bed_at - 200
             p.ends_at = sleep_end(p, p.bed_at)
             self.push(p.ends_at, f"person:{p.id}", "activity_end", 0)
-
-    def conditions(self, day):
-        """Three numbers shared by everyone on a given day: how long journeys take (traffic), how
-        much the day invites going out (weather), and how many people turn up at all (a bug going
-        round, a school closed, snow).
-
-        Everything else in the model varies person by person, and independent variation averages
-        out: measured over eight Tuesdays with 400 people, the population's day was *steadier* week
-        to week than 400 independent people would have been — an agent watching it would see the
-        same Tuesday every week. These do not average out, because they move everybody at once."""
-        if day not in self._conditions:
-            r = stream(self.seed, "day", day)
-            self._conditions[day] = (clamp(r.lognormvariate(0, 0.10), 0.85, 1.6),
-                                     clamp(r.gauss(1.0, 0.22), 0.45, 1.6),
-                                     clamp(r.gauss(1.0, 0.06), 0.8, 1.12))
-        return self._conditions[day]
 
     def new_id(self):
         self.ids += 1
@@ -110,7 +93,7 @@ class World:
         p.minutes_today[a] = p.minutes_today.get(a, 0) + t - p.started_at
         kind, _, label = a.partition(":")
         if kind == "sleep":
-            wake_up(p, t, self.households[p.household_id], self.conditions(t // DAY)[:2])
+            wake_up(p, t, self.households[p.household_id])
         elif kind == "meal":                                             # breakfast belongs to the wake, the rest to the day ending 05:00
             p.last_meal_at, p.last_meal_day[label] = t, p.woke_at if label == "breakfast" else meal_day(t)
         elif kind in ("snack", "break"):                                 # the work break counts as a snack for spacing
@@ -397,7 +380,7 @@ def commute(p, t, place, toward=None):
     population whose journeys always take the same time is one an agent can time perfectly.  A trip
     to an appointment arriving under 5 minutes early, or to anything at out under 10 minutes early,
     runs to its start (the trip just took longer)."""
-    travel = round(travel_min(p, p.place, place) * p.traffic)
+    travel = travel_min(p, p.place, place)
     delay = round(travel * p.rand.gauss(0, 0.12))
     if p.rand.random() < 0.08:
         delay += p.rand.randint(5, 20)

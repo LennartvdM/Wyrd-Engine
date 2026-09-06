@@ -238,6 +238,36 @@ commute peak by the 11:00 background, so it scores a *sharper* rush higher — t
 this change removes.  Its bound is the design's guess with no reference behind it.  Left failing
 rather than widened; see Check definitions.
 
+## Conditions the whole population shares (mk4)
+
+Everything mk2 and mk3 added varies person by person, and independent variation averages out.
+Measured over eight Tuesdays with 400 people, as the spread of the population's own curve divided
+by what 400 *independent* people would give (1.0 = independent, below = steadier):
+
+    at work 0.49   commuting 0.87   out 0.99   asleep 0.64   eating 0.81
+
+Under 1 means the population is *more* predictable week to week than a random sample of that size
+— an agent watching it sees the same Tuesday every week, which is what the whole exercise is meant
+to avoid.  The cause is structural: only correlated variation survives averaging, and nothing in
+the model was correlated across people within a day.
+
+`World.conditions(day)` draws three numbers per day from the world's own stream, shared by
+everyone: how long journeys take (`lognormvariate(0, 0.10)`, applied to every trip), how much the
+day invites going out (`gauss(1.0, 0.22)`, applied to the out rows of the free-time table) and how
+many people turn up at all (`gauss(1.0, 0.06)`, applied to the weekly attendance draw).  They stand
+for traffic, weather and whatever keeps people home — a bug going round, a closure, snow.
+
+After: at work 0.72, commuting 0.91, out 0.97, asleep 0.64, eating 0.81.
+
+The target is **not** 1.0.  The same 400 people recur every Tuesday and keep their jobs, their
+sleep needs and their households, so a real population of fixed membership genuinely is steadier
+than a fresh sample.  The ordering is the thing to read: `out` moves most because weather drives
+it, `asleep` least because it is anchored in traits that do not change week to week.  Nothing here
+was tuned to reach a number.
+
+Not modelled, and the obvious next shared effects: seasons and daylight, school terms and public
+holidays, and anything that persists across days (an illness that lasts a week rather than a day).
+
 ## Smaller choices
 
 - **The full-time work day is `N(535, 25)` minutes** (design section 3: `N(510, 25)`): meals, the

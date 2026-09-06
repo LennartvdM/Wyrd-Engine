@@ -97,6 +97,14 @@ rise rather than a set of spikes at the workplace start times.  This is what the
 agent tested against people who arrive at the same minute and leave at the same minute every day
 learns a schedule no real population has, and scores well for it.
 
+## What the whole population shares
+
+Each day draws three numbers that apply to everyone: how long journeys take, how much the day
+invites going out, and how many people turn up at all.  They stand for traffic, weather and
+whatever keeps people home.  Without them every source of variation was independent and averaged
+out, and the population's day was steadier from one Tuesday to the next than a random sample of the
+same size — an agent would have seen the same Tuesday every week.  `NOTES.md` has the measurements.
+
 ## Determinism
 
 Every person, household, workplace and reply has its own random stream keyed by the seed and

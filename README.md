@@ -28,7 +28,8 @@ Python in the browser under Pyodide.
 | `/workbench.html` | the original prototype, unchanged |
 | `/mk1/` | first flock release: people keep the same minutes daily, population counted by the hour |
 | `/mk2/` | departure slack and commute hold-ups; five-minute bins |
-| `/flock/` | mk3, the current one: the working day itself varies from day to day |
+| `/mk3/` | the working day itself varies, but every draw is independent |
+| `/flock/` | mk4, the current one: traffic, weather and absence move everyone together |
 
 **Adding a version.** Freeze the current one by copying `web/flock/` and the package into
 `web/mk<n>/flock/` (its `runner.js` reads that copy rather than the shared build manifest, so it

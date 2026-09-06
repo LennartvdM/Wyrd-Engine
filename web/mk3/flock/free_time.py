@@ -48,8 +48,6 @@ def pick_free_activity(p, t, limit, away=None):
         if name == "social":
             w *= 0.5 + p.traits.sociability
         trip = place in ("home", "out") and place != p.place
-        if place in ("out", "home/out"):
-            w *= p.outdoors                                              # the day's shared weather
         if name == last or (short and name not in SHORT) or (trip and (room < MOVE_NEEDS or just_in)) \
                 or clock >= until or (place == "here" and p.place == "work"):
             w = 0                                                        # never the same thing twice running (a snack between does not count)

@@ -23,9 +23,8 @@ def sleep_end(p, t):
     return max(t + 240, min(natural, alarm - wobble))
 
 
-def wake_up(p, t, household, conditions=(1.0, 1.0)):
+def wake_up(p, t, household):
     """Called when a sleep segment ends."""
-    p.traffic, p.outdoors = conditions
     p.woke_at, p.today, p.minutes_today = t, {}, {}
     p.sleep_debt = clamp(p.sleep_debt + p.traits.sleep_need_min - (t - p.started_at), 0, 180)
     p.lunch_at = household.lunch_at.get(t // DAY, day_start(t) + 740)  # today's lunch when not at work, shared at home
