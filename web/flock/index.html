@@ -95,6 +95,30 @@
 
     <div class="legend" id="legend-pop"></div>
 
+    <h2>One line per day</h2>
+    <p class="note">The chart above pools every weekday into one set of percentages. These are the
+      days kept apart: at any minute there is a percentage for each day, so days that agree lie on
+      top of each other and days that differ fan out. The width of that fan is the day-to-day
+      variation — a population with none would draw a single sharp line.</p>
+
+    <div class="row">
+      <div class="daybtns" id="dailycat" role="group" aria-label="Activity">
+        <button type="button" data-cat="all" aria-pressed="true">All</button>
+        <button type="button" data-cat="S" aria-pressed="false">sleep</button>
+        <button type="button" data-cat="W" aria-pressed="false">work</button>
+        <button type="button" data-cat="C" aria-pressed="false">commute</button>
+        <button type="button" data-cat="E" aria-pressed="false">eating</button>
+        <button type="button" data-cat="K" aria-pressed="false">chores</button>
+        <button type="button" data-cat="H" aria-pressed="false">home</button>
+        <button type="button" data-cat="O" aria-pressed="false">out</button>
+      </div>
+    </div>
+
+    <figure>
+      <div class="chart"><svg id="daily-chart" role="img" aria-label="Share doing each activity, one line per day"></svg></div>
+      <figcaption id="daily-note"></figcaption>
+    </figure>
+
     <h2>The same shares, without edges</h2>
     <p class="note">The stack above draws a boundary between every pair of activities. These do
       not: on the left, every column is the whole population mixed in proportion; on the right,

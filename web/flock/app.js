@@ -25,6 +25,7 @@ const state = {
   popDay: 'Tue',
   carpetSort: 'wake',
   blendMode: 'mix',
+  dailyCat: 'all',
   bin: 15,
   week_cache: null,
 };
@@ -266,6 +267,68 @@ function renderPersonDays(data) {
     `Person ${data.person} across ${data.days} ${data.kind}. Full colour means every one of those ` +
     `days; a faded band means only some. Each day is worth ${(100 / data.days).toFixed(0)} %, so ` +
     `more weeks give a finer gradient.`;
+}
+
+
+// ---- one line per day -----------------------------------------------------
+
+function renderDaily(data) {
+  if (!data) return;
+  const svg = $('daily-chart');
+  const width = Math.max(360, svg.parentElement.clientWidth || 900);
+  const height = 380;
+  const padL = 40, padR = 8, padT = 10, padB = 26;
+  const plotW = width - padL - padR;
+  const plotH = height - padT - padB;
+  clear(svg);
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+
+  const nb = data.curves.length ? data.curves[0].shares.S.length : 0;
+  let top = 0;
+  for (const d of data.curves) {
+    for (const c of CATEGORIES) {
+      if (state.dailyCat !== 'all' && c.key !== state.dailyCat) continue;
+      for (const v of d.shares[c.key]) top = Math.max(top, v);
+    }
+  }
+  top = Math.max(0.1, Math.ceil(top * 10) / 10);
+
+  for (let g = 0; g <= top + 1e-9; g += top <= 0.4 ? 0.1 : 0.2) {
+    const y = padT + plotH - (g / top) * plotH;
+    el('line', { x1: padL, y1: y, x2: width - padR, y2: y, class: 'grid' }, svg);
+    const t = el('text', { x: padL - 7, y: y + 3.5, class: 'axis', 'text-anchor': 'end' }, svg);
+    t.textContent = `${Math.round(g * 100)}%`;
+  }
+
+  // One line per day per activity. Days that agree lie on top of each other and read as a single
+  // line; days that differ fan out, and the width of that fan is the day-to-day variance.
+  const opacity = Math.max(0.12, Math.min(0.55, 4 / Math.max(1, data.curves.length)));
+  for (const d of data.curves) {
+    for (const c of CATEGORIES) {
+      if (state.dailyCat !== 'all' && c.key !== state.dailyCat) continue;
+      const pts = d.shares[c.key].map((v, b) =>
+        `${(padL + ((b + 0.5) / nb) * plotW).toFixed(1)},${(padT + plotH - (v / top) * plotH).toFixed(1)}`);
+      el('polyline', {
+        points: pts.join(' '), fill: 'none', stroke: `var(--${c.css})`,
+        'stroke-width': 1.5, 'stroke-opacity': opacity.toFixed(2), 'stroke-linejoin': 'round',
+      }, svg);
+    }
+  }
+
+  for (let h = 0; h <= 24; h += 3) {
+    const px = padL + (h / 24) * plotW;
+    const t = el('text', { x: Math.min(width - padR, px), y: height - 8, class: 'axis',
+                           'text-anchor': h === 0 ? 'start' : h === 24 ? 'end' : 'middle' }, svg);
+    t.textContent = String(h % 24).padStart(2, '0');
+  }
+
+  const what = state.dailyCat === 'all' ? 'every activity'
+    : CATEGORIES.find((c) => c.key === state.dailyCat).name;
+  $('daily-note').textContent =
+    `${data.curves.length} days, ${data.people} people, ${what}. One line per day: where the lines ` +
+    `lie on top of each other the days agree, where they fan apart they do not.`;
 }
 
 // ---- population -----------------------------------------------------------
@@ -652,16 +715,19 @@ async function loadDay() {
 
 let popCache = null;
 let carpetCache = null;
+let dailyCache = null;
 async function loadPopulation({ refetch = true } = {}) {
   if (refetch || !popCache) {
     setStatus('counting…');
     popCache = await call('histogram', state.popDay);
     carpetCache = await call('carpet', state.popDay, 400);
+    dailyCache = await call('daily_curves', 'weekdays');
     setStatus('');
   }
   renderPopulation(popCache);
   renderCarpet(carpetCache);
   renderBlend(popCache);
+  renderDaily(dailyCache);
 }
 
 async function build() {
@@ -780,6 +846,7 @@ function init() {
       state.popDay = name;
       popCache = null;
       carpetCache = null;
+      dailyCache = null;
       for (const other of $('daytype').children) {
         other.setAttribute('aria-pressed', String(other === b));
       }
@@ -787,6 +854,15 @@ function init() {
     });
     $('daytype').appendChild(b);
   });
+  for (const b of $('dailycat').children) {
+    b.addEventListener('click', () => {
+      state.dailyCat = b.dataset.cat;
+      for (const other of $('dailycat').children) {
+        other.setAttribute('aria-pressed', String(other === b));
+      }
+      renderDaily(dailyCache);
+    });
+  }
   for (const b of $('blendmode').children) {
     b.addEventListener('click', () => {
       state.blendMode = b.dataset.mode;

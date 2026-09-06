@@ -173,6 +173,51 @@ def histogram(day_key):
     }
 
 
+CURVE_BIN = 10
+
+
+def daily_curves(kind="weekdays"):
+    """One share-over-time curve per day per category.
+
+    The stacked view pools every day of a kind into a single set of percentages.  These are the
+    days kept apart: at any minute there is one percentage per day, so days that agree lie on top
+    of each other and days that differ fan out.  The vertical spread is the day-to-day variance,
+    which is the thing a single pooled curve cannot show.
+    """
+
+    ndays = _world.now // DAY
+    if kind == "weekdays":
+        days = [d for d in range(ndays) if d % 7 < 5]
+    elif kind == "all":
+        days = list(range(ndays))
+    else:
+        index = DAY_NAMES.index(kind[:3].capitalize())
+        days = [d for d in range(ndays) if d % 7 == index]
+
+    letters = [c[0] for c in CATEGORIES]
+    nb = DAY // CURVE_BIN
+    n = len(_world.people)
+    out = []
+    for d in days:
+        acc = [{k: 0 for k in letters} for _ in range(nb)]
+        lo_d, hi_d = d * DAY, (d + 1) * DAY
+        for p in _world.people:
+            for s in _world.segments(p):
+                lo, hi = max(s.start, lo_d), min(s.end, hi_d)
+                if lo >= hi:
+                    continue
+                letter = letter_of(s.activity, s.place)
+                for b in range((lo - lo_d) // CURVE_BIN, (hi - 1 - lo_d) // CURVE_BIN + 1):
+                    acc[b][letter] += min(hi, lo_d + CURVE_BIN * (b + 1)) - max(lo, lo_d + CURVE_BIN * b)
+        denom = n * CURVE_BIN
+        out.append({
+            "day": d,
+            "label": f"{DAY_NAMES[d % 7]} w{d // 7 + 1}",
+            "shares": {k: [round(acc[b][k] / denom, 4) for b in range(nb)] for k in letters},
+        })
+    return {"kind": kind, "bin_minutes": CURVE_BIN, "people": n, "curves": out}
+
+
 def carpet(day_key, limit=400):
     """One row per person-day: the day's segments as (start, end, category).
 
