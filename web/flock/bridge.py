@@ -173,6 +173,42 @@ def histogram(day_key):
     }
 
 
+def carpet(day_key, limit=400):
+    """One row per person-day: the day's segments as (start, end, category).
+
+    The stacked view shows the population's totals, which is an average and hides how the
+    transitions are spread.  This shows the days themselves, laid on top of each other, so a
+    synchronised population reads as a straight edge and a spread one as a frayed one.
+    """
+
+    index = DAY_NAMES.index(day_key[:3].capitalize())
+    days = [d for d in range(_world.now // DAY) if d % 7 == index]
+    rows, wake = [], []
+    for d in days:
+        lo, hi = d * DAY, (d + 1) * DAY
+        for p in _world.people:
+            if len(rows) >= limit:
+                break
+            segs, woke = [], None
+            for s in _world.segments(p):
+                if s.end <= lo or s.start >= hi:
+                    continue
+                segs.append([max(0, s.start - lo), min(DAY, s.end - lo), letter_of(s.activity, s.place)])
+                if woke is None and s.activity == "sleep" and s.end < hi:
+                    woke = s.end - lo
+            if segs:
+                rows.append(segs)
+                wake.append(woke if woke is not None else DAY)
+    order = sorted(range(len(rows)), key=lambda i: wake[i])
+    return {
+        "day_name": DAY_NAMES[index],
+        "rows": rows,
+        "by_wake": order,
+        "shown": len(rows),
+        "available": len(days) * len(_world.people),
+    }
+
+
 def _agents_at(minute):
     """The world the agent panel talks to.
 

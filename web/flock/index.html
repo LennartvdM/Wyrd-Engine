@@ -85,6 +85,24 @@
 
     <div class="legend" id="legend-pop"></div>
 
+    <h2>Every day, stacked</h2>
+    <p class="note">One row per person-day, midnight to midnight. The totals above are an average
+      and cannot show how a transition is spread; here the days themselves lie on top of each other,
+      so a population that moves together reads as a straight edge and one that does not reads as a
+      frayed one.</p>
+
+    <div class="row">
+      <div class="daybtns" id="carpetsort" role="group" aria-label="Row order">
+        <button type="button" data-sort="wake" aria-pressed="true">By wake time</button>
+        <button type="button" data-sort="person" aria-pressed="false">In person order</button>
+      </div>
+    </div>
+
+    <figure>
+      <div class="chart"><svg id="carpet-chart" role="img" aria-label="Every person's day for the chosen weekday, one row each"></svg></div>
+      <figcaption id="carpet-note"></figcaption>
+    </figure>
+
     <details class="table-view">
       <summary>Binned shares as a table</summary>
       <div><table id="pop-table"></table></div>

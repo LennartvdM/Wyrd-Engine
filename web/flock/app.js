@@ -23,6 +23,7 @@ const state = {
   day: 1,
   week: 0,
   popDay: 'Tue',
+  carpetSort: 'wake',
   bin: 15,
   week_cache: null,
 };
@@ -257,7 +258,6 @@ function renderPopulation(data) {
 
   const bins = aggregate(data.rows, state.bin, data.bin_minutes);
   const colW = plotW / bins.length;
-  const thin = colW < 4;                      // too narrow for a surface gap between segments
 
   for (let pct = 0; pct <= 100; pct += 25) {
     const y = padT + plotH - (pct / 100) * plotH;
@@ -274,11 +274,11 @@ function renderPopulation(data) {
       if (share <= 0) continue;
       const h = share * plotH;
       const y = padT + plotH - (acc + share) * plotH;
+      // Contiguous: a surface gap between fills is a bar-chart convention and here it draws a
+      // white grid over the very detail this chart exists to show.
       el('rect', {
-        x: x0 + (thin ? 0 : 1), y,
-        width: Math.max(0.6, colW - (thin ? 0 : 2)),
-        height: Math.max(0.5, thin ? h : (h - 2 > 0 ? h - 2 : h)),
-        fill: `var(--${c.css})`,
+        x: x0, y, width: colW + 0.5, height: Math.max(0.5, h),
+        fill: `var(--${c.css})`, 'shape-rendering': 'crispEdges',
       }, svg);
       acc += share;
     }
@@ -318,6 +318,56 @@ function renderPopulation(data) {
     body.appendChild(tr);
   }
   table.appendChild(body);
+}
+
+
+// ---- every day, stacked ---------------------------------------------------
+
+function renderCarpet(data) {
+  if (!data) return;
+  const svg = $('carpet-chart');
+  const width = Math.max(360, svg.parentElement.clientWidth || 900);
+  const padL = 38, padR = 8, padT = 6, padB = 24;
+  const plotW = width - padL - padR;
+  const rowH = Math.max(1, Math.min(4, Math.floor(420 / data.rows.length)));
+  const plotH = rowH * data.rows.length;
+  const height = plotH + padT + padB;
+  clear(svg);
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+
+  const order = state.carpetSort === 'wake' ? data.by_wake : data.rows.map((_, i) => i);
+  order.forEach((rowIndex, y) => {
+    for (const [start, end, cat] of data.rows[rowIndex]) {
+      const c = BY_KEY[cat];
+      if (!c) continue;
+      const x0 = padL + (start / MINUTES) * plotW;
+      const x1 = padL + (end / MINUTES) * plotW;
+      el('rect', {
+        x: x0, y: padT + y * rowH, width: Math.max(0.4, x1 - x0), height: rowH,
+        fill: `var(--${c.css})`, 'shape-rendering': 'crispEdges',
+      }, svg);
+    }
+  });
+
+  for (let h = 0; h <= 24; h += 3) {
+    const px = padL + (h / 24) * plotW;
+    el('line', { x1: px, y1: padT, x2: px, y2: padT + plotH, class: 'grid', opacity: 0.25 }, svg);
+    const t = el('text', {
+      x: Math.min(width - padR, px), y: height - 7, class: 'axis',
+      'text-anchor': h === 0 ? 'start' : h === 24 ? 'end' : 'middle',
+    }, svg);
+    t.textContent = String(h % 24).padStart(2, '0');
+  }
+  const lbl = el('text', { x: padL - 7, y: padT + 9, class: 'axis', 'text-anchor': 'end' }, svg);
+  lbl.textContent = '1';
+  const lbl2 = el('text', { x: padL - 7, y: padT + plotH, class: 'axis', 'text-anchor': 'end' }, svg);
+  lbl2.textContent = String(data.rows.length);
+
+  $('carpet-note').textContent =
+    `${data.shown} of ${data.available} person-days on ${data.day_name}` +
+    (state.carpetSort === 'wake' ? ', sorted by when they woke' : ', in person order');
 }
 
 // ---- agents ---------------------------------------------------------------
@@ -478,13 +528,16 @@ async function loadDay() {
 }
 
 let popCache = null;
+let carpetCache = null;
 async function loadPopulation({ refetch = true } = {}) {
   if (refetch || !popCache) {
     setStatus('counting…');
     popCache = await call('histogram', state.popDay);
+    carpetCache = await call('carpet', state.popDay, 400);
     setStatus('');
   }
   renderPopulation(popCache);
+  renderCarpet(carpetCache);
 }
 
 async function build() {
@@ -602,6 +655,7 @@ function init() {
     b.addEventListener('click', () => {
       state.popDay = name;
       popCache = null;
+      carpetCache = null;
       for (const other of $('daytype').children) {
         other.setAttribute('aria-pressed', String(other === b));
       }
@@ -609,6 +663,15 @@ function init() {
     });
     $('daytype').appendChild(b);
   });
+  for (const b of $('carpetsort').children) {
+    b.addEventListener('click', () => {
+      state.carpetSort = b.dataset.sort;
+      for (const other of $('carpetsort').children) {
+        other.setAttribute('aria-pressed', String(other === b));
+      }
+      renderCarpet(carpetCache);
+    });
+  }
   for (const b of $('binsize').children) {
     b.addEventListener('click', () => {
       state.bin = Number(b.dataset.bin);
