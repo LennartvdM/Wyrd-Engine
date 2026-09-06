@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>flock mk3 — synthetic population</title>
+  <title>flock mk2 — synthetic population</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,8 +11,8 @@
 
   <header>
     <div class="brand">
-      <h1>flock mk3</h1>
-      <span class="sub">current — the working day itself varies from day to day</span>
+      <h1>flock mk2</h1>
+      <span class="sub">frozen — departure slack and commute hold-ups; counted in five-minute bins</span>
       <a class="back" href="../">← all versions</a>
     </div>
     <div class="controls">
@@ -64,7 +64,11 @@
   <!-- ---------- Population ---------- -->
   <section class="panel" id="panel-population" role="tabpanel" aria-labelledby="tab-population" hidden>
     <div class="row">
-      <div class="daybtns" id="daytype" role="group" aria-label="Day of week"></div>
+      <div class="daybtns" id="daytype" role="group" aria-label="Day type">
+        <button type="button" data-type="weekday" aria-pressed="true">Weekdays</button>
+        <button type="button" data-type="saturday" aria-pressed="false">Saturday</button>
+        <button type="button" data-type="sunday" aria-pressed="false">Sunday</button>
+      </div>
       <div class="spacer"></div>
       <div class="daybtns" id="binsize" role="group" aria-label="Bin width">
         <button type="button" data-bin="60" aria-pressed="false">1 h</button>

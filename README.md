@@ -18,22 +18,31 @@ doing.
     python -m flock checks --seed 1 --people 400 --weeks 4
     python -m flock demo-swarm
 
-There is a browser interface too. The site's landing page offers a choice between it and the
-earlier prototype's workbench; both run their Python in the browser under Pyodide.
+There is a browser interface too, and it is kept as a version log rather than a single app: every
+version stays up and runnable so the reasoning behind each step is visible. All of them run their
+Python in the browser under Pyodide.
 
 | Page | What it is |
 | --- | --- |
-| `/` | the choice between the two |
-| `/flock/` | flock: a person's day, the population's day, the agent API, the checks |
-| `/workbench.html` | the earlier prototype, unchanged |
+| `/` | the version log, oldest first |
+| `/workbench.html` | the original prototype, unchanged |
+| `/mk1/` | first flock release: people keep the same minutes daily, population counted by the hour |
+| `/mk2/` | departure slack and commute hold-ups; five-minute bins |
+| `/flock/` | mk3, the current one: the working day itself varies from day to day |
+
+**Adding a version.** Freeze the current one by copying `web/flock/` and the package into
+`web/mk<n>/flock/` (its `runner.js` reads that copy rather than the shared build manifest, so it
+keeps working as the live package moves on), then carry on in `flock/` and `web/flock/` and add an
+entry to `web/index.html`. Old versions are never edited.
 
 See [flock/README.md](flock/README.md) for the commands and the agent API, and
 [flock/NOTES.md](flock/NOTES.md) for every decision taken, the numbers behind each claim, and the
 seeds and population sizes on which the realism checks fail.
 
 `checks` runs 53 realism tests against published time-use figures. All 53 pass at 400 people over 4
-weeks on seeds 1, 2 and 4-8; seed 3 fails one (`18a`, documented in the notes). 1000 people over 4
-weeks takes about 14 seconds.
+weeks on seeds 1 and 4-8; seeds 2 and 3 fail one (`18a`, which scores a sharper commute rush higher
+and so penalises the day-to-day variation added in mk3 — documented in the notes). 1000 people over
+4 weeks takes about 14 seconds.
 
 ## Earlier prototype (superseded)
 

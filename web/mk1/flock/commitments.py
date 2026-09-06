@@ -5,7 +5,7 @@ import bisect
 import math
 from dataclasses import dataclass, replace
 
-from .clock import DAY, clamp, minutes
+from .clock import DAY, minutes
 
 INF = 10 ** 9
 ROSTER = ((5, 6), (2, 3), (0, 1), (3, 4))   # seven-day workplaces: the two days off, a four-week cycle with one full weekend
@@ -114,14 +114,8 @@ def plan_work(world, w, w0):
         at_home = set(r.sample(weekdays, min(tr.home_days, len(weekdays))))
         shift = 300 if tr.afternoon_shift else 0
         for d in days:
-            # The schedule itself moves from day to day.  Without this a person's work day began
-            # and ended within about 5 minutes of the same clock time every weekday of the year:
-            # nobody was ever called in early, stayed late or got away at four.
-            start = w0 + d * DAY + w.start_minute + tr.start_offset_min + shift + round(r.gauss(0, 8))
-            stretch = clamp(r.gauss(1.0, 0.10), 0.7, 1.35)              # ~50 min sd on a full day
-            if r.random() < 0.04:                                          # a half day, or a long one
-                stretch *= r.choice((0.6, 1.25))
-            length = round(tr.day_len_min * (0.72 if d >= 5 else 1) * stretch)
+            start = w0 + d * DAY + w.start_minute + tr.start_offset_min + shift
+            length = round(tr.day_len_min * (0.72 if d >= 5 else 1))
             cut = w0 + d * DAY + w.lunch_minute + shift + round(r.gauss(0, 10)) if tr.day_len_min >= 360 else 0
             pause = start + r.randint(120, 240) if length >= 300 else 0    # 0.724 of workers on a day worked are working at 11:00
             if pause and cut and cut - 60 < pause < cut + 120:             # an hour clear of lunch: the afternoon instead

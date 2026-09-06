@@ -79,17 +79,7 @@ class World:
         """Log the running activity up to t and record what it changed."""
         a = p.activity
         if p.started_at < t:
-            seg = Segment(p.id, a, logged_place(p), max(p.started_at, 0), t, p.with_ids)
-            # One stretch of the same thing is one segment.  Two work blocks back to back, or the
-            # two five-minute idles a late departure can leave, are the decision loop's bookkeeping
-            # and not something the person did twice.  Commutes are the exception: two in a row are
-            # two journeys.
-            last = p.log[-1] if p.log else None
-            if (last is not None and a != "commute" and last.activity == a and last.place == seg.place
-                    and last.end == seg.start and last.with_ids == seg.with_ids):
-                p.log[-1] = last._replace(end=seg.end)
-            else:
-                p.log.append(seg)
+            p.log.append(Segment(p.id, a, logged_place(p), max(p.started_at, 0), t, p.with_ids))
         p.minutes_today[a] = p.minutes_today.get(a, 0) + t - p.started_at
         kind, _, label = a.partition(":")
         if kind == "sleep":

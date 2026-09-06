@@ -213,6 +213,31 @@ zero arrivals) filled in.  Cost: `18a` now fails on seed 3 (3.78 against its 4) 
 definitions; that check rewards a *sharper* commute peak, which is the rigidity being removed, and
 its bound is the design's guess with no reference behind it.  Left failing rather than widened.
 
+## The working day varies from day to day (mk3)
+
+Measured on 400 x 4 seed 1 after mk2's departure slack: the *schedule* underneath was still a pure
+function of fixed traits.  Per person across their own weekdays, the work day started with a
+standard deviation of **5.3 minutes** and lasted within **5.3 minutes** of the same length — person
+1 began at 11:58, 11:59, 11:59, 12:00, 12:00, 12:00, 12:00, 12:00, 12:00, 12:01.  Meals and free
+time already varied (lunch sd 20.8, bedtime sd 33.1); the skeleton did not.  Nobody was ever called
+in early, stayed late, or got away at four.
+
+`plan_work` now draws both per day: the start takes `gauss(0, 8)` on top of the workplace minute and
+the person's offset, and the length is multiplied by `clamp(gauss(1.0, 0.10), 0.7, 1.35)` with a 4 %
+chance of a half day or a long one.  After: start sd **9.6 min**, length sd **59 min** for a
+full-day worker.  The magnitude is chosen to sit near the day-to-day variation a fixed-schedule
+worker actually shows, not tuned to a picture.
+
+Also here: adjacent segments with the same activity, place and company merge into one (commutes
+excepted, since two in a row are two journeys).  9,300 of 232,485 segments were a stretch of one
+thing split in two by the decision loop's bookkeeping — two work blocks back to back, or the pair
+of five-minute idles a late departure leaves.  Segments per weekday fell from 21.0 to 20.1.
+
+Cost: `18a` now fails on seeds 2 and 3 (3.77 and 3.44 against its 4).  It divides the morning
+commute peak by the 11:00 background, so it scores a *sharper* rush higher — the synchronisation
+this change removes.  Its bound is the design's guess with no reference behind it.  Left failing
+rather than widened; see Check definitions.
+
 ## Smaller choices
 
 - **The full-time work day is `N(535, 25)` minutes** (design section 3: `N(510, 25)`): meals, the
@@ -430,8 +455,8 @@ its bound is the design's guess with no reference behind it.  Left failing rathe
   12:30+ lunch, the 12:00 workplaces' commutes (seed 3 has 15 members at one, 6 % of its employed
   against the table's 0.05) and the earliest lunches out.  The morning peak quarter-hour holds
   382-559 person-minutes a weekday (the ACS-shaped start table, 0.57 leaving 06:00-08:29), so the
-  ratio sat at 4.32-6.30 on seeds 1-8 before day-to-day departure slack was added; spreading
-  arrivals lowered the peak and it is now 3.78-5.9, failing on seed 3.  The check rewards a sharper
+  ratio sat at 4.32-6.30 on seeds 1-8 before day-to-day variation was added; spreading arrivals and
+  then the work schedule itself lowered the peak, and it is now 3.44-5.7, failing on seeds 2 and 3.  The check rewards a sharper
   peak, i.e. the very synchronisation the slack removes, so it is left failing rather than widened:
   its bound is a guess with no reference, over a denominator of 77-101 person-minutes.  The weekday
   09-12 errands weight is what feeds the 11:00 bin.
@@ -450,7 +475,7 @@ its bound is the design's guess with no reference behind it.  Left failing rathe
 
 ## Robustness across seeds (400 x 4 seeds 1-8; 200 x 2 seeds 1-4; 60 x 1 seeds 1-3)
 
-- 400 x 4: seeds 1, 2, 4, 5, 6, 7 and 8 pass 53/53; seed 3 fails 18a (3.78) only.  Across the eight: 8d 58.7-62.7 (bound 55, reference 78),
+- 400 x 4: seeds 1 and 4-8 pass 53/53; seeds 2 and 3 fail 18a only (3.77, 3.44).  Across the eight: 8d 58.7-62.7 (bound 55, reference 78),
   8c 61.2-63.9 (bound 50-100), 8b 233.0-241.0 (bound 260), 8e 66.1-67.3 (bound 80), 15 0.776-0.798
   (bound 0.75), 18a 4.32-6.30 (bound 4), 18b 64-70 (bound 62-73), 18c 0.572-0.641 (reference 0.57),
   18d 0.577-0.656 (0.58), 7b 0.258-0.295 (0.30), 3b 81.8-93.0 (bound 95), 3a 419-432 (bound 440),

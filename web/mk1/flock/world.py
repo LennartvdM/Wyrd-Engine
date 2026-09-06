@@ -79,17 +79,7 @@ class World:
         """Log the running activity up to t and record what it changed."""
         a = p.activity
         if p.started_at < t:
-            seg = Segment(p.id, a, logged_place(p), max(p.started_at, 0), t, p.with_ids)
-            # One stretch of the same thing is one segment.  Two work blocks back to back, or the
-            # two five-minute idles a late departure can leave, are the decision loop's bookkeeping
-            # and not something the person did twice.  Commutes are the exception: two in a row are
-            # two journeys.
-            last = p.log[-1] if p.log else None
-            if (last is not None and a != "commute" and last.activity == a and last.place == seg.place
-                    and last.end == seg.start and last.with_ids == seg.with_ids):
-                p.log[-1] = last._replace(end=seg.end)
-            else:
-                p.log.append(seg)
+            p.log.append(Segment(p.id, a, logged_place(p), max(p.started_at, 0), t, p.with_ids))
         p.minutes_today[a] = p.minutes_today.get(a, 0) + t - p.started_at
         kind, _, label = a.partition(":")
         if kind == "sleep":
@@ -366,25 +356,19 @@ def free_until(p, c, place):
 
 def start_lead(p, c):
     """How early a commitment may begin from where the person is: after the trip, or at the same
-    place up to 5 minutes early (10 for housework, never for an appointment).  A trip also carries
-    the day's slack, so the same person sets off a little earlier or later than yesterday."""
+    place up to 5 minutes early (10 for housework, never for an appointment)."""
     travel = travel_min(p, p.place, c.place)
     if travel:
-        return max(0, travel + 5 + p.slack_today)
+        return travel + 5
     return 0 if c.activity == "appointment" else 10 if c.activity in ("cook", "dishes", "laundry") else 5
 
 
 def commute(p, t, place, toward=None):
-    """Travel with 12 % jitter either way and, once in about twelve trips, a hold-up of 5-20
-    minutes.  A trip can therefore run long enough to make its owner late, which is the point: a
-    population whose journeys always take the same time is one an agent can time perfectly.  A trip
-    to an appointment arriving under 5 minutes early, or to anything at out under 10 minutes early,
-    runs to its start (the trip just took longer)."""
+    """Travel with 15 % jitter either way, never more than 5 minutes over the trait (the departure
+    lead), so a commute is never late; one to an appointment arriving under 5 minutes early, or
+    to anything at out under 10 minutes early, runs to its start (the trip just took longer)."""
     travel = travel_min(p, p.place, place)
-    delay = round(travel * p.rand.gauss(0, 0.12))
-    if p.rand.random() < 0.08:
-        delay += p.rand.randint(5, 20)
-    end = t + max(3, travel + delay)
+    end = t + max(3, min(round(travel * p.rand.uniform(0.85, 1.15)), travel + 5))
     if toward and toward.place == place and 0 < toward.start - end < (10 if place == "out" else 5 if toward.activity == "appointment" else 0):
         end = toward.start
     return ("commute", place, end, INTERRUPTIBLE["commute"], frozenset())

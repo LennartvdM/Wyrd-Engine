@@ -88,12 +88,14 @@ as three, once per such activity.
 
 ## Day-to-day variation
 
-Nobody keeps the same minutes twice.  Each morning a person draws the margin they leave themselves
-before setting off, and a journey can run long (a hold-up on about one trip in twelve), so the same
-person's arrival at work varies with a standard deviation of about 9 minutes across a month, and a
-population's morning ramp is a smooth rise rather than a set of spikes at the workplace start
-times.  This matters for what the package is for: an agent tested against people who arrive at the
-same minute every day learns a schedule that no real population has.
+Nobody keeps the same minutes twice, and no two of their days are the same shape.  Each morning a
+person draws the margin they leave themselves before setting off, a journey can run long (a hold-up
+on about one trip in twelve), and the working day itself is drawn per day rather than fixed once.
+Across a month the same person's arrival at work varies with a standard deviation of about
+10 minutes and the length of their day by about an hour, so a population's morning ramp is a smooth
+rise rather than a set of spikes at the workplace start times.  This is what the package is for: an
+agent tested against people who arrive at the same minute and leave at the same minute every day
+learns a schedule no real population has, and scores well for it.
 
 ## Determinism
 

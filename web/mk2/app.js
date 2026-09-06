@@ -22,7 +22,7 @@ const state = {
   person: 17,
   day: 1,
   week: 0,
-  popDay: 'Tue',
+  dayType: 'weekday',
   bin: 15,
   week_cache: null,
 };
@@ -301,11 +301,9 @@ function renderPopulation(data) {
     t.textContent = String(h % 24).padStart(2, '0');
   }
 
-  const dayWord = { Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday',
-                    Fri: 'Friday', Sat: 'Saturday', Sun: 'Sunday' }[data.day_name];
   $('pop-note').textContent =
-    `${dayWord}${data.days > 1 ? ` of ${data.days} weeks` : ''} · ${data.people} people · ` +
-    `${data.person_days} person-days · ${state.bin}-minute bins`;
+    `${state.built.people} people over ${data.days} ${data.day_type === 'weekday' ? 'weekdays' : data.day_type + 's'}, ` +
+    `in ${state.bin}-minute bins.`;
 
   const table = clear($('pop-table'));
   table.innerHTML =
@@ -481,7 +479,7 @@ let popCache = null;
 async function loadPopulation({ refetch = true } = {}) {
   if (refetch || !popCache) {
     setStatus('counting…');
-    popCache = await call('histogram', state.popDay);
+    popCache = await call('histogram', state.dayType);
     setStatus('');
   }
   renderPopulation(popCache);
@@ -594,21 +592,16 @@ function init() {
     state.day = state.week * 7 + (state.day % 7);
     loadDay();
   });
-  DAY_NAMES.forEach((name) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.textContent = name;
-    b.setAttribute('aria-pressed', String(name === state.popDay));
+  for (const b of $('daytype').children) {
     b.addEventListener('click', () => {
-      state.popDay = name;
+      state.dayType = b.dataset.type;
       popCache = null;
       for (const other of $('daytype').children) {
         other.setAttribute('aria-pressed', String(other === b));
       }
       loadPopulation();
     });
-    $('daytype').appendChild(b);
-  });
+  }
   for (const b of $('binsize').children) {
     b.addEventListener('click', () => {
       state.bin = Number(b.dataset.bin);

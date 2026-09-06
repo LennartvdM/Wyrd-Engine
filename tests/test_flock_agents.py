@@ -64,7 +64,15 @@ def test_sleep_time_invite_is_declined_with_counter_and_accepts_become_appointme
     world.run_until(t + 2 * DAY)
     replies = world.replies("booker", t)
     night_replies = [r for r in replies if r.ping_id not in invites]
-    assert night_replies and all(r.decision == "decline" and r.counter is not None for r in night_replies)
+    # Every night invite is refused for being at sleep time.  A counter comes with it when the
+    # person still has an hour free — not always, since the second invite below may just have
+    # booked their only one.
+    assert night_replies and all(r.decision == "decline" and r.reason == "asleep" for r in night_replies)
+    countered = [r for r in night_replies if r.counter is not None]
+    assert len(countered) >= 0.8 * len(night_replies)
+    for r in countered:
+        assert not any(s.activity == "sleep" and s.start < r.counter.end and r.counter.start < s.end
+                       for s in world.segments(world.person(r.person)))
     accepted = [r for r in replies if r.ping_id in invites and r.decision == "accept"]
     assert accepted
     for r in accepted:

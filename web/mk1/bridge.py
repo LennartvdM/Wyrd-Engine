@@ -128,23 +128,13 @@ def roster(limit=400):
     return out
 
 
-BIN = 5   # minutes; the page sums these up to whatever bin width it draws
+def histogram(day_type):
+    """Share of person-minutes per category, by hour, over every day of that type."""
 
-
-def histogram(day_key):
-    """Share of person-minutes per category, in 5-minute bins.
-
-    `day_key` is a weekday name (mon .. sun) — every day of the run that falls on it — so what is
-    being pooled is always stated rather than left to the reader.  Five-minute bins rather than an
-    hour because the shape inside the hour is the point: an hourly bin cannot show whether a
-    morning ramp is a smooth rise or everybody arriving at once.
-    """
-
-    index = DAY_NAMES.index(day_key[:3].capitalize())
-    days = [d for d in range(_world.now // DAY) if d % 7 == index]
+    days = [d for d in range(_world.now // DAY)
+            if {"weekday": d % 7 < 5, "saturday": d % 7 == 5, "sunday": d % 7 == 6}[day_type]]
     letters = [c[0] for c in CATEGORIES]
-    nbins = DAY // BIN
-    minutes = [{k: 0 for k in letters} for _ in range(nbins)]
+    minutes = [{k: 0 for k in letters} for _ in range(24)]
     for p in _world.people:
         for s in _world.segments(p):
             letter = letter_of(s.activity, s.place)
@@ -152,33 +142,27 @@ def histogram(day_key):
                 lo, hi = max(s.start, d * DAY), min(s.end, (d + 1) * DAY)
                 if lo >= hi:
                     continue
-                base = d * DAY
-                for b in range((lo - base) // BIN, (hi - 1 - base) // BIN + 1):
-                    minutes[b][letter] += min(hi, base + BIN * b + BIN) - max(lo, base + BIN * b)
+                for h in range(lo % DAY // 60, (hi - 1) % DAY // 60 + 1):
+                    edge_lo = max(lo, d * DAY + 60 * h)
+                    edge_hi = min(hi, d * DAY + 60 * h + 60)
+                    minutes[h][letter] += edge_hi - edge_lo
     rows = []
-    for b in range(nbins):
-        total = sum(minutes[b].values()) or 1
+    for h in range(24):
+        total = sum(minutes[h].values()) or 1
         rows.append({
-            "minute": b * BIN,
-            "shares": {k: minutes[b][k] / total for k in letters},
-            "minutes": dict(minutes[b]),
+            "hour": h,
+            "shares": {k: minutes[h][k] / total for k in letters},
+            "minutes": dict(minutes[h]),
         })
-    return {
-        "day_name": DAY_NAMES[index],
-        "days": len(days),
-        "people": len(_world.people),
-        "person_days": len(days) * len(_world.people),
-        "bin_minutes": BIN,
-        "rows": rows,
-    }
+    return {"day_type": day_type, "days": len(days), "rows": rows}
 
 
 def _agents_at(minute):
     """The world the agent panel talks to.
 
-    Kept apart from the one the day and population views read, because a ping splits the activity
-    it interrupts: agents must not edit the logs being displayed.  Time only moves forward, so
-    asking about an earlier minute starts a fresh world.
+    Kept apart from the one the day and population views read, because a ping splits
+    the activity it interrupts: agents must not edit the logs being displayed.  Time
+    only moves forward, so asking about an earlier minute starts a fresh world.
     """
 
     global _agent_world, _agent_key
