@@ -348,9 +348,73 @@ def demo_swarm(world):
     print(f"{len(world.pings)} pings sent, {seen} replies")
 
 
+
+def daily_bands(seed, n, weeks, kind="weekdays", bin_minutes=15):
+    """Per time-of-day bin, the share of the population in each category on each day, reduced to a
+    median and a spread.
+
+    The pooled histogram gives one number per bin; this gives the distribution that number is drawn
+    from, which is what something optimising against the population needs: not "37 % are at work at
+    11:00" but "37 %, and on four days in five it is between 33 and 41".
+    """
+    world = World(seed, n)
+    world.run_until(weeks * WEEK)
+    ndays = weeks * 7
+    days = [d for d in range(ndays) if d % 7 < 5] if kind == "weekdays" else list(range(ndays))
+    letters = [letter_of(a, p) for a, p in (("sleep", "home"), ("work", "work"), ("commute", "transit"),
+                                            ("meal", "home"), ("chores", "home"), ("tv", "home"), ("tv", "out"))]
+    nb = DAY // bin_minutes
+    per_day = {d: {k: [0] * nb for k in letters} for d in days}
+    for p in world.people:
+        for s in world.segments(p):
+            letter = letter_of(s.activity, s.place)
+            for d in days:
+                lo, hi = max(s.start, d * DAY), min(s.end, (d + 1) * DAY)
+                if lo >= hi:
+                    continue
+                base = d * DAY
+                for b in range((lo - base) // bin_minutes, (hi - 1 - base) // bin_minutes + 1):
+                    per_day[d][letter][b] += (min(hi, base + bin_minutes * (b + 1))
+                                              - max(lo, base + bin_minutes * b))
+    denom = n * bin_minutes
+    rows = []
+    for b in range(nb):
+        row = {"minute": b * bin_minutes}
+        for k in letters:
+            vals = sorted(per_day[d][k][b] / denom for d in days)
+            row[k] = (quantile(vals, 0.5), quantile(vals, 0.1), quantile(vals, 0.9))
+        rows.append(row)
+    return {"days": len(days), "people": n, "bin_minutes": bin_minutes, "letters": letters, "rows": rows}
+
+
+def quantile(sorted_vals, q):
+    if not sorted_vals:
+        return 0.0
+    i = (len(sorted_vals) - 1) * q
+    lo, hi = int(i), min(len(sorted_vals) - 1, int(i) + 1)
+    return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (i - lo)
+
+
+NAMES = {"S": "sleep", "W": "work", "C": "commute", "E": "eating", "K": "chores", "H": "home", "O": "out"}
+
+
+def print_bands(bands):
+    """One line per bin: the median share and the 10th-90th percentile across days, per category."""
+    order = ["S", "W", "C", "E", "K", "H", "O"]
+    print(f"{bands['people']} people over {bands['days']} days, "
+          f"{bands['bin_minutes']}-minute bins; median and p10-p90 across days, in per cent")
+    print("time  " + "  ".join(f"{NAMES[k]:>19}" for k in order))
+    for row in bands["rows"]:
+        cells = []
+        for k in order:
+            med, lo, hi = row[k]
+            cells.append(f"{med * 100:6.1f} [{lo * 100:4.1f},{hi * 100:5.1f}]")
+        print(f"{hm(row['minute'])} " + "  ".join(cells))
+
+
 def main():
     ap = argparse.ArgumentParser(prog="python -m flock")
-    ap.add_argument("command", choices=("day", "histogram", "checks", "demo-swarm"))
+    ap.add_argument("command", choices=("day", "histogram", "checks", "bands", "demo-swarm"))
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--people", type=int, default=200)
     ap.add_argument("--weeks", type=int, default=1)
@@ -363,6 +427,9 @@ def main():
         ap.error("--people and --weeks must be at least 1")
     if a.command == "day" and not 1 <= a.person <= a.people:
         ap.error(f"--person {a.person} is outside 1..{a.people}")
+    if a.command == "bands":
+        print_bands(daily_bands(a.seed, a.people, a.weeks))
+        return
     if a.command == "checks":
         print_checks(run_checks(a.seed, a.people, a.weeks))
         return

@@ -26,6 +26,11 @@ invites, and get replies delayed by what the person is doing and how often they 
     ...
     53/53 checks pass
 
+    python -m flock bands --seed 1 --people 200 --weeks 4   # the spread behind each percentage
+    200 people over 20 days, 15-minute bins; median and p10-p90 across days, in per cent
+    time                sleep                 work              commute ...
+    08:30   15.6 [13.7, 17.9]    29.6 [26.4, 31.6]     4.0 [ 3.2,  6.3] ...
+
     python -m flock demo-swarm --seed 1 --people 60   # three agents over two days, one line each
     Tue 09:00  scout   person  1: sleep         home    until 10:10, interruptible 0.00, with -, next commitment Tue 19:54, free Tue 11:27-19:54 home
     Tue 09:00  scout   person  2: chores        home    until 10:21, interruptible 0.70, with -, next commitment Tue 18:46, free Tue 09:00-18:46 home
@@ -96,6 +101,15 @@ Across a month the same person's arrival at work varies with a standard deviatio
 rise rather than a set of spikes at the workplace start times.  This is what the package is for: an
 agent tested against people who arrive at the same minute and leave at the same minute every day
 learns a schedule no real population has, and scores well for it.
+
+## The spread behind a percentage
+
+`histogram` pools every day of a kind into one set of percentages.  `bands` keeps the days apart
+and reports, for each bin, the median share and the 10th to 90th percentile across days.  That is
+what something optimising against this population needs: not "30 % are at work at 08:30" but "30 %,
+and on four days in five it is between 26 and 32".  The browser page draws the same thing, either
+as one translucent stack per day or as solid regions at the median with the band shaded on each
+boundary.
 
 ## What the whole population shares
 

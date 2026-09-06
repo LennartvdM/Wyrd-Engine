@@ -27,6 +27,7 @@ const state = {
   blendMode: 'mix',
   dailyCat: 'all',
   stackMode: 'pooled',
+  bandRange: '80',
   bin: 15,
   week_cache: null,
 };
@@ -356,6 +357,106 @@ function aggregate(rows, binMinutes, sourceBin) {
 }
 
 
+
+function quantile(sorted, q) {
+  if (!sorted.length) return 0;
+  const i = (sorted.length - 1) * q;
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+
+// For every bin, the cumulative stack boundary of each day, sorted. Boundary k is the top of
+// category k, so the band between boundary k-1 and k is that category's share.
+function boundaryStats(data, loQ, hiQ) {
+  const nb = data.curves.length ? data.curves[0].shares.S.length : 0;
+  const out = [];
+  for (let b = 0; b < nb; b += 1) {
+    const levels = [];
+    for (let k = 0; k < CATEGORIES.length; k += 1) {
+      const vals = data.curves.map((d) => {
+        let acc = 0;
+        for (let j = 0; j <= k; j += 1) acc += d.shares[CATEGORIES[j].key][b] || 0;
+        return acc;
+      }).sort((x, y) => x - y);
+      levels.push({ med: quantile(vals, 0.5), lo: quantile(vals, loQ), hi: quantile(vals, hiQ) });
+    }
+    out.push(levels);
+  }
+  return out;
+}
+
+function renderStackedBands(svg, data, geom) {
+  const { width, height, padL, padR, padT, padB, plotW, plotH } = geom;
+  const [loQ, hiQ] = state.bandRange === 'full' ? [0, 1] : [0.1, 0.9];
+  const stats = boundaryStats(data, loQ, hiQ);
+  const nb = stats.length;
+  const x = (b) => padL + ((b + 0.5) / nb) * plotW;
+  const y = (v) => padT + plotH - v * plotH;
+
+  // Solid regions between the median boundaries: the discrete answer an agent optimises against.
+  for (let k = 0; k < CATEGORIES.length; k += 1) {
+    const top = [], bottom = [];
+    for (let b = 0; b < nb; b += 1) {
+      top.push(`${x(b).toFixed(1)},${y(stats[b][k].med).toFixed(1)}`);
+      bottom.push(`${x(b).toFixed(1)},${y(k === 0 ? 0 : stats[b][k - 1].med).toFixed(1)}`);
+    }
+    el('polygon', { points: top.concat(bottom.reverse()).join(' '),
+                    fill: `var(--${CATEGORIES[k].css})` }, svg);
+  }
+  // Each boundary's envelope, then the median itself.
+  for (let k = 0; k < CATEGORIES.length - 1; k += 1) {
+    const hi = [], lo = [];
+    for (let b = 0; b < nb; b += 1) {
+      hi.push(`${x(b).toFixed(1)},${y(stats[b][k].hi).toFixed(1)}`);
+      lo.push(`${x(b).toFixed(1)},${y(stats[b][k].lo).toFixed(1)}`);
+    }
+    el('polygon', { points: hi.concat(lo.reverse()).join(' '),
+                    fill: 'var(--text-primary)', 'fill-opacity': 0.13 }, svg);
+    el('polyline', { points: hi.map((_, b) => `${x(b).toFixed(1)},${y(stats[b][k].med).toFixed(1)}`).join(' '),
+                     fill: 'none', stroke: 'var(--text-primary)', 'stroke-width': 1,
+                     'stroke-opacity': 0.5 }, svg);
+  }
+
+  for (let pct = 0; pct <= 100; pct += 25) {
+    const t = el('text', { x: padL - 7, y: y(pct / 100) + 3.5, class: 'axis', 'text-anchor': 'end' }, svg);
+    t.textContent = `${pct}%`;
+  }
+  for (let h = 0; h <= 24; h += 3) {
+    const px = padL + (h / 24) * plotW;
+    const t = el('text', { x: Math.min(width - padR, px), y: height - 8, class: 'axis',
+                           'text-anchor': h === 0 ? 'start' : h === 24 ? 'end' : 'middle' }, svg);
+    t.textContent = String(h % 24).padStart(2, '0');
+  }
+  const span = state.bandRange === 'full' ? 'the full range across the days'
+                                          : 'the middle 80 % of the days';
+  $('pop-note').textContent =
+    `${data.curves.length} weekdays, ${data.people} people. Solid regions are the median boundary; ` +
+    `the shaded band on each is ${span}. The table below has the numbers.`;
+  renderBandTable(data, stats, loQ, hiQ);
+}
+
+function renderBandTable(data, stats, loQ, hiQ) {
+  const table = clear($('pop-table'));
+  const lo = Math.round(loQ * 100), hi = Math.round(hiQ * 100);
+  table.innerHTML = '<thead><tr><th>from</th>' +
+    CATEGORIES.map((c) => `<th>${c.name} med</th><th>p${lo}</th><th>p${hi}</th>`).join('') +
+    '</tr></thead>';
+  const body = document.createElement('tbody');
+  const step = Math.max(1, Math.round(15 / data.bin_minutes));
+  for (let b = 0; b < stats.length; b += step) {
+    const tr = document.createElement('tr');
+    const cells = CATEGORIES.map((c, k) => {
+      const vals = data.curves.map((d) => d.shares[c.key][b] || 0).sort((x, y) => x - y);
+      return `<td class="num">${(quantile(vals, 0.5) * 100).toFixed(1)}</td>` +
+             `<td class="num">${(quantile(vals, loQ) * 100).toFixed(1)}</td>` +
+             `<td class="num">${(quantile(vals, hiQ) * 100).toFixed(1)}</td>`;
+    }).join('');
+    tr.innerHTML = `<td>${hm(b * data.bin_minutes)}</td>${cells}`;
+    body.appendChild(tr);
+  }
+  table.appendChild(body);
+}
+
 function renderStackedDays(svg, data, geom) {
   const { width, height, padL, padR, padT, padB, plotW, plotH } = geom;
   const nb = data.curves.length ? data.curves[0].shares.S.length : 0;
@@ -409,9 +510,10 @@ function renderPopulation(data) {
   svg.setAttribute('width', width);
   svg.setAttribute('height', height);
 
-  if (state.stackMode === 'days' && dailyCache) {
-    renderStackedDays(svg, dailyCache,
-      { width, height, padL, padR, padT, padB, plotW, plotH });
+  if (state.stackMode !== 'pooled' && dailyCache) {
+    const geom = { width, height, padL, padR, padT, padB, plotW, plotH };
+    if (state.stackMode === 'days') renderStackedDays(svg, dailyCache, geom);
+    else renderStackedBands(svg, dailyCache, geom);
     return;
   }
 
@@ -909,7 +1011,17 @@ function init() {
       for (const other of $('stackmode').children) {
         other.setAttribute('aria-pressed', String(other === b));
       }
-      $('binsize').hidden = state.stackMode === 'days';
+      $('binsize').hidden = state.stackMode !== 'pooled';
+      $('bandrange').hidden = state.stackMode !== 'bands';
+      renderPopulation(popCache);
+    });
+  }
+  for (const b of $('bandrange').children) {
+    b.addEventListener('click', () => {
+      state.bandRange = b.dataset.range;
+      for (const other of $('bandrange').children) {
+        other.setAttribute('aria-pressed', String(other === b));
+      }
       renderPopulation(popCache);
     });
   }

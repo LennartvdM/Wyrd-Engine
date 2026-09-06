@@ -16,6 +16,7 @@ doing.
     python -m flock day --person 17 --day tue
     python -m flock histogram --day weekday
     python -m flock checks --seed 1 --people 400 --weeks 4
+    python -m flock bands --seed 1 --people 200 --weeks 4
     python -m flock demo-swarm
 
 There is a browser interface too, and it is kept as a version log rather than a single app: every
