@@ -1,3 +1,10 @@
 # Generated Pyodide assets
 web/py/**
 !web/py/.gitkeep
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Claude Code agent worktrees
+.claude/worktrees/
