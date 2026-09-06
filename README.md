@@ -31,8 +31,9 @@ See [flock/README.md](flock/README.md) for the commands and the agent API, and
 [flock/NOTES.md](flock/NOTES.md) for every decision taken, the numbers behind each claim, and the
 seeds and population sizes on which the realism checks fail.
 
-`checks` runs 52 realism tests against published time-use figures. All 52 pass on seeds 1-5 at 400
-people over 4 weeks and at 1000 people over 4 weeks, which takes about 12 seconds.
+`checks` runs 53 realism tests against published time-use figures. All 53 pass at 400 people over 4
+weeks on seeds 1, 2 and 4-8; seed 3 fails one (`18a`, documented in the notes). 1000 people over 4
+weeks takes about 14 seconds.
 
 ## Earlier prototype (superseded)
 

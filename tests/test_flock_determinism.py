@@ -67,24 +67,36 @@ def test_two_hundred_question_pings_touch_only_person_17():
     assert without_phone_splits(pinged.segments(pinged.person(17))) == quiet.segments(quiet.person(17))
 
 
-def test_question_during_a_housemates_meal_changes_nobody_else():
-    """A call taken at the table hides nothing: person 38 sits down at 17:05 while person 36 is
-    on the reply call 17:04-17:08 (seed 3, 120 people, question at Mon 17:03) and still lists
-    36, is listed by 36 once the call ends, and logs exactly what the unpinged world logs."""
+def test_questions_during_household_dinners_change_nobody_else():
+    """A call taken at the table hides nothing.  Everyone pinged mid-dinner keeps a symmetric
+    guest list with the housemates they are eating with, including across the phone split, and
+    no unpinged person's log moves.  The scenario is found rather than hard-coded, so a timing
+    change elsewhere cannot quietly stop this from testing anything."""
     quiet, pinged = World(3, 120), World(3, 120)
-    t = 17 * 60 + 3
+    t = 18 * 60 + 30
     quiet.run_until(WEEK)
     pinged.run_until(t)
-    pinged.ping(36, t, "asker", "question")
+    asked = [p.id + 1 for p in pinged.people if p.activity == "meal:dinner" and p.with_ids]
+    assert asked, "no household dinner in progress at 18:30 to ping"
+    for pid in asked:
+        pinged.ping(pid, t, "asker", "question")
     pinged.run_until(WEEK)
-    call = next(s for s in pinged.segments(pinged.person(36)) if s.activity == "phone")
-    joined = next(s for s in pinged.segments(pinged.person(38)) if s.activity == "meal:dinner" and call.start < s.start < call.end)
-    after = next(s for s in pinged.segments(pinged.person(36)) if s.activity == "meal:dinner" and s.start == call.end)
-    assert 35 in joined.with_ids and 37 in after.with_ids
+
+    dinners = {}
+    for p in pinged.people:
+        dinners[p.id] = [s for s in pinged.segments(p) if s.activity == "meal:dinner"]
+    for p in pinged.people:
+        for s in dinners[p.id]:
+            for other in s.with_ids:
+                assert any(o.start < s.end and s.start < o.end and p.id in o.with_ids
+                           for o in dinners[other]), f"{p.id + 1} lists {other + 1}, not mutual"
+
+    asked_ids = {pid - 1 for pid in asked}
     for p in quiet.people:
-        if p.id != 35:
+        if p.id not in asked_ids:
             assert log_hash(quiet, p) == log_hash(pinged, p), p.id + 1
-    assert without_phone_splits(pinged.segments(pinged.person(36))) == quiet.segments(quiet.person(36))
+    for pid in asked:
+        assert without_phone_splits(pinged.segments(pinged.person(pid))) == quiet.segments(quiet.person(pid))
 
 
 @pytest.mark.slow

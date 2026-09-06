@@ -128,13 +128,21 @@ def roster(limit=400):
     return out
 
 
+BIN = 5   # minutes; the page sums these up to whatever bin width it draws
+
+
 def histogram(day_type):
-    """Share of person-minutes per category, by hour, over every day of that type."""
+    """Share of person-minutes per category, in 5-minute bins, over every day of that type.
+
+    Five minutes rather than an hour because the shape inside the hour is the point: an hourly
+    bin cannot show whether a morning ramp is a smooth rise or everybody arriving at once.
+    """
 
     days = [d for d in range(_world.now // DAY)
             if {"weekday": d % 7 < 5, "saturday": d % 7 == 5, "sunday": d % 7 == 6}[day_type]]
     letters = [c[0] for c in CATEGORIES]
-    minutes = [{k: 0 for k in letters} for _ in range(24)]
+    nbins = DAY // BIN
+    minutes = [{k: 0 for k in letters} for _ in range(nbins)]
     for p in _world.people:
         for s in _world.segments(p):
             letter = letter_of(s.activity, s.place)
@@ -142,19 +150,20 @@ def histogram(day_type):
                 lo, hi = max(s.start, d * DAY), min(s.end, (d + 1) * DAY)
                 if lo >= hi:
                     continue
-                for h in range(lo % DAY // 60, (hi - 1) % DAY // 60 + 1):
-                    edge_lo = max(lo, d * DAY + 60 * h)
-                    edge_hi = min(hi, d * DAY + 60 * h + 60)
-                    minutes[h][letter] += edge_hi - edge_lo
+                base = d * DAY
+                for b in range((lo - base) // BIN, (hi - 1 - base) // BIN + 1):
+                    edge_lo = max(lo, base + BIN * b)
+                    edge_hi = min(hi, base + BIN * b + BIN)
+                    minutes[b][letter] += edge_hi - edge_lo
     rows = []
-    for h in range(24):
-        total = sum(minutes[h].values()) or 1
+    for b in range(nbins):
+        total = sum(minutes[b].values()) or 1
         rows.append({
-            "hour": h,
-            "shares": {k: minutes[h][k] / total for k in letters},
-            "minutes": dict(minutes[h]),
+            "minute": b * BIN,
+            "shares": {k: minutes[b][k] / total for k in letters},
+            "minutes": dict(minutes[b]),
         })
-    return {"day_type": day_type, "days": len(days), "rows": rows}
+    return {"day_type": day_type, "days": len(days), "bin_minutes": BIN, "rows": rows}
 
 
 def _agents_at(minute):

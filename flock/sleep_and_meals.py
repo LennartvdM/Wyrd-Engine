@@ -31,6 +31,10 @@ def wake_up(p, t, household):
     p.bed_tonight = bedtime_at(p, max(t, day_start(t) + 300)) + round(p.rand.gauss(0, 40))   # tonight, even after a 04:00 wake
     p.wind_down = p.rand.randint(15, 45)                               # minutes at home between coming in and bed
     p.breakfast_min = minutes(p.rand, *MEAL_MINUTES["breakfast"], 60)
+    # Today's margin before setting off anywhere: positive leaves early, negative leaves late.
+    # Drawn per day, so the same person is not a metronome — without it their arrival at work
+    # varied by under 2 minutes across a month, and an agent could predict them exactly.
+    p.slack_today = clamp(round(p.rand.gauss(3, 12)), -25, 35)
 
 
 def meal_day(t):

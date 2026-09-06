@@ -356,19 +356,25 @@ def free_until(p, c, place):
 
 def start_lead(p, c):
     """How early a commitment may begin from where the person is: after the trip, or at the same
-    place up to 5 minutes early (10 for housework, never for an appointment)."""
+    place up to 5 minutes early (10 for housework, never for an appointment).  A trip also carries
+    the day's slack, so the same person sets off a little earlier or later than yesterday."""
     travel = travel_min(p, p.place, c.place)
     if travel:
-        return travel + 5
+        return max(0, travel + 5 + p.slack_today)
     return 0 if c.activity == "appointment" else 10 if c.activity in ("cook", "dishes", "laundry") else 5
 
 
 def commute(p, t, place, toward=None):
-    """Travel with 15 % jitter either way, never more than 5 minutes over the trait (the departure
-    lead), so a commute is never late; one to an appointment arriving under 5 minutes early, or
-    to anything at out under 10 minutes early, runs to its start (the trip just took longer)."""
+    """Travel with 12 % jitter either way and, once in about twelve trips, a hold-up of 5-20
+    minutes.  A trip can therefore run long enough to make its owner late, which is the point: a
+    population whose journeys always take the same time is one an agent can time perfectly.  A trip
+    to an appointment arriving under 5 minutes early, or to anything at out under 10 minutes early,
+    runs to its start (the trip just took longer)."""
     travel = travel_min(p, p.place, place)
-    end = t + max(3, min(round(travel * p.rand.uniform(0.85, 1.15)), travel + 5))
+    delay = round(travel * p.rand.gauss(0, 0.12))
+    if p.rand.random() < 0.08:
+        delay += p.rand.randint(5, 20)
+    end = t + max(3, travel + delay)
     if toward and toward.place == place and 0 < toward.start - end < (10 if place == "out" else 5 if toward.activity == "appointment" else 0):
         end = toward.start
     return ("commute", place, end, INTERRUPTIBLE["commute"], frozenset())

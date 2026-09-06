@@ -92,6 +92,7 @@ class Person:
         self.today, self.minutes_today = {}, {}   # activity -> times started, minutes finished, since waking
         self.lunch_at = 0                  # today's lunch minute when not at work, drawn at wake
         self.bed_tonight = 0               # tonight's bedtime, drawn at wake
+        self.slack_today = 0               # today's margin before setting off, drawn at wake
         self.wind_down = 30                # minutes at home before it when coming in from out, drawn at wake
         self.breakfast_min = 15            # today's breakfast length, drawn at wake (the wash leaves room for it)
         self.commitments = []              # sorted by start

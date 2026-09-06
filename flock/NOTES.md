@@ -188,6 +188,31 @@ Read top to bottom: `clock.py`, `seeds.py`, `people.py`, `commitments.py`,
     minutes for two days on seeds 1-3).  The `+2` for pinging
     someone asleep or in a meeting is charged once per agent and activity.
 
+## Day-to-day variation (added after the metronome finding)
+
+Measured on 400 x 4 seed 1 before this change: each person arrived at work with a standard
+deviation of **1.9 minutes** across their own month (p90 4.3).  Their morning absorbed every bit of
+variance — the alarm is set back from the commitment, so however late they woke they set off at the
+same minute — and the commute was clamped to never run more than 5 minutes over the trait.  A
+population like that is a metronome: an agent learns "person 17 arrives 08:03" and is right every
+day forever, which defeats the point of testing agents against people.
+
+Two changes:
+
+- `slack_today`, drawn at wake in `sleep_and_meals.wake_up` as `clamp(gauss(3, 12), -25, 35)`: the
+  margin the person leaves themselves before setting off anywhere that day.  Positive leaves early,
+  negative leaves late.  `world.start_lead` adds it to a trip's lead.
+- `world.commute` now draws `travel * gauss(0, 0.12)` and adds a 5-20 minute hold-up on 8 % of
+  trips, with no clamp against arriving late.  A journey that always takes the same time is one an
+  agent can time perfectly.
+
+After: per-person arrival standard deviation **8.9 minutes** (p90 13.7), 552 distinct arrival
+minutes over 4,297 arrivals, no minute holding more than 0.9 % of them.  The morning ramp lost its
+spikes: the busiest 5-minute bin fell from 2.5x the mean to 1.9x, and the dead bins (06:20 held
+zero arrivals) filled in.  Cost: `18a` now fails on seed 3 (3.78 against its 4) — see Check
+definitions; that check rewards a *sharper* commute peak, which is the rigidity being removed, and
+its bound is the design's guess with no reference behind it.  Left failing rather than widened.
+
 ## Smaller choices
 
 - **The full-time work day is `N(535, 25)` minutes** (design section 3: `N(510, 25)`): meals, the
@@ -377,6 +402,14 @@ Read top to bottom: `clock.py`, `seeds.py`, `people.py`, `commitments.py`,
 
 ## Check definitions
 
+- 22a asked that the appointment segment *cover* the booked slot exactly, which measured
+  punctuality rather than keeping.  With departure slack and commute hold-ups a person can reach a
+  booked slot a few minutes into it: on 81 accepted invites, none was missed altogether, the median
+  arrival was on the minute and p90 was 7 minutes late.  22a now asks that an appointment overlap
+  the slot (still 1.000), and the new 22c reports the share attending at least 80 % of it
+  (0.84-0.93, bound 0.75).  The old form would have made lateness impossible to model at all.
+
+
 - 6b counts only sleep segments split at exactly midnight; two work blocks meeting at 00:00 on
   a night shift are two blocks, not a split.
 - 8b, 8c and 8f count `gym` as leisure (the reference's leisure and sports bucket) and `dishes`
@@ -397,9 +430,11 @@ Read top to bottom: `clock.py`, `seeds.py`, `people.py`, `commitments.py`,
   12:30+ lunch, the 12:00 workplaces' commutes (seed 3 has 15 members at one, 6 % of its employed
   against the table's 0.05) and the earliest lunches out.  The morning peak quarter-hour holds
   382-559 person-minutes a weekday (the ACS-shaped start table, 0.57 leaving 06:00-08:29), so the
-  ratio sits at 4.32-6.30 on seeds 1-8 and passes on all of them and at 1,000 x 4.  Seed 3 has the
-  least room (4.32), and the denominator is small enough that the number moves by a whole point on
-  a reshuffle; the weekday 09-12 errands weight is what feeds the bin.
+  ratio sat at 4.32-6.30 on seeds 1-8 before day-to-day departure slack was added; spreading
+  arrivals lowered the peak and it is now 3.78-5.9, failing on seed 3.  The check rewards a sharper
+  peak, i.e. the very synchronisation the slack removes, so it is left failing rather than widened:
+  its bound is a guess with no reference, over a denominator of 77-101 person-minutes.  The weekday
+  09-12 errands weight is what feeds the 11:00 bin.
   A start table with more weight in 07:30-08:30 would lift it, but the three checks 18a, 18c and
   18d share that table and 18c/18d already sit above their references, so it stays.  I think
   the 4x is wrong for a population whose non-workers move about in the late morning; left
@@ -415,7 +450,7 @@ Read top to bottom: `clock.py`, `seeds.py`, `people.py`, `commitments.py`,
 
 ## Robustness across seeds (400 x 4 seeds 1-8; 200 x 2 seeds 1-4; 60 x 1 seeds 1-3)
 
-- 400 x 4: seeds 1-8 all pass 52/52.  Across the eight: 8d 58.7-62.7 (bound 55, reference 78),
+- 400 x 4: seeds 1, 2, 4, 5, 6, 7 and 8 pass 53/53; seed 3 fails 18a (3.78) only.  Across the eight: 8d 58.7-62.7 (bound 55, reference 78),
   8c 61.2-63.9 (bound 50-100), 8b 233.0-241.0 (bound 260), 8e 66.1-67.3 (bound 80), 15 0.776-0.798
   (bound 0.75), 18a 4.32-6.30 (bound 4), 18b 64-70 (bound 62-73), 18c 0.572-0.641 (reference 0.57),
   18d 0.577-0.656 (0.58), 7b 0.258-0.295 (0.30), 3b 81.8-93.0 (bound 95), 3a 419-432 (bound 440),

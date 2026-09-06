@@ -23,6 +23,7 @@ const state = {
   day: 1,
   week: 0,
   dayType: 'weekday',
+  bin: 15,
   week_cache: null,
 };
 
@@ -221,6 +222,27 @@ function renderDayPanel(day, week) {
 
 // ---- population -----------------------------------------------------------
 
+function aggregate(rows, binMinutes, sourceBin) {
+  const per = Math.max(1, Math.round(binMinutes / sourceBin));
+  const out = [];
+  for (let i = 0; i < rows.length; i += per) {
+    const group = rows.slice(i, i + per);
+    const minutes = {};
+    let total = 0;
+    for (const r of group) {
+      for (const c of CATEGORIES) {
+        const v = r.minutes[c.key] || 0;
+        minutes[c.key] = (minutes[c.key] || 0) + v;
+        total += v;
+      }
+    }
+    const shares = {};
+    for (const c of CATEGORIES) shares[c.key] = total ? minutes[c.key] / total : 0;
+    out.push({ minute: group[0].minute, shares, minutes });
+  }
+  return out;
+}
+
 function renderPopulation(data) {
   const svg = $('pop-chart');
   const width = Math.max(360, svg.parentElement.clientWidth || 900);
@@ -233,6 +255,10 @@ function renderPopulation(data) {
   svg.setAttribute('width', width);
   svg.setAttribute('height', height);
 
+  const bins = aggregate(data.rows, state.bin, data.bin_minutes);
+  const colW = plotW / bins.length;
+  const thin = colW < 4;                      // too narrow for a surface gap between segments
+
   for (let pct = 0; pct <= 100; pct += 25) {
     const y = padT + plotH - (pct / 100) * plotH;
     el('line', { x1: padL, y1: y, x2: width - padR, y2: y, class: 'grid' }, svg);
@@ -240,9 +266,8 @@ function renderPopulation(data) {
     t.textContent = `${pct}%`;
   }
 
-  const colW = plotW / 24;
-  data.rows.forEach((row) => {
-    const x0 = padL + row.hour * colW;
+  bins.forEach((row) => {
+    const x0 = padL + (row.minute / MINUTES) * plotW;
     let acc = 0;
     for (const c of CATEGORIES) {
       const share = row.shares[c.key] || 0;
@@ -250,39 +275,43 @@ function renderPopulation(data) {
       const h = share * plotH;
       const y = padT + plotH - (acc + share) * plotH;
       el('rect', {
-        x: x0 + 1, y, width: Math.max(1, colW - 2), height: Math.max(0.5, h - 2 > 0 ? h - 2 : h),
+        x: x0 + (thin ? 0 : 1), y,
+        width: Math.max(0.6, colW - (thin ? 0 : 2)),
+        height: Math.max(0.5, thin ? h : (h - 2 > 0 ? h - 2 : h)),
         fill: `var(--${c.css})`,
       }, svg);
       acc += share;
     }
-    // one hover target per column, so the tooltip reads the whole hour
-    const hit = el('rect', {
-      x: x0, y: padT, width: colW, height: plotH, fill: 'transparent',
-    }, svg);
+    const hit = el('rect', { x: x0, y: padT, width: colW, height: plotH, fill: 'transparent' }, svg);
     const lines = CATEGORIES
       .filter((c) => (row.shares[c.key] || 0) >= 0.005)
       .sort((a, b) => row.shares[b.key] - row.shares[a.key])
       .map((c) => `${c.name.padEnd(8)} ${(row.shares[c.key] * 100).toFixed(1)}%`);
     hit.addEventListener('pointermove', (e) =>
-      showTip(e, `${String(row.hour).padStart(2, '0')}:00\n${lines.join('\n')}`));
+      showTip(e, `${hm(row.minute)}-${hm(row.minute + state.bin)}\n${lines.join('\n')}`));
     hit.addEventListener('pointerleave', hideTip);
-
-    if (row.hour % 3 === 0) {
-      const t = el('text', { x: x0 + colW / 2, y: height - 8, class: 'axis', 'text-anchor': 'middle' }, svg);
-      t.textContent = String(row.hour).padStart(2, '0');
-    }
   });
 
+  for (let h = 0; h <= 24; h += 3) {
+    const px = padL + (h / 24) * plotW;
+    const t = el('text', {
+      x: Math.min(width - padR, px), y: height - 8, class: 'axis',
+      'text-anchor': h === 0 ? 'start' : h === 24 ? 'end' : 'middle',
+    }, svg);
+    t.textContent = String(h % 24).padStart(2, '0');
+  }
+
   $('pop-note').textContent =
-    `${state.built.people} people over ${data.days} ${data.day_type === 'weekday' ? 'weekdays' : data.day_type + 's'}.`;
+    `${state.built.people} people over ${data.days} ${data.day_type === 'weekday' ? 'weekdays' : data.day_type + 's'}, ` +
+    `in ${state.bin}-minute bins.`;
 
   const table = clear($('pop-table'));
   table.innerHTML =
-    '<thead><tr><th>hour</th>' + CATEGORIES.map((c) => `<th>${c.name}</th>`).join('') + '</tr></thead>';
+    '<thead><tr><th>from</th>' + CATEGORIES.map((c) => `<th>${c.name}</th>`).join('') + '</tr></thead>';
   const body = document.createElement('tbody');
-  for (const row of data.rows) {
+  for (const row of bins) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${String(row.hour).padStart(2, '0')}:00</td>` +
+    tr.innerHTML = `<td>${hm(row.minute)}</td>` +
       CATEGORIES.map((c) => `<td class="num">${((row.shares[c.key] || 0) * 100).toFixed(1)}%</td>`).join('');
     body.appendChild(tr);
   }
@@ -446,10 +475,14 @@ async function loadDay() {
   renderDayPanel(day, week);
 }
 
-async function loadPopulation() {
-  setStatus('counting…');
-  renderPopulation(await call('histogram', state.dayType));
-  setStatus('');
+let popCache = null;
+async function loadPopulation({ refetch = true } = {}) {
+  if (refetch || !popCache) {
+    setStatus('counting…');
+    popCache = await call('histogram', state.dayType);
+    setStatus('');
+  }
+  renderPopulation(popCache);
 }
 
 async function build() {
@@ -562,10 +595,20 @@ function init() {
   for (const b of $('daytype').children) {
     b.addEventListener('click', () => {
       state.dayType = b.dataset.type;
+      popCache = null;
       for (const other of $('daytype').children) {
         other.setAttribute('aria-pressed', String(other === b));
       }
       loadPopulation();
+    });
+  }
+  for (const b of $('binsize').children) {
+    b.addEventListener('click', () => {
+      state.bin = Number(b.dataset.bin);
+      for (const other of $('binsize').children) {
+        other.setAttribute('aria-pressed', String(other === b));
+      }
+      loadPopulation({ refetch: false });
     });
   }
   $('a-observe').addEventListener('click', () => doObserve().catch((e) => setStatus(e.message, 'error')));

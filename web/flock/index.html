@@ -69,21 +69,28 @@
         <button type="button" data-type="saturday" aria-pressed="false">Saturday</button>
         <button type="button" data-type="sunday" aria-pressed="false">Sunday</button>
       </div>
+      <div class="spacer"></div>
+      <div class="daybtns" id="binsize" role="group" aria-label="Bin width">
+        <button type="button" data-bin="60" aria-pressed="false">1 h</button>
+        <button type="button" data-bin="15" aria-pressed="true">15 min</button>
+        <button type="button" data-bin="5" aria-pressed="false">5 min</button>
+      </div>
     </div>
 
     <p class="note" id="pop-note"></p>
 
     <figure>
       <div class="chart"><svg id="pop-chart" role="img" aria-label="Share of people in each activity, by hour"></svg></div>
-      <figcaption>Share of person-minutes in each hour. Nothing here is scripted: the morning
+      <figcaption>Share of person-minutes in each bin. Nothing here is scripted: the morning
         commute, the noon meal and the evening at home come out of people keeping their own
-        commitments.</figcaption>
+        commitments. Switch to 5 minutes to see the shape inside the hour — an hourly bin cannot
+        tell a gradual ramp apart from everyone arriving at once.</figcaption>
     </figure>
 
     <div class="legend" id="legend-pop"></div>
 
     <details class="table-view">
-      <summary>Hourly shares as a table</summary>
+      <summary>Binned shares as a table</summary>
       <div><table id="pop-table"></table></div>
     </details>
   </section>
@@ -115,7 +122,7 @@
 
   <!-- ---------- Checks ---------- -->
   <section class="panel" id="panel-checks" role="tabpanel" aria-labelledby="tab-checks" hidden>
-    <p class="note">52 checks against published time-use figures, the same ones
+    <p class="note">53 checks against published time-use figures, the same ones
       <code>python -m flock checks</code> runs. They need their own run, and small populations
       fail several on sampling alone — 400 people over 4 weeks is the calibration size, and takes
       a while in the browser.</p>

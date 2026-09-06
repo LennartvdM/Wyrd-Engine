@@ -285,8 +285,20 @@ def agent_checks(seed):
     m_delay = [r.delivered_at - meeting_end[r.ping_id] for r in w.replies("b", 0)]
     c_delay = [r.delivered_at - easy_sent[r.ping_id] for r in w.replies("c", 0)]
     accepted = {r.ping_id: r for r in w.replies("e", 0) if r.decision == "accept"}
-    kept = [any(s.activity == "appointment" and s.start <= slot.start and s.end >= slot.end for s in w.segments(w.people[w.pings[pid].person]))
-            for pid, slot in invited if pid in accepted]
+    # An accepted invite must become an appointment at the slot (22a).  How much of it the person
+    # actually sits through is measured separately (22c): they set off with the day's slack and the
+    # trip can run long, so some arrive a few minutes late.  Requiring the segment to cover the slot
+    # exactly, as this did before, measured punctuality rather than keeping and made lateness
+    # impossible to model.
+    attended = []
+    for pid, slot in invited:
+        if pid not in accepted:
+            continue
+        segs = [s for s in w.segments(w.people[w.pings[pid].person])
+                if s.activity == "appointment" and s.start < slot.end and slot.start < s.end]
+        span = max(1, slot.end - slot.start)
+        attended.append(max((min(s.end, slot.end) - max(s.start, slot.start)) / span for s in segs) if segs else 0.0)
+    kept = [a > 0 for a in attended]
     declined = w.replies("f", 0)
     good_counter = [r.decision == "decline" and r.counter is not None and
                     not any(s.activity == "sleep" and s.start < r.counter.end and r.counter.start < s.end
@@ -300,6 +312,7 @@ def agent_checks(seed):
         ("21b accept probability non-increasing in nag", float(all(accept_probability(.8, k) >= accept_probability(.8, k + 1) for k in range(10))), 1, 1),
         ("21c replies to 40 pings in 2 h from one agent", len(w.replies("d", 0)), 8, 8),
         ("22a accepted invites kept as appointment", sum(kept) / max(1, len(kept)) if kept else INF, 1, 1),
+        ("22c accepted invites attended for 80 % of the slot", sum(a >= 0.8 for a in attended) / max(1, len(attended)) if attended else INF, 0.75, 1),
         ("22b sleep-time invite declined with counter outside sleep", sum(good_counter) / max(1, len(good_counter)), 1, 1),
     ]
 

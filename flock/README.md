@@ -24,7 +24,7 @@ invites, and get replies delayed by what the person is doing and how often they 
     python -m flock checks --seed 1 --people 400 --weeks 4
     ok   1a weeknight sleep median h                             8.100  [7.6, 8.7]
     ...
-    52/52 checks pass
+    53/53 checks pass
 
     python -m flock demo-swarm --seed 1 --people 60   # three agents over two days, one line each
     Tue 09:00  scout   person  1: sleep         home    until 10:10, interruptible 0.00, with -, next commitment Tue 19:54, free Tue 11:27-19:54 home
@@ -85,6 +85,15 @@ them).  Offers and counters are not held: a later invite is judged at delivery, 
 offered the same hour.  An agent whose pings come under six hours apart gets eight answers and then
 silence (`PingHandle.ignored` says so at the call); a ping that lands on sleep or a meeting counts
 as three, once per such activity.
+
+## Day-to-day variation
+
+Nobody keeps the same minutes twice.  Each morning a person draws the margin they leave themselves
+before setting off, and a journey can run long (a hold-up on about one trip in twelve), so the same
+person's arrival at work varies with a standard deviation of about 9 minutes across a month, and a
+population's morning ramp is a smooth rise rather than a set of spikes at the workplace start
+times.  This matters for what the package is for: an agent tested against people who arrive at the
+same minute every day learns a schedule that no real population has.
 
 ## Determinism
 
