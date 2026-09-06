@@ -18,6 +18,15 @@ doing.
     python -m flock checks --seed 1 --people 400 --weeks 4
     python -m flock demo-swarm
 
+There is a browser interface too. The site's landing page offers a choice between it and the
+earlier prototype's workbench; both run their Python in the browser under Pyodide.
+
+| Page | What it is |
+| --- | --- |
+| `/` | the choice between the two |
+| `/flock/` | flock: a person's day, the population's day, the agent API, the checks |
+| `/workbench.html` | the earlier prototype, unchanged |
+
 See [flock/README.md](flock/README.md) for the commands and the agent API, and
 [flock/NOTES.md](flock/NOTES.md) for every decision taken, the numbers behind each claim, and the
 seeds and population sizes on which the realism checks fail.

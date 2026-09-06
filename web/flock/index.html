@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>flock — synthetic population</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div class="brand">
+      <h1>flock</h1>
+      <span class="sub">synthetic people, minute by minute</span>
+      <a class="back" href="../">← both interfaces</a>
+    </div>
+    <div class="controls">
+      <label class="field">seed <input type="number" id="seed" value="1" min="1" max="9999"></label>
+      <label class="field">people <input type="number" id="people" value="200" min="2" max="1000" step="10"></label>
+      <label class="field">weeks <input type="number" id="weeks" value="1" min="1" max="4"></label>
+      <button id="run" class="primary" type="button">Run</button>
+    </div>
+    <div class="status" id="status">Loading Python…</div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button role="tab" id="tab-day" aria-selected="true" aria-controls="panel-day" type="button">Day</button>
+    <button role="tab" id="tab-population" aria-selected="false" aria-controls="panel-population" type="button">Population</button>
+    <button role="tab" id="tab-agents" aria-selected="false" aria-controls="panel-agents" type="button">Agents</button>
+    <button role="tab" id="tab-checks" aria-selected="false" aria-controls="panel-checks" type="button">Checks</button>
+  </nav>
+
+  <!-- ---------- Day ---------- -->
+  <section class="panel" id="panel-day" role="tabpanel" aria-labelledby="tab-day">
+    <div class="row">
+      <label class="field">person <input type="number" id="person" value="17" min="1"></label>
+      <button id="person-prev" type="button" title="Previous person">←</button>
+      <button id="person-next" type="button" title="Next person">→</button>
+      <div class="daybtns" id="daybtns" role="group" aria-label="Day of week"></div>
+      <div class="spacer"></div>
+      <label class="field">week <select id="weekpick"></select></label>
+    </div>
+
+    <p class="person-line" id="person-line"></p>
+
+    <figure>
+      <div class="chart"><svg id="day-chart" role="img" aria-label="One person's day as a timeline"></svg></div>
+      <figcaption id="day-caption"></figcaption>
+    </figure>
+
+    <div class="legend" id="legend-day"></div>
+
+    <h2>The week</h2>
+    <p class="note">Each strip is one day, midnight to midnight. Click one to open it above.</p>
+    <div class="week-strip" id="week-strip"></div>
+
+    <details class="table-view">
+      <summary>Segments as a table</summary>
+      <div><table id="day-table"></table></div>
+    </details>
+  </section>
+
+  <!-- ---------- Population ---------- -->
+  <section class="panel" id="panel-population" role="tabpanel" aria-labelledby="tab-population" hidden>
+    <div class="row">
+      <div class="daybtns" id="daytype" role="group" aria-label="Day type">
+        <button type="button" data-type="weekday" aria-pressed="true">Weekdays</button>
+        <button type="button" data-type="saturday" aria-pressed="false">Saturday</button>
+        <button type="button" data-type="sunday" aria-pressed="false">Sunday</button>
+      </div>
+    </div>
+
+    <p class="note" id="pop-note"></p>
+
+    <figure>
+      <div class="chart"><svg id="pop-chart" role="img" aria-label="Share of people in each activity, by hour"></svg></div>
+      <figcaption>Share of person-minutes in each hour. Nothing here is scripted: the morning
+        commute, the noon meal and the evening at home come out of people keeping their own
+        commitments.</figcaption>
+    </figure>
+
+    <div class="legend" id="legend-pop"></div>
+
+    <details class="table-view">
+      <summary>Hourly shares as a table</summary>
+      <div><table id="pop-table"></table></div>
+    </details>
+  </section>
+
+  <!-- ---------- Agents ---------- -->
+  <section class="panel" id="panel-agents" role="tabpanel" aria-labelledby="tab-agents" hidden>
+    <p class="note">An agent sees only what <code>observe</code> returns, and a reply arrives
+      when the person gets to it: after they wake, after the meeting ends, or in a couple of
+      minutes if they are watching television. This runs on its own copy of the world, because a
+      ping splits the activity it interrupts and must not edit the logs shown in the other tabs.</p>
+
+    <div class="row">
+      <label class="field">person <input type="number" id="a-person" value="17" min="1"></label>
+      <label class="field">day <select id="a-day"></select></label>
+      <label class="field">time <select id="a-time"></select></label>
+      <button id="a-observe" type="button">Observe</button>
+      <button id="a-ask" type="button">Ask a question</button>
+      <button id="a-invite" type="button">Invite to first free slot</button>
+    </div>
+
+    <div class="cards" id="a-cards"></div>
+
+    <h2>Three agents over two days</h2>
+    <p class="note">The package's own <code>demo-swarm</code> smoke test: a scout observes, an
+      asker questions and a booker invites, three rounds each.</p>
+    <div class="row"><button id="a-swarm" type="button">Run demo swarm</button></div>
+    <pre class="console" id="a-swarm-out">Not run yet.</pre>
+  </section>
+
+  <!-- ---------- Checks ---------- -->
+  <section class="panel" id="panel-checks" role="tabpanel" aria-labelledby="tab-checks" hidden>
+    <p class="note">52 checks against published time-use figures, the same ones
+      <code>python -m flock checks</code> runs. They need their own run, and small populations
+      fail several on sampling alone — 400 people over 4 weeks is the calibration size, and takes
+      a while in the browser.</p>
+    <div class="row">
+      <label class="field">people <input type="number" id="c-people" value="200" min="10" max="1000" step="10"></label>
+      <label class="field">weeks <input type="number" id="c-weeks" value="2" min="1" max="4"></label>
+      <button id="c-run" class="primary" type="button">Run checks</button>
+      <span class="status" id="c-status"></span>
+    </div>
+    <table id="c-table"></table>
+  </section>
+
+</div>
+<div class="tooltip" id="tooltip" role="status"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

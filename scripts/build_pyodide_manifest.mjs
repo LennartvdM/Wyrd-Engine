@@ -10,7 +10,7 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const destRoot = path.join(repoRoot, 'web', 'py');
 
-const INCLUDE_DIRS = ['engines', 'modules', 'rigs'];
+const INCLUDE_DIRS = ['engines', 'modules', 'rigs', 'flock'];
 
 const manifestListPath = path.join(repoRoot, 'PY_MANIFEST');
 
