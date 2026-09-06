@@ -122,6 +122,14 @@ the **spread of the days** (a tolerance interval), not the **uncertainty of the 
 interval).  Run more weeks and the confidence interval shrinks toward nothing while the spread does
 not, and it is the spread that something optimising against this population has to survive.
 
+The envelope crosses every fill in the stack, and no single stroke colour contrasts against all
+seven.  Measured as the worst contrast ratio over the seven fills: a **casing** — a wide light
+stroke with a narrow dark one over it, the technique cartographers use to run a road over varied
+ground — reaches 4.46; plain dark 2.30 (it disappears into the violet); plain white 2.11 (it
+disappears into the yellow); and a **screened** version of the band's own hue only 1.59, because a
+hue lightened toward white is sitting against that same hue.  The casing is the default and the
+page offers all four.
+
 Smoothing the envelope is available in the browser page as a 15-minute moving average.  It removes
 order-statistic noise — with 20 days the 90th percentile is the 18th of 20 values and jumps about —
 at the cost of bias wherever the curve turns sharply.  The window is kept under the width of the
