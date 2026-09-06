@@ -33,6 +33,20 @@ invites, and get replies delayed by what the person is doing and how often they 
     ...
     71 pings sent, 71 replies
 
+## In the browser
+
+The same package runs in the browser under Pyodide, at `web/flock/`.  `web/flock/bridge.py`
+is the only browser-specific Python: it builds a world, keeps it, and turns segments,
+observations and checks into plain dicts for the page.  Nothing in `flock/` knows about the
+browser.
+
+    node scripts/build_pyodide_manifest.mjs     # copies flock/*.py to web/py/ and hashes them
+    cd web && python -m http.server 8000        # then open /flock/
+
+Four views: one person's day and week, the population's day by hour, what an agent sees
+(on its own world, since a ping splits the activity it interrupts), and the checks.  The
+Pyodide runtime comes from a CDN; `?pyodide=<base-url>` points it at a self-hosted copy.
+
 ## Agent API
 
     from flock import World, Slot

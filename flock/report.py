@@ -234,6 +234,12 @@ def run_checks(seed, n, weeks):
         ("18d employed working at 11:00 weekdays", working_11 / max(1, len(employed) * len(wd)), 0.50, 0.68),   # 0.58
         ("19 Saturday first-awake minus Tuesday median min", median(wakes[5]) - median(wakes[1]), 40, 90),
     ] + agent
+    return checks
+
+
+def print_checks(checks):
+    """Print one line per check and the tally.  Split from run_checks so callers that
+    want the numbers (the browser page) can have them without parsing this."""
     passed = 0
     for name, value, lo, hi in checks:
         ok = lo <= value <= hi
@@ -345,7 +351,7 @@ def main():
     if a.command == "day" and not 1 <= a.person <= a.people:
         ap.error(f"--person {a.person} is outside 1..{a.people}")
     if a.command == "checks":
-        run_checks(a.seed, a.people, a.weeks)
+        print_checks(run_checks(a.seed, a.people, a.weeks))
         return
     world = World(a.seed, a.people)
     if a.command == "demo-swarm":

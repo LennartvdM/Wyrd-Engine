@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wyrd Workbench</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="workbench">
+    <nav
+      id="root-tab-bar"
+      class="tab-bar"
+      role="tablist"
+      aria-label="Workbench tabs"
+      data-root-tabs
+    >
+      <button
+        class="tab root-tab root-tab--active"
+        type="button"
+        id="tab-visuals"
+        role="tab"
+        aria-selected="true"
+        aria-controls="panel-visuals"
+        data-tab="visuals"
+        data-root-tab="visuals"
+      >
+        Visuals
+      </button>
+      <button
+        class="tab root-tab"
+        type="button"
+        id="tab-batch"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-batch"
+        data-tab="batch"
+        data-root-tab="batch"
+        tabindex="-1"
+      >
+        Batch
+      </button>
+      <button
+        class="tab root-tab"
+        type="button"
+        id="tab-config"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-config"
+        data-tab="config"
+        data-root-tab="config"
+        tabindex="-1"
+      >
+        Config
+      </button>
+      <button
+        class="tab root-tab"
+        type="button"
+        id="tab-console"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-console"
+        data-tab="console"
+        data-root-tab="console"
+        tabindex="-1"
+      >
+        Console
+      </button>
+      <button
+        class="tab root-tab"
+        type="button"
+        id="tab-json"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-json"
+        data-tab="json"
+        data-root-tab="json"
+        tabindex="-1"
+      >
+        JSON
+      </button>
+      <button
+        class="tab root-tab"
+        type="button"
+        id="tab-fixtures"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-fixtures"
+        data-tab="fixtures"
+        data-root-tab="fixtures"
+        tabindex="-1"
+      >
+        Fixtures
+      </button>
+      <button
+        class="tab root-tab"
+        type="button"
+        id="tab-logs"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-logs"
+        data-tab="logs"
+        data-root-tab="logs"
+        tabindex="-1"
+      >
+        Logs
+      </button>
+    </nav>
+    <div class="workbench-toolbar" data-global-actions>
+      <div class="toolbar-info">
+        <span class="toolbar-seed-label">Seed:</span>
+        <span class="toolbar-seed-value" data-current-seed>—</span>
+      </div>
+      <div class="toolbar-actions">
+        <label class="toolbar-toggle" for="randomize-seed-toggle">
+          <input type="checkbox" id="randomize-seed-toggle" />
+          <span>Randomise seed</span>
+        </label>
+        <button type="button" data-global-action="generate">
+          Generate schedule
+        </button>
+      </div>
+    </div>
+    <main class="tab-content">
+      <section
+        class="tab-panel root-panel root-panel--active active"
+        id="panel-visuals"
+        role="tabpanel"
+        aria-labelledby="tab-visuals"
+        data-tab="visuals"
+        data-root-panel="visuals"
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Visuals</h2>
+        <div id="visuals-container"></div>
+      </section>
+      <section
+        class="tab-panel root-panel is-hidden"
+        id="panel-batch"
+        role="tabpanel"
+        aria-labelledby="tab-batch"
+        data-tab="batch"
+        data-root-panel="batch"
+        tabindex="-1"
+      >
+        <div class="tab-panel-title-row">
+          <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Batch</h2>
+        </div>
+        <div class="batch-panel" id="batch-panel" data-batch-panel>
+          <div class="visuals-history-panel batch-controls">
+            <div class="batch-controls__header">
+              <div class="batch-controls__heading-row">
+                <h3 class="batch-controls__title">Batch runner</h3>
+                <span class="purity-pill" data-purity-indicator aria-live="polite">Purity: n/a</span>
+              </div>
+              <span class="batch-controls__summary" data-batch-summary>Run a batch to begin.</span>
+            </div>
+            <div class="batch-controls__body">
+              <div class="batch-size-group" role="group" aria-label="Batch size">
+                <span class="batch-controls__label">Batch size</span>
+                <div class="batch-size-buttons">
+                  <button type="button" class="batch-size-button is-active" data-batch-size="52">
+                    52
+                  </button>
+                  <button type="button" class="batch-size-button" data-batch-size="100">100</button>
+                  <button type="button" class="batch-size-button" data-batch-size="500">500</button>
+                </div>
+              </div>
+              <div class="batch-controls__actions">
+                <button type="button" class="batch-run-button" data-batch-run>Run batch</button>
+                <button
+                  type="button"
+                  class="batch-fit-button"
+                  data-batch-fit
+                  aria-pressed="false"
+                >
+                  Fit
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="visuals-history-panel batch-results">
+            <div class="batch-results__header">
+              <h3 class="batch-results__title">Batch results</h3>
+              <div class="batch-results__controls">
+                <div class="batch-mode-toggle" role="group" aria-label="Batch scale mode">
+                  <button
+                    type="button"
+                    class="batch-mode-button is-active"
+                    data-batch-mode="proportional"
+                    aria-pressed="true"
+                  >
+                    Proportional
+                  </button>
+                  <button
+                    type="button"
+                    class="batch-mode-button"
+                    data-batch-mode="absolute"
+                    aria-pressed="false"
+                  >
+                    Absolute
+                  </button>
+                </div>
+                <div class="batch-mode-toggle" role="group" aria-label="Batch order mode">
+                  <button
+                    type="button"
+                    class="batch-mode-button"
+                    data-batch-order="sequence"
+                    aria-pressed="false"
+                  >
+                    Sequence
+                  </button>
+                  <button
+                    type="button"
+                    class="batch-mode-button is-active"
+                    data-batch-order="share"
+                    aria-pressed="true"
+                  >
+                    Share
+                  </button>
+                </div>
+              </div>
+            </div>
+            <section class="batch-purity-panel" data-batch-purity-panel hidden>
+              <div class="batch-purity-header">
+                <div class="batch-purity-heading">
+                  <h3 class="batch-purity-title">Purity diagnostics</h3>
+                  <span class="batch-purity-status" data-batch-purity-status>Purity status</span>
+                </div>
+                <button
+                  type="button"
+                  class="mini-button batch-purity-toggle"
+                  data-purity-narrative-toggle
+                  aria-expanded="false"
+                  disabled
+                >
+                  Elaborate
+                </button>
+              </div>
+              <p class="batch-purity-subheader" data-batch-purity-header></p>
+              <ul class="batch-purity-list" data-batch-purity-list></ul>
+              <div class="batch-purity-narrative" data-batch-purity-narrative hidden></div>
+            </section>
+            <div class="batch-results__legend" data-batch-legend>
+              <span class="batch-results__legend-title">Activities</span>
+              <div class="batch-results__legend-list" data-batch-legend-list role="list"></div>
+              <p class="batch-results__legend-empty" data-batch-legend-empty>
+                Run a batch to see activities.
+              </p>
+            </div>
+            <div class="batch-results__body">
+              <div class="batch-results__visualization" data-batch-visualization>
+                <div class="batch-results__stack" data-batch-stack></div>
+              </div>
+              <p class="batch-results__empty" data-batch-empty>Run a batch to see results.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section
+        class="tab-panel root-panel is-hidden"
+        id="panel-config"
+        role="tabpanel"
+        aria-labelledby="tab-config"
+        data-tab="config"
+        data-root-panel="config"
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Config</h2>
+        <div class="config-layout" id="config-panel">
+          <div class="tab-group">
+            <div class="tab-bar nested" data-config="class-tabs">
+              <button class="tab active" type="button" data-class="calendar">Calendar</button>
+            </div>
+            <div class="tab-content nested inset config-class-panels">
+              <div class="config-class-panel active" data-class-panel="calendar">
+                <div class="tab-bar nested" data-calendar="variant-tabs">
+                  <button class="tab active" type="button" data-variant="mk1">MK1</button>
+                  <button class="tab" type="button" data-variant="mk2">MK2</button>
+                  <button class="tab" type="button" data-variant="mk2_1">
+                    MK2.1 (lossless share)
+                  </button>
+                </div>
+                <section class="config-section" data-calendar="common">
+                  <div class="config-common-grid">
+                    <label class="config-field" for="cal-arch">
+                      <span class="config-field-label">Archetype</span>
+                      <select id="cal-arch" class="config-control">
+                        <option value="Office">Office</option>
+                        <option value="Parent">Parent</option>
+                        <option value="Freelancer">Freelancer</option>
+                      </select>
+                    </label>
+                    <label class="config-field" for="cal-week">
+                      <span class="config-field-label">Week start date</span>
+                      <input id="cal-week" class="config-control" type="date" />
+                    </label>
+                    <div class="config-field config-field-seed">
+                      <label class="config-field-label" for="cal-seed">Seed number</label>
+                      <div class="seed-row">
+                        <input
+                          id="cal-seed"
+                          class="config-control"
+                          type="number"
+                          inputmode="numeric"
+                        />
+                        <div class="seed-buttons">
+                          <button type="button" id="seed-reset" class="mini-button">
+                            Reset
+                          </button>
+                          <button type="button" id="seed-random" class="mini-button">
+                            Surprise me
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+                <div class="config-variant-panels">
+                  <div class="config-variant-panel active" data-variant-panel="mk1">
+                    <div class="tab-bar nested subtle" data-rig-tabs="mk1">
+                      <button class="tab active" type="button" data-rig="default">Default</button>
+                    </div>
+                    <div class="tab-content nested inset config-panels">
+                      <div class="config-panel-content active" data-panel="mk1:default">
+                        <p class="config-copy">MK1 Default settings placeholder…</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="config-variant-panel" data-variant-panel="mk2" hidden>
+                    <div class="tab-bar nested subtle" data-rig-tabs="mk2">
+                      <button class="tab active" type="button" data-rig="calendar">Calendar</button>
+                      <button class="tab" type="button" data-rig="workforce">Workforce</button>
+                    </div>
+                    <div class="tab-content nested inset config-panels">
+                      <div class="config-panel-content active" data-panel="mk2:calendar">
+                        <div class="config-toggle-list">
+                          <label class="config-toggle" for="mk2cal-compress">
+                            <input type="checkbox" id="mk2cal-compress" />
+                            <span>Show compression overlays</span>
+                          </label>
+                          <label class="config-toggle" for="mk2cal-conflicts">
+                            <input type="checkbox" id="mk2cal-conflicts" />
+                            <span>Show conflict markers</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div class="config-panel-content" data-panel="mk2:workforce" hidden>
+                        <div class="config-field">
+                          <label class="config-field-label" for="mk2wf-budget">
+                            Yearly budget (JSON)
+                          </label>
+                          <textarea id="mk2wf-budget" class="config-control config-textarea"></textarea>
+                        </div>
+                        <div class="config-inline-actions">
+                          <button type="button" id="mk2wf-default" class="mini-button">
+                            Use sensible default
+                          </button>
+                          <button type="button" id="mk2wf-validate" class="mini-button accent">
+                            Validate
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="config-summary" data-config-summary>
+            <span class="config-chip" data-config-chip="class">Class: Calendar</span>
+            <span class="config-chip" data-config-chip="variant">Variant: MK1</span>
+            <span class="config-chip" data-config-chip="rig">Rig: Default</span>
+            <span class="config-chip" data-config-chip="archetype">Archetype: —</span>
+            <span class="config-chip" data-config-chip="weekStart">Week Start: —</span>
+            <span class="config-chip" data-config-chip="seed">Seed: —</span>
+          </div>
+          <div class="config-actions">
+            <button
+              type="button"
+              class="secondary-action"
+              data-config-action="initialize-runtime"
+            >
+              Initialize Runtime
+            </button>
+          </div>
+        </div>
+      </section>
+      <section
+        class="tab-panel root-panel is-hidden"
+        id="panel-console"
+        role="tabpanel"
+        aria-labelledby="tab-console"
+        data-tab="console"
+        data-root-panel="console"
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Console</h2>
+      </section>
+      <section
+        class="tab-panel root-panel is-hidden"
+        id="panel-json"
+        role="tabpanel"
+        aria-labelledby="tab-json"
+        data-tab="json"
+        data-root-panel="json"
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">JSON</h2>
+      </section>
+      <section
+        class="tab-panel root-panel is-hidden"
+        id="panel-fixtures"
+        role="tabpanel"
+        aria-labelledby="tab-fixtures"
+        data-tab="fixtures"
+        data-root-panel="fixtures"
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Fixtures</h2>
+      </section>
+      <section
+        class="tab-panel root-panel is-hidden"
+        id="panel-logs"
+        role="tabpanel"
+        aria-labelledby="tab-logs"
+        data-tab="logs"
+        data-root-panel="logs"
+        tabindex="-1"
+      >
+        <h2 class="tab-panel-title" data-tab-heading tabindex="-1">Logs</h2>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
