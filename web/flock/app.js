@@ -278,59 +278,74 @@ function renderDaily(data) {
   if (!data) return;
   const svg = $('daily-chart');
   const width = Math.max(360, svg.parentElement.clientWidth || 900);
-  const height = 380;
-  const padL = 40, padR = 8, padT = 10, padB = 26;
+  const shown = state.dailyCat === 'all' ? CATEGORIES : CATEGORIES.filter((c) => c.key === state.dailyCat);
+  const padL = 66, padR = 10, padT = 8, padB = 26;   // room for the activity name and its scale
+  const panelH = shown.length === 1 ? 240 : 66;
+  const gap = 16;
   const plotW = width - padL - padR;
-  const plotH = height - padT - padB;
+  const height = padT + shown.length * panelH + (shown.length - 1) * gap + padB;
   clear(svg);
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   svg.setAttribute('width', width);
   svg.setAttribute('height', height);
 
   const nb = data.curves.length ? data.curves[0].shares.S.length : 0;
-  let top = 0;
-  for (const d of data.curves) {
-    for (const c of CATEGORIES) {
-      if (state.dailyCat !== 'all' && c.key !== state.dailyCat) continue;
-      for (const v of d.shares[c.key]) top = Math.max(top, v);
+  const x = (b) => padL + ((b + 0.5) / nb) * plotW;
+
+  // Small multiples, one fan per activity. Un-stacked on purpose: on a stacked chart a boundary
+  // carries the cumulative spread of everything beneath it, and the top boundary is pinned at
+  // 100 %, so the bands there are not each category's own variation. Here they are.
+  shown.forEach((c, i) => {
+    const top = padT + i * (panelH + gap);
+    const series = [];
+    for (let b = 0; b < nb; b += 1) {
+      const vals = data.curves.map((d) => d.shares[c.key][b] || 0).sort((u, v) => u - v);
+      series.push({
+        min: vals[0], p10: quantile(vals, 0.1), p25: quantile(vals, 0.25),
+        med: quantile(vals, 0.5),
+        p75: quantile(vals, 0.75), p90: quantile(vals, 0.9), max: vals[vals.length - 1],
+      });
     }
-  }
-  top = Math.max(0.1, Math.ceil(top * 10) / 10);
+    const peak = Math.max(1e-6, ...series.map((v) => v.max));
+    const scale = Math.min(1, Math.ceil(peak * 20) / 20);
+    const y = (v) => top + panelH - (v / scale) * panelH;
 
-  for (let g = 0; g <= top + 1e-9; g += top <= 0.4 ? 0.1 : 0.2) {
-    const y = padT + plotH - (g / top) * plotH;
-    el('line', { x1: padL, y1: y, x2: width - padR, y2: y, class: 'grid' }, svg);
-    const t = el('text', { x: padL - 7, y: y + 3.5, class: 'axis', 'text-anchor': 'end' }, svg);
-    t.textContent = `${Math.round(g * 100)}%`;
-  }
-
-  // One line per day per activity. Days that agree lie on top of each other and read as a single
-  // line; days that differ fan out, and the width of that fan is the day-to-day variance.
-  const opacity = Math.max(0.12, Math.min(0.55, 4 / Math.max(1, data.curves.length)));
-  for (const d of data.curves) {
-    for (const c of CATEGORIES) {
-      if (state.dailyCat !== 'all' && c.key !== state.dailyCat) continue;
-      const pts = d.shares[c.key].map((v, b) =>
-        `${(padL + ((b + 0.5) / nb) * plotW).toFixed(1)},${(padT + plotH - (v / top) * plotH).toFixed(1)}`);
-      el('polyline', {
-        points: pts.join(' '), fill: 'none', stroke: `var(--${c.css})`,
-        'stroke-width': 1.5, 'stroke-opacity': opacity.toFixed(2), 'stroke-linejoin': 'round',
-      }, svg);
+    el('line', { x1: padL, y1: top + panelH, x2: width - padR, y2: top + panelH, class: 'grid' }, svg);
+    // Nested intervals in one hue, lightest outermost: the standard fan.
+    for (const [lo, hi, op] of [['min', 'max', 0.14], ['p10', 'p90', 0.28], ['p25', 'p75', 0.45]]) {
+      const up = [], dn = [];
+      for (let b = 0; b < nb; b += 1) {
+        up.push(`${x(b).toFixed(1)},${y(series[b][hi]).toFixed(1)}`);
+        dn.push(`${x(b).toFixed(1)},${y(series[b][lo]).toFixed(1)}`);
+      }
+      el('polygon', { points: up.concat(dn.reverse()).join(' '),
+                      fill: `var(--${c.css})`, 'fill-opacity': op }, svg);
     }
-  }
+    el('polyline', {
+      points: series.map((v, b) => `${x(b).toFixed(1)},${y(v.med).toFixed(1)}`).join(' '),
+      fill: 'none', stroke: `var(--${c.css})`, 'stroke-width': 1.6, 'stroke-linejoin': 'round',
+    }, svg);
 
+    const name = el('text', { x: padL - 8, y: top + 11, class: 'axis', 'text-anchor': 'end' }, svg);
+    name.textContent = c.name;
+    const top_lbl = el('text', { x: padL - 8, y: top + panelH, class: 'axis', 'text-anchor': 'end' }, svg);
+    top_lbl.textContent = '0';
+    const max_lbl = el('text', { x: padL - 8, y: top + 24, class: 'axis', 'text-anchor': 'end' }, svg);
+    max_lbl.textContent = `${Math.round(scale * 100)}%`;
+  });
+
+  const base = padT + shown.length * panelH + (shown.length - 1) * gap;
   for (let h = 0; h <= 24; h += 3) {
     const px = padL + (h / 24) * plotW;
-    const t = el('text', { x: Math.min(width - padR, px), y: height - 8, class: 'axis',
+    const t = el('text', { x: Math.min(width - padR, px), y: base + 16, class: 'axis',
                            'text-anchor': h === 0 ? 'start' : h === 24 ? 'end' : 'middle' }, svg);
     t.textContent = String(h % 24).padStart(2, '0');
   }
 
-  const what = state.dailyCat === 'all' ? 'every activity'
-    : CATEGORIES.find((c) => c.key === state.dailyCat).name;
   $('daily-note').textContent =
-    `${data.curves.length} days, ${data.people} people, ${what}. One line per day: where the lines ` +
-    `lie on top of each other the days agree, where they fan apart they do not.`;
+    `${data.curves.length} weekdays, ${data.people} people. Median line, then the middle 50 %, ` +
+    `the middle 80 % and the full range across days. Each panel is scaled to its own peak ` +
+    `(marked at the left), so read the band widths within a panel, not between them.`;
 }
 
 // ---- population -----------------------------------------------------------

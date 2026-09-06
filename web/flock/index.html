@@ -104,11 +104,13 @@
 
     <div class="legend" id="legend-pop"></div>
 
-    <h2>One line per day</h2>
-    <p class="note">The chart above pools every weekday into one set of percentages. These are the
-      days kept apart: at any minute there is a percentage for each day, so days that agree lie on
-      top of each other and days that differ fan out. The width of that fan is the day-to-day
-      variation — a population with none would draw a single sharp line.</p>
+    <h2>Each activity's own spread</h2>
+    <p class="note">One panel per activity, un-stacked. On the stacked chart a boundary carries the
+      cumulative spread of everything beneath it, and the top boundary is pinned at 100 %, so its
+      bands are not each activity's own variation — at 18:00 <em>home</em> varies most of all
+      (3.0 points) but its stacked boundary looks calmer than <em>eating</em>. Here each panel shows
+      one activity: the median across days, then the middle 50 %, the middle 80 % and the full
+      range.</p>
 
     <div class="row">
       <div class="daybtns" id="dailycat" role="group" aria-label="Activity">
