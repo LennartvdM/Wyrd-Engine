@@ -127,14 +127,24 @@ seven.  Measured as the worst contrast ratio over the seven fills: a **casing** 
 stroke with a narrow dark one over it, the technique cartographers use to run a road over varied
 ground — reaches 4.46; plain dark 2.30 (it disappears into the violet); plain white 2.11 (it
 disappears into the yellow); and a **screened** version of the band's own hue only 1.59, because a
-hue lightened toward white is sitting against that same hue.  The casing is the default and the
-page offers all four.
+hue lightened toward white is sitting against that same hue.  Since the measurement settles it, the
+casing is simply what is drawn: the picker was removed rather than kept as a preference.
 
-Smoothing the envelope is available in the browser page as a 15-minute moving average.  It removes
-order-statistic noise — with 20 days the 90th percentile is the 18th of 20 values and jumps about —
-at the cost of bias wherever the curve turns sharply.  The window is kept under the width of the
-meal peaks, which are signal.  The formal version of the same move is **quantile regression on a
+Smoothing is a moving average over the curves, and the browser page makes the window a control
+rather than a decision, because the trade has no single right answer: it removes order-statistic
+noise — with 20 days the 90th percentile is the 18th of 20 values and jumps about — at the cost of
+bias wherever the curve turns sharply.  The page prints what the current window costs at this run's
+tallest peak, so the trade is read off the control instead of taken on trust.  Smoothing is applied
+to each day's curve *before* the summary is taken; doing it after would remove the cross-day noise
+the summary exists to show.  The formal version of the same move is **quantile regression on a
 spline basis**, which estimates a smooth quantile directly instead of smoothing a noisy estimate.
+
+Everything above — which days are in the sample, whether the centre is a median or a mean, how much
+of the spread is drawn, how many nested bands, the smoothing window, whether the days themselves are
+drawn, and what the panels' y axis means — is a control on the page under "How the spread is drawn".
+A setting the sample cannot support is disabled with the reason ("95 % needs 39 days, this run has
+20"), a look can be copied as a link, and one generated sentence states what is being shown so no
+caption can drift from the figure.
 
 ## The spread behind a percentage
 

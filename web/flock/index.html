@@ -81,23 +81,113 @@
         <button type="button" data-stack="days" aria-pressed="false">One stack per day</button>
         <button type="button" data-stack="bands" aria-pressed="false">Median and band</button>
       </div>
-      <div class="daybtns" id="bandrange" role="group" aria-label="Band width" hidden>
-        <button type="button" data-range="80" aria-pressed="true">middle 80 %</button>
-        <button type="button" data-range="full" aria-pressed="false">full range</button>
-      </div>
-      <div class="daybtns" id="edgestyle" role="group" aria-label="Envelope stroke" hidden>
-        <button type="button" data-edge="casing" aria-pressed="true">casing</button>
-        <button type="button" data-edge="white" aria-pressed="false">white</button>
-        <button type="button" data-edge="screen" aria-pressed="false">screened hue</button>
-        <button type="button" data-edge="dark" aria-pressed="false">dark</button>
-      </div>
-      <div class="daybtns"><button type="button" id="bandsmooth" aria-pressed="false" hidden>smooth 15 min</button></div>
       <div class="daybtns" id="binsize" role="group" aria-label="Bin width">
         <button type="button" data-bin="60" aria-pressed="false">1 h</button>
         <button type="button" data-bin="15" aria-pressed="true">15 min</button>
         <button type="button" data-bin="5" aria-pressed="false">5 min</button>
       </div>
     </div>
+
+    <details class="spread-wrap" id="spread-wrap" open>
+      <summary id="spread-summary">How the spread is drawn</summary>
+      <fieldset class="spread" id="spread">
+        <legend>How the spread is drawn</legend>
+        <div class="spread-cols">
+          <div class="spread-groups">
+
+            <div class="spread-group">
+              <h4>1 · Which days</h4>
+              <div class="sp-row">
+                <span class="field">Days in the sample</span>
+                <div class="daybtns" id="sp-days" role="group" aria-label="Days in the sample">
+                  <button type="button" data-days="one" aria-pressed="false">This weekday only</button>
+                  <button type="button" data-days="wd" aria-pressed="true">All weekdays</button>
+                  <button type="button" data-days="all7" aria-pressed="false">All seven days</button>
+                  <button type="button" data-days="wdc" aria-pressed="false">All weekdays, weekday differences removed</button>
+                </div>
+                <span class="chip" id="sp-n">n = —</span>
+              </div>
+              <p class="sp-hint" id="sp-days-hint">n decides what this page may claim and which
+                stops below are available at all.</p>
+            </div>
+
+            <div class="spread-group">
+              <h4>2 · What the band is</h4>
+              <div class="sp-row">
+                <span class="field">Centre and edges</span>
+                <div class="daybtns" id="sp-est" role="group" aria-label="What the centre and edges are">
+                  <button type="button" data-est="q" aria-pressed="true">Median + quantiles of the days</button>
+                  <button type="button" data-est="mean" aria-pressed="false">Mean ± SD</button>
+                </div>
+              </div>
+              <div class="sp-row">
+                <label class="field" for="sp-cov">How much of the spread</label>
+                <select id="sp-cov"></select>
+              </div>
+              <div class="sp-row">
+                <span class="field">Nested bands</span>
+                <div class="daybtns" id="sp-lv" role="group" aria-label="Nested bands">
+                  <button type="button" data-lv="1" aria-pressed="false">1</button>
+                  <button type="button" data-lv="2" aria-pressed="false">2</button>
+                  <button type="button" data-lv="3" aria-pressed="true">3</button>
+                </div>
+                <span class="sp-hint">panels only — the stacked chart draws the outermost</span>
+              </div>
+            </div>
+
+            <div class="spread-group">
+              <h4>3 · How it is drawn and read</h4>
+              <div class="sp-row">
+                <label class="field" for="sp-sm">Smoothing window</label>
+                <input type="range" id="sp-sm" min="0" max="3" step="1" value="1" list="sp-sm-ticks"
+                       aria-label="Smoothing window">
+                <datalist id="sp-sm-ticks">
+                  <option value="0" label="off"></option>
+                  <option value="1" label="20"></option>
+                  <option value="2" label="30"></option>
+                  <option value="3" label="40"></option>
+                </datalist>
+                <output id="sp-sm-out" for="sp-sm">20 min (2 bins)</output>
+                <span class="sp-hint" id="sp-sm-hint"></span>
+              </div>
+              <div class="sp-row">
+                <span class="field">Show the days behind the band</span>
+                <div class="daybtns" id="sp-dd" role="group" aria-label="Show the days behind the band">
+                  <button type="button" data-dd="off" aria-pressed="false">Off</button>
+                  <button type="button" data-dd="out" aria-pressed="true">Days outside the band</button>
+                  <button type="button" data-dd="all" aria-pressed="false">All days</button>
+                </div>
+              </div>
+              <div class="sp-row">
+                <span class="field">Fan panel y-axis</span>
+                <div class="daybtns" id="sp-ps" role="group" aria-label="Fan panel y-axis">
+                  <button type="button" data-ps="peak" aria-pressed="true">Own peak</button>
+                  <button type="button" data-ps="shared" aria-pressed="false">Shared 0–100 %</button>
+                  <button type="button" data-ps="width" aria-pressed="false">Interval width, in points</button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="spread-side">
+            <div class="spread-readout" id="sp-readout" role="status"></div>
+            <div class="sp-row">
+              <button type="button" id="sp-copy">Copy link</button>
+              <button type="button" id="sp-reset">Reset</button>
+              <span class="sp-hint" id="sp-copied"></span>
+            </div>
+            <div class="daybtns spread-presets" id="sp-presets" role="group" aria-label="Presets">
+              <button type="button" data-preset="published">Page default</button>
+              <button type="button" data-preset="cli">Like <code>flock bands</code></button>
+              <button type="button" data-preset="short">Short run (n = 5)</button>
+              <button type="button" data-preset="odd">Which day was odd?</button>
+              <button type="button" data-preset="compare">Compare activities</button>
+            </div>
+          </div>
+        </div>
+      </fieldset>
+    </details>
 
     <p class="note" id="pop-note"></p>
 
@@ -114,10 +204,9 @@
     <h2>Each activity's own spread</h2>
     <p class="note">One panel per activity, un-stacked. On the stacked chart a boundary carries the
       cumulative spread of everything beneath it, and the top boundary is pinned at 100 %, so its
-      bands are not each activity's own variation — at 18:00 <em>home</em> varies most of all
-      (3.0 points) but its stacked boundary looks calmer than <em>eating</em>. Here each panel shows
-      one activity: the median across days, then the middle 50 %, the middle 80 % and the full
-      range.</p>
+      bands are not each activity's own variation. Here each panel is one activity's own spread,
+      demarcated by the settings above; the caption under the figure says exactly what is drawn.
+      <span id="fan-note"></span></p>
 
     <div class="row">
       <div class="daybtns" id="dailycat" role="group" aria-label="Activity">
@@ -173,7 +262,7 @@
     </figure>
 
     <details class="table-view">
-      <summary>Binned shares as a table</summary>
+      <summary id="pop-table-summary">Binned shares as a table</summary>
       <div><table id="pop-table"></table></div>
     </details>
   </section>

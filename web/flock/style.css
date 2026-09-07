@@ -193,7 +193,7 @@ svg .seg-label { font-size: 10px; font-family: var(--sans); pointer-events: none
 .person-line { font: 12.5px var(--mono); color: var(--text-secondary); margin: 0 0 14px; }
 .person-line b { color: var(--text-primary); font-weight: 500; }
 
-.daybtns { display: flex; gap: 2px; }
+.daybtns { display: flex; flex-wrap: wrap; gap: 2px; }
 .daybtns button { padding: 5px 10px; font: 12.5px var(--mono); }
 .daybtns button[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
 
@@ -247,7 +247,8 @@ pre.console {
   font: 12px var(--mono);
   padding: 6px 9px;
   border-radius: var(--radius);
-  white-space: pre;
+  white-space: pre-wrap;
+  max-width: calc(100vw - 16px);
   z-index: 20;
   opacity: 0;
   transition: opacity 90ms;
@@ -258,4 +259,105 @@ pre.console {
   .page { padding: 0 16px 48px; }
   .controls { margin-left: 0; }
   .week-strip { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ---- how the spread is drawn ------------------------------------------- */
+/* One fieldset for one statistic. Nothing in it hides per view: a control that cannot apply
+   stays visible and carries its reason, which is what the toggles it replaces never did. */
+
+details.spread-wrap { margin: 0 0 18px; }
+details.spread-wrap > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font: 12.5px var(--mono);
+  padding: 6px 0;
+}
+details.spread-wrap[open] > summary { margin-bottom: 4px; }
+
+fieldset.spread {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 14px 12px;
+  margin: 0;
+  min-width: 0;
+}
+fieldset.spread legend {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 0 6px;
+}
+
+.spread-cols { display: grid; grid-template-columns: 3fr 2fr; gap: 14px 22px; align-items: start; }
+/* Grid and flex children default to min-width:auto, which lets a long option or a long button
+   push the page sideways on a phone. Nothing here needs to be wider than its column. */
+.spread-cols > *, .spread-group, .sp-row, .spread-side, .spread-readout { min-width: 0; }
+.sp-row > select { flex: 1 1 11em; min-width: 0; }
+.spread-group { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px; }
+.spread-group:first-child { border-top: none; margin-top: 0; padding-top: 2px; }
+.spread-group h4 {
+  margin: 0 0 6px;
+  font: 600 11.5px var(--sans);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.sp-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 0 0 6px; }
+.spread .field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.sp-row > .field { min-width: 11em; }
+.spread .daybtns { max-width: 100%; }
+.spread .daybtns button { white-space: normal; text-align: left; }
+.spread select { max-width: 100%; }
+.spread input[type="range"] { width: 132px; accent-color: var(--text-primary); }
+.spread output { font: 12.5px var(--mono); color: var(--text-primary); }
+
+.chip {
+  font: 11.5px var(--mono);
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+
+.sp-hint {
+  font: 11.5px var(--mono);
+  color: var(--text-muted);
+  max-width: 60ch;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  margin: 2px 0 0;
+}
+.sp-hint.sp-warn { color: var(--critical); }
+
+.spread-readout {
+  font: 12px/1.55 var(--mono);
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 11px;
+  margin: 2px 0 8px;
+}
+.spread-readout p { margin: 0 0 4px; overflow-wrap: anywhere; }
+.spread-readout p:last-child { margin-bottom: 0; }
+.spread-readout .sp-claim { color: var(--text-primary); }
+.spread-readout .sp-repair { color: var(--critical); }
+
+.spread-presets { margin-top: 6px; }
+.spread-presets button[data-suggested="true"] { border-color: var(--text-primary); }
+
+@media (min-width: 900px) {
+  details.spread-wrap > summary { display: none; }
+}
+@media (max-width: 899px) {
+  .spread-cols { grid-template-columns: 1fr; }
 }
